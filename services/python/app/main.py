@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import platform
 import re
@@ -14,6 +15,7 @@ from uuid import uuid4
 import pymupdf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 DATA = Path(os.environ.get("M2V_DATA_DIR", "../../data")).resolve()
 VOICE_DIR = DATA / "voices"
@@ -21,6 +23,7 @@ AUDIO_DIR = DATA / "audio"
 F5TTS_MODEL_DIR = Path(os.environ.get("F5TTS_MODEL_DIR", DATA / "models" / "f5-tts" / "F5TTS_v1_Base")).resolve()
 F5TTS_VOCODER_DIR = Path(os.environ.get("F5TTS_VOCODER_DIR", DATA / "models" / "f5-tts" / "vocos-mel-24khz")).resolve()
 _DLL_DIRECTORY_HANDLES: dict[str, object] = {}
+_TTS_LOCK = asyncio.Lock()
 VOICE_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -293,7 +296,7 @@ async def create_voice(audio: UploadFile | None = File(None), transcript: str = 
 
 @app.post("/synthesize")
 async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: float = Form(1.0)):
-    if not _tts_available():
+    if not await run_in_threadpool(_tts_available):
         raise HTTPException(503, "未安装 F5-TTS，请使用 uv sync --extra tts，并安装受支持的 PyTorch/XPU 运行环境")
     safe_id = "".join(c for c in voice_id if c.isalnum() or c in "-_ ").strip().replace(" ", "-") or "my-voice"
     directory = VOICE_DIR / safe_id
@@ -303,7 +306,15 @@ async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: fl
         raise HTTPException(404, "声音档案不存在")
     output = AUDIO_DIR / f"{uuid4()}.wav"
     try:
-        F5TTSProvider().synthesize(ref_file=refs[0], ref_text=transcript_file.read_text(encoding="utf-8"), text=text, output=output, speed=speed)
+        async with _TTS_LOCK:
+            await run_in_threadpool(
+                F5TTSProvider().synthesize,
+                ref_file=refs[0],
+                ref_text=transcript_file.read_text(encoding="utf-8"),
+                text=text,
+                output=output,
+                speed=speed,
+            )
     except Exception as exc:
         raise HTTPException(500, f"F5-TTS 生成失败：{exc}") from exc
     try:

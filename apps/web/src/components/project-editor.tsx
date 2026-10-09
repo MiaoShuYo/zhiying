@@ -6,7 +6,7 @@ import { ExplainerVideo, getDurationInFrames } from '@m2v/video';
 import { StoryboardSchema, type Scene, type Storyboard, type StyleId } from '@m2v/schema';
 import { styles } from '@m2v/styles';
 
-type ProgressInfo = { message?: string; percent?: number; chapterIndex?: number; chapterCount?: number; completedChapters?: number; currentChapter?: string };
+type ProgressInfo = { message?: string; phase?: string; percent?: number; chapterIndex?: number; chapterCount?: number; completedChapters?: number; currentChapter?: string };
 type Data = { id: string; name: string; styleId: string; status: string; voiceId: string | null; storyboard: Storyboard | null; jobs: { id: string; status: string; stage: string; error: string | null; progress?: string | null; kind?: string; sceneId?: string | null }[] };
 const sceneLabels: Record<string, string> = { title: '标题', bullets: '要点', diagram: '图示', comparison: '对比', chart: '图表', code: '代码' };
 const stageLabels: Record<string, string> = { extracting: '读取资料', analyzing: '分析内容', storyboarding: '生成分镜', generating_audio: '生成语音', rendering: '渲染视频', encoding: '视频编码' };

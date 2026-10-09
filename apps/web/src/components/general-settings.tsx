@@ -24,7 +24,7 @@ export function GeneralSettings() {
     setSaving(true); setError(''); setMessage('');
     try {
       const form = new FormData();
-      form.set('audio', file);
+      if (file) form.set('audio', file);
       form.set('transcript', settings.transcript);
       form.set('displayName', settings.displayName);
       const response = await fetch('/api/settings/voice', { method: 'POST', body: form });

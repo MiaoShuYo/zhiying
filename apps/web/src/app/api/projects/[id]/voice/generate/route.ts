@@ -1,10 +1,40 @@
 import { NextResponse } from 'next/server';
 import { mkdir, copyFile, access, readFile, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { join, resolve } from 'node:path';
 import { db } from '@/lib/db';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 import { StoryboardSchema } from '@m2v/schema';
 export const runtime = 'nodejs';
+
+type SynthesisResult = { ok: boolean; audioPath?: string; duration?: number; error?: string; detail?: string };
+
+function requestSynthesis(service: string, text: string, voiceId: string, speed: number): Promise<SynthesisResult> {
+  const endpoint = new URL(`${service.replace(/\/$/, '')}/synthesize`);
+  const payload = new URLSearchParams({ text, voice_id: voiceId, speed: String(speed) }).toString();
+  const transport = endpoint.protocol === 'https:' ? httpsRequest : httpRequest;
+  return new Promise((resolveRequest, rejectRequest) => {
+    const request = transport(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded; charset=utf-8', 'content-length': Buffer.byteLength(payload) },
+    }, response => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('error', rejectRequest);
+      response.on('end', () => {
+        try {
+          const result = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Omit<SynthesisResult, 'ok'>;
+          resolveRequest({ ...result, ok: (response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300 });
+        } catch { rejectRequest(new Error('Python 语音服务返回了无效响应')); }
+      });
+    });
+    request.on('error', rejectRequest);
+    request.setTimeout(30 * 60 * 1000, () => request.destroy(new Error('Python 语音服务在 30 分钟内没有响应')));
+    request.end(payload);
+  });
+}
+
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params; const lock = await getProjectLock(id); if (!lock.exists) return NextResponse.json({ error: '项目不存在' }, { status: 404 }); if (lock.locked) return projectLockedResponse(lock.reason); const project = await db.project.findUnique({ where: { id } });
   let speed = 1;
@@ -43,9 +73,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       const existing = scene.audioSrc ? resolve(process.cwd(), 'public', scene.audioSrc) : '';
       if (!sceneId && existing && !regenerateAtNewSpeed) { try { await access(existing); continue; } catch { /* Regenerate missing audio assets. */ } }
       await db.job.update({ where: { id: job.id }, data: { sceneId: scene.id } });
-      const form = new FormData(); form.set('text', scene.narration); form.set('voice_id', voiceId); form.set('speed', String(speed));
-      const response = await fetch(`${service}/synthesize`, { method: 'POST', body: form }); const result = await response.json() as { audioPath?: string; duration?: number; error?: string; detail?: string };
-      if (!response.ok || !result.audioPath) throw new Error(result.detail ?? result.error ?? `场景 ${scene.id} 语音生成失败`);
+      const result = await requestSynthesis(service, scene.narration, voiceId, speed);
+      if (!result.ok || !result.audioPath) throw new Error(result.detail ?? result.error ?? `场景 ${scene.id} 语音生成失败`);
       const filename = `${id}-${scene.id}.wav`; const publicPath = join(publicAudio, filename); await copyFile(result.audioPath, publicPath);
       scene.audioSrc = `audio/${filename}`; if (result.duration && result.duration > 0) scene.duration = Math.max(2, result.duration + 0.5);
       await db.scene.update({ where: { id: scene.id }, data: { audioPath: `audio/${filename}`, duration: scene.duration } });

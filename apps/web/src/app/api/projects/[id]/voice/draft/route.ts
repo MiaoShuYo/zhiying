@@ -54,10 +54,11 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (lock.locked) return projectLockedResponse(lock.reason);
   let body: unknown;
   try { body = await request.json(); } catch { return NextResponse.json({ error: '请求内容不是有效 JSON' }, { status: 400 }); }
-  const hasTranscript = typeof body === 'object' && body !== null && 'transcript' in body;
-  const transcript = hasTranscript && typeof body.transcript === 'string' ? body.transcript : null;
-  const hasSpeed = typeof body === 'object' && body !== null && 'speed' in body;
-  const speed = hasSpeed && typeof body.speed === 'number' ? body.speed : null;
+  const fields = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {};
+  const hasTranscript = 'transcript' in fields;
+  const transcript = hasTranscript && typeof fields.transcript === 'string' ? fields.transcript : null;
+  const hasSpeed = 'speed' in fields;
+  const speed = hasSpeed && typeof fields.speed === 'number' ? fields.speed : null;
   if ((!hasTranscript && !hasSpeed) || (hasTranscript && transcript === null) || (hasSpeed && speed === null)) return NextResponse.json({ error: '转录或语速设置格式无效' }, { status: 400 });
   if (transcript !== null && transcript.length > 20_000) return NextResponse.json({ error: '转录文本不能超过 20000 个字符' }, { status: 413 });
   if (speed !== null && (!Number.isFinite(speed) || speed < 0.5 || speed > 3)) return NextResponse.json({ error: '语速需在 0.5× 到 3× 之间' }, { status: 400 });
