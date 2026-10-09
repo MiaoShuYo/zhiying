@@ -60,7 +60,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const speed = hasSpeed && typeof body.speed === 'number' ? body.speed : null;
   if ((!hasTranscript && !hasSpeed) || (hasTranscript && transcript === null) || (hasSpeed && speed === null)) return NextResponse.json({ error: '转录或语速设置格式无效' }, { status: 400 });
   if (transcript !== null && transcript.length > 20_000) return NextResponse.json({ error: '转录文本不能超过 20000 个字符' }, { status: 413 });
-  if (speed !== null && (!Number.isFinite(speed) || speed < 0.7 || speed > 1.2)) return NextResponse.json({ error: '语速需在 0.7× 到 1.2× 之间' }, { status: 400 });
+  if (speed !== null && (!Number.isFinite(speed) || speed < 0.5 || speed > 3)) return NextResponse.json({ error: '语速需在 0.5× 到 3× 之间' }, { status: 400 });
   const directory = draftDirectory(id);
   await mkdir(directory, { recursive: true });
   if (transcript !== null) await writeFile(join(directory, 'voice-reference.transcript.txt'), transcript, 'utf8');
