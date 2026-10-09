@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id String @id @default(cuid())
+  name String
+  sourceText String @default("")
+  sourcePath String?
+  styleId String @default("minimal-tech")
+  voiceId String?
+  aspectRatio String @default("16:9")
+  status String @default("created")
+  storyboardJson String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  jobs Job[]
+  scenes Scene[]
+}
+model Scene {
+  id String @id
+  projectId String
+  orderIndex Int
+  type String
+  title String?
+  narration String
+  visualJson String
+  animationJson String?
+  styleOverrideJson String?
+  duration Float?
+  audioPath String?
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId, orderIndex])
+}
+model Job {
+  id String @id @default(cuid())
+  projectId String
+  kind String
+  status String @default("queued")
+  stage String @default("created")
+  sceneId String?
+  attempt Int @default(0)
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId, createdAt])
+}

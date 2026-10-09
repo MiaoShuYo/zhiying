@@ -1,0 +1,28 @@
+[project]
+name = "m2v-local-services"
+version = "0.1.0"
+description = "Local document extraction and F5-TTS adapter for M2V"
+requires-python = ">=3.11,<3.14"
+dependencies = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "python-multipart>=0.0.20,<1", "pymupdf>=1.25,<2"]
+
+[project.optional-dependencies]
+tts = ["f5-tts==1.1.22", "torch==2.10.0+xpu", "torchaudio==2.10.0+xpu", "torchcodec==0.10.*"]
+
+[[tool.uv.index]]
+name = "pytorch-xpu"
+url = "https://mirrors.cernet.edu.cn/pytorch/whl/xpu"
+explicit = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-xpu" }
+torchaudio = { index = "pytorch-xpu" }
+triton-xpu = { index = "pytorch-xpu" }
+torchcodec = { index = "pypi" }
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+explicit = true
+
+[tool.uv]
+package = false

@@ -1,0 +1,14 @@
+{
+  "name": "local-ai-explainer-video",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @m2v/web --filter @m2v/worker dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @m2v/schema test",
+    "db:generate": "pnpm --filter @m2v/web db:generate",
+    "db:push": "pnpm --filter @m2v/web db:push"
+  },
+  "devDependencies": { "typescript": "^5.7.3", "tsx": "^4.19.2" }
+}

@@ -1,0 +1,1 @@
+{"name":"@m2v/video","version":"0.1.0","private":true,"type":"module","exports":"./src/index.tsx","dependencies":{"@m2v/schema":"workspace:*","@m2v/styles":"workspace:*","remotion":"^4.0.315","react":"^19.0.0"},"devDependencies":{"@types/react":"^19.0.8","typescript":"^5.7.3"},"scripts":{"typecheck":"tsc --noEmit"}}

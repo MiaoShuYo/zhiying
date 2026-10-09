@@ -1,0 +1,6 @@
+import { notFound } from 'next/navigation';
+import { db } from '@/lib/db';
+import { toPublicAudioSrc } from '@/lib/pipeline';
+import { ProjectEditor } from '@/components/project-editor';
+export const dynamic = 'force-dynamic';
+export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) { const { id } = await params; const p = await db.project.findUnique({ where: { id }, include: { scenes: { orderBy: { orderIndex: 'asc' } }, jobs: { orderBy: { createdAt: 'desc' }, take: 10 } } }); if (!p) notFound(); const storyboard = p.storyboardJson ? JSON.parse(p.storyboardJson) : null; return <ProjectEditor initial={{ id: p.id, name: p.name, styleId: p.styleId, status: p.status, voiceId: p.voiceId, storyboard: storyboard ? { ...storyboard, scenes: p.scenes.map(s => ({ id: s.id, type: s.type, title: s.title ?? undefined, narration: s.narration, duration: s.duration ?? undefined, audioSrc: toPublicAudioSrc(s.audioPath), visual: JSON.parse(s.visualJson), styleOverride: s.styleOverrideJson ? JSON.parse(s.styleOverrideJson) : undefined })) } : null, jobs: p.jobs.map(j => ({ id: j.id, status: j.status, stage: j.stage, error: j.error, kind: j.kind })) }} />; }
