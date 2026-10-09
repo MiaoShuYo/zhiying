@@ -127,21 +127,35 @@ def _narration_segments(text: str) -> list[str]:
         raise ValueError("旁白文本为空，无法生成语音")
     return segments
 
-def _remove_leading_intro(audio):
+def _remove_leading_intro(audio, intro_text: str, generated_text: str):
     from pydub import silence
 
-    # F5-TTS may swallow the first generated word. Use a disposable lead-in
-    # sentence, then keep only speech after the pause following that sentence.
+    # F5-TTS may swallow the first generated word. Prefer the pause after a
+    # disposable lead-in, but do not fail when the model speaks continuously.
+    intro_bytes = len(intro_text.encode("utf-8"))
+    generated_bytes = len(generated_text.encode("utf-8"))
+    expected_ms = round(len(audio) * intro_bytes / max(generated_bytes, 1))
     spoken_ranges = silence.detect_nonsilent(
         audio,
-        min_silence_len=300,
-        silence_thresh=audio.dBFS - 14,
-        seek_step=10,
+        min_silence_len=120,
+        silence_thresh=audio.dBFS - 16,
+        seek_step=5,
     )
-    if len(spoken_ranges) < 2 or spoken_ranges[0][1] > 3_000 or spoken_ranges[1][0] - spoken_ranges[0][1] < 300:
-        raise RuntimeError("无法可靠区分语音引导语和旁白，请重试生成")
-    # Preserve 80 ms before the detected onset of the narration.
-    return audio[max(0, spoken_ranges[1][0] - 80):]
+    boundaries = [
+        start
+        for (_, end), (start, _) in zip(spoken_ranges, spoken_ranges[1:])
+        if end <= expected_ms + 700
+    ]
+    if boundaries:
+        boundary = min(boundaries, key=lambda start: abs(start - expected_ms))
+        # Preserve a little of the onset so low-volume initial phonemes survive.
+        offset_ms = max(0, boundary - 80)
+    else:
+        # The sampler allocates duration in proportion to UTF-8 text length.
+        # This provides a stable fallback when no audible pause was generated.
+        offset_ms = expected_ms
+    offset_ms = min(offset_ms, max(0, len(audio) - 250))
+    return audio[offset_ms:]
 
 class TTSProvider(Protocol):
     def synthesize(self, *, ref_file: Path, ref_text: str, text: str, output: Path, speed: float) -> None: ...
@@ -185,11 +199,13 @@ class F5TTSProvider:
             combined = None
             for index, segment in enumerate(segments):
                 segment_path = Path(temp_dir) / f"segment-{index}.wav"
-                engine.infer(ref_file=str(prompt_path), ref_text=prompt_text, gen_text="现在开始。" + segment, file_wave=str(segment_path), speed=speed, seed=42)
+                intro = "现在开始。"
+                generated_text = intro + segment
+                engine.infer(ref_file=str(prompt_path), ref_text=prompt_text, gen_text=generated_text, file_wave=str(segment_path), speed=speed, seed=42)
                 spoken = AudioSegment.from_wav(segment_path)
                 if len(spoken) == 0:
                     raise RuntimeError(f"第 {index + 1} 段旁白没有可用语音")
-                spoken = _remove_leading_intro(spoken)
+                spoken = _remove_leading_intro(spoken, intro, generated_text)
                 # Preserve the entire model output. Low-volume initial phonemes
                 # can be mistaken for silence and trimming may remove a word.
                 combined = spoken if combined is None else combined + AudioSegment.silent(duration=120, frame_rate=spoken.frame_rate) + spoken
