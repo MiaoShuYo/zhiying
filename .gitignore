@@ -36,3 +36,24 @@ __pycache__/
 *.docx
 uploads/
 documents/
+
+# Commit the runtime model files under Git LFS; leave Hugging Face's duplicate
+# download cache and other generated model data out of the repository.
+!/data/
+data/*
+!/data/models/
+data/models/*
+!data/models/f5-tts/
+data/models/f5-tts/*
+!data/models/f5-tts/F5TTS_v1_Base/
+data/models/f5-tts/F5TTS_v1_Base/*
+!data/models/f5-tts/F5TTS_v1_Base/model_1250000.safetensors
+!data/models/f5-tts/F5TTS_v1_Base/vocab.txt
+!data/models/f5-tts/vocos-mel-24khz/
+data/models/f5-tts/vocos-mel-24khz/*
+!data/models/f5-tts/vocos-mel-24khz/config.yaml
+!data/models/f5-tts/vocos-mel-24khz/pytorch_model.bin
+!data/models/qwen3-4b/
+data/models/qwen3-4b/*
+!data/models/qwen3-4b/Modelfile
+!data/models/qwen3-4b/qwen3-4b.gguf.part*

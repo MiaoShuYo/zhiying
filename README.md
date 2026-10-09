@@ -29,7 +29,7 @@
 
 | 软件 | 版本/用途 |
 | --- | --- |
-| Git | 克隆仓库和更新代码 |
+| Git 与 Git LFS | 克隆仓库和获取 Git LFS 中的大模型权重 |
 | Node.js | 20.19 或更高版本；运行 Next.js 和 Remotion Worker |
 | Corepack 与 pnpm | 仓库固定使用 pnpm 11.25.0 |
 | Python | **3.13.x**；Python 文档解析和语音服务 |
@@ -48,6 +48,7 @@ Remotion 渲染及 F5-TTS 音频处理都需要 FFmpeg。Python 服务必须能�
 | 分析资料、生成讲稿和分镜 | Ollama `qwen3:4b` | Ollama 管理；用 `ollama pull qwen3:4b` 下载 |
 | F5-TTS 声音克隆 | [`SWivid/F5-TTS`](https://huggingface.co/SWivid/F5-TTS)：`F5TTS_v1_Base/model_1250000.safetensors`、`F5TTS_v1_Base/vocab.txt` | `<仓库>\data\models\f5-tts\F5TTS_v1_Base\` |
 | F5-TTS 声码器 | [`charactr/vocos-mel-24khz`](https://huggingface.co/charactr/vocos-mel-24khz)：`config.yaml`、`pytorch_model.bin` | `<仓库>\data\models\f5-tts\vocos-mel-24khz\` |
+| 可选 Qwen GGUF 副本 | `data/models/qwen3-4b/qwen3-4b.gguf` | 仓库提供 Git LFS 分片；运行 `scripts\restore-qwen-model.ps1` 还原 |
 
 F5-TTS 基础模型权重约 1.35 GB，Vocos 权重约 55 MB；首次 Ollama 模型下载还需要额外空间。F5-TTS 模型仓库标注为 CC BY-NC 4.0，使用前请查看模型卡中的许可条件。
 
@@ -66,7 +67,7 @@ M2V/
             └─ pytorch_model.bin
 ```
 
-模型权重和媒体不纳入 Git。放好模型后，服务会优先加载上述本地路径；也可让 Hugging Face Hub 首次运行时下载模型文件。
+F5-TTS、Vocos 和可选 Qwen GGUF 权重随仓库通过 Git LFS 提交，合计约 4 GB；Hugging Face 下载缓存、用户素材和生成媒体不会提交。首次克隆前安装 Git LFS，克隆后执行 `git lfs pull` 获取权重。Qwen GGUF 被拆为两个 LFS 文件以满足 GitHub 单文件大小限制；如需完整 GGUF，运行 `scripts\restore-qwen-model.ps1`。模型权重许可仍适用，F5-TTS 模型仓库标注为 CC BY-NC 4.0，请勿将其用于违反许可的场景。
 
 ## Windows 环境变量
 
@@ -107,11 +108,13 @@ ffprobe -version
 
 ### 1. 安装 Node.js、Corepack 和 pnpm
 
-安装 Git 和 Node.js 20.19+ 后，在 PowerShell 执行：
+安装 Git、Git LFS 和 Node.js 20.19+ 后，在 PowerShell 执行：
 
 ```powershell
 git clone https://github.com/MiaoShuYo/zhiying.git
 cd zhiying
+git lfs install
+git lfs pull
 corepack enable
 corepack prepare pnpm@11.25.0 --activate
 node --version
