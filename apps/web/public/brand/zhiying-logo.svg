@@ -8,6 +8,6 @@
     </g>
     <path d="M31.5 21.5L37.5 26L31.5 30.5V21.5Z" fill="#71D8C2"/>
   </g>
-  <text x="72" y="35" fill="#202735" font-family="'Noto Sans SC','Microsoft YaHei',sans-serif" font-size="25" font-weight="750" letter-spacing="1.5">知影</text>
-  <text x="73" y="52" fill="#8B95A5" font-family="'DM Sans',Arial,sans-serif" font-size="8" font-weight="700" letter-spacing="2.2">LOCAL STUDIO</text>
+  <text x="72" y="35" fill="#F4F6FC" font-family="'Noto Sans SC','Microsoft YaHei',sans-serif" font-size="25" font-weight="750" letter-spacing="1.5">知影</text>
+  <text x="73" y="52" fill="#AEB8CC" font-family="'DM Sans',Arial,sans-serif" font-size="8" font-weight="700" letter-spacing="2.2">LOCAL STUDIO</text>
 </svg>
