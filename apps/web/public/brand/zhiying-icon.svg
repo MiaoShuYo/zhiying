@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>知影应用图标</title>
+  <rect width="512" height="512" rx="116" fill="#26345F"/>
+  <g stroke="#F7F8FF" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M118 151H214M112 221H204M132 226L196 164M139 238L195 337M112 337H202" stroke-width="22"/>
+    <rect x="267" y="145" width="126" height="204" rx="13" stroke-width="20"/>
+  </g>
+  <path d="M304 204L365 247L304 290V204Z" fill="#71D8C2"/>
+</svg>
