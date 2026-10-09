@@ -78,13 +78,11 @@ F5-TTS、Vocos 和可选 Qwen GGUF 权重随仓库通过 Git LFS 提交，合计
 克隆项目并进入仓库根目录后，把模型、缓存和项目数据放到 D 盘或其他有足够空间的磁盘。下面以 FFmpeg 安装在 `D:\Tools\ffmpeg-8.1.2-full-shared\bin` 为例。用普通 PowerShell 执行：
 
 ```powershell
-# 将 FFmpeg bin 加入当前 Windows 用户的 PATH，不覆盖已有 PATH
+# 将兼容 TorchCodec 的 FFmpeg 8 放在当前 Windows 用户 PATH 最前面
 $ffmpegBin = 'D:\Tools\ffmpeg-8.1.2-full-shared\bin'
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-$pathEntries = @($userPath -split ';' | Where-Object { $_ })
-if ($pathEntries -notcontains $ffmpegBin) {
-  [Environment]::SetEnvironmentVariable('Path', (($pathEntries + $ffmpegBin) -join ';'), 'User')
-}
+$pathEntries = @($userPath -split ';' | Where-Object { $_ -and $_.TrimEnd('\') -ne $ffmpegBin.TrimEnd('\') })
+[Environment]::SetEnvironmentVariable('Path', (@($ffmpegBin) + $pathEntries -join ';'), 'User')
 
 # 把大型模型与 Hugging Face 缓存放到 D 盘
 [Environment]::SetEnvironmentVariable('OLLAMA_MODELS', 'D:\AI\Ollama\models', 'User')

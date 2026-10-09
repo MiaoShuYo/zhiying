@@ -45,6 +45,7 @@ model Job {
   sceneId String?
   attempt Int @default(0)
   error String?
+  progress String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

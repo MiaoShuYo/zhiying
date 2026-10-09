@@ -36,7 +36,7 @@ export const StoryboardSchema = z.object({
   aspectRatio: AspectRatioSchema.default('16:9'),
   styleId: StyleIdSchema,
   durationTarget: z.number().positive().optional(),
-  scenes: z.array(SceneSchema).min(1).max(40),
+  scenes: z.array(SceneSchema).min(1).max(100),
 });
 export const ProjectStatusSchema = z.enum(['created', 'extracting', 'analyzing', 'writing', 'storyboarding', 'awaiting_review', 'generating_audio', 'building_timeline', 'rendering', 'encoding', 'completed', 'failed']);
 export const JobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);

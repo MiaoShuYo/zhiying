@@ -1,12 +1,16 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { readdir, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { db } from '@/lib/db';
-import { parseProject } from '@/lib/pipeline';
+import { parseProject, processProject } from '@/lib/pipeline';
+import { recoverInterruptedStoryboardJobs } from '@/lib/project-recovery';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 export const runtime = 'nodejs';
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params; const project = await db.project.findUnique({ where: { id }, include: { scenes: { orderBy: { orderIndex: 'asc' } }, jobs: { orderBy: { createdAt: 'desc' }, take: 10 } } });
+  const { id } = await params;
+  const recoverable = await recoverInterruptedStoryboardJobs(id);
+  if (recoverable.length) after(async () => Promise.all(recoverable.map(job => processProject(job.projectId, job.stage))));
+  const project = await db.project.findUnique({ where: { id }, include: { scenes: { orderBy: { orderIndex: 'asc' } }, jobs: { orderBy: { createdAt: 'desc' }, take: 10 } } });
   return project ? NextResponse.json(parseProject(project)) : NextResponse.json({ error: '项目不存在' }, { status: 404 });
 }
 
