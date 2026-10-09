@@ -72,6 +72,7 @@ def _prepare_reference_prompt(ref_file: Path, transcript: str):
     if not boundaries:
         boundaries = [index + 1 for index, char in enumerate(transcript) if char in "，,"]
     matches = []
+    approximate_matches = []
     for boundary in boundaries:
         prefix = transcript[:boundary].strip()
         expected_ms = len([char for char in prefix if not char.isspace()]) / total_chars * len(audio)
@@ -80,14 +81,29 @@ def _prepare_reference_prompt(ref_file: Path, transcript: str):
             if not 4_000 <= clip_end <= 11_500:
                 continue
             deviation = abs(clip_end - expected_ms)
+            approximate_matches.append((deviation, clip_end, prefix))
             # A loose match can pair speech from the next sentence with an
             # earlier transcript boundary and reproduce the unwanted words.
             if deviation <= max(1_000, expected_ms * 0.15):
                 matches.append((clip_end, -deviation, prefix))
 
-    if not matches:
-        raise ValueError("参考音频与转录文本无法在句末停顿处可靠对齐。请检查转录是否与录音一致，或提供一段有完整句末停顿的参考音频。")
-    clip_end, _, matched_text = max(matches)
+    if matches:
+        clip_end, _, matched_text = max(matches)
+    elif approximate_matches:
+        # Long recordings often lack a detectable pause exactly at the
+        # transcript boundary. Use the closest available pause as a fallback.
+        _, clip_end, matched_text = min(approximate_matches, key=lambda item: item[0])
+    else:
+        # With no usable pauses, truncate by duration and keep the nearest
+        # transcript boundary instead of failing the entire voice generation.
+        clip_end = min(10_000, len(audio))
+        target_chars = total_chars * clip_end / len(audio)
+        candidate_boundaries = boundaries or list(range(1, len(transcript) + 1))
+        boundary = min(
+            candidate_boundaries,
+            key=lambda index: abs(sum(not char.isspace() for char in transcript[:index]) - target_chars),
+        )
+        matched_text = transcript[:boundary].strip()
     return audio[:clip_end], matched_text
 
 def _narration_segments(text: str) -> list[str]:
