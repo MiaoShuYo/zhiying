@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $statePath = Join-Path $PSScriptRoot 'data\runtime\services.json'
 if (-not (Test-Path -LiteralPath $statePath)) {
   Write-Host '没有由 start.ps1 启动的服务。'
