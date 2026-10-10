@@ -166,7 +166,19 @@ uv sync --python 3.13 --extra tts
 
 `--extra tts` 会在 Python 文档服务依赖外安装锁定版本的 F5-TTS、PyTorch XPU、TorchAudio 和 TorchCodec。若只需要 PDF 解析、不需要语音克隆，可以省略 `--extra tts`。
 
-在 `services\python` 目录启动服务：
+### 一键启动和停止
+
+完成上述依赖安装并配置 `apps\web\.env` 后，在仓库根目录运行：
+
+```powershell
+.\start.ps1
+```
+
+脚本会使用 FFmpeg 8 full-shared，同时启动 Python 服务、Next.js 界面和渲染 Worker，并将日志写入 `logs`。网页地址为 [`http://127.0.0.1:3000`](http://127.0.0.1:3000)。如果 FFmpeg 8 安装在其他位置，运行 `.\start.ps1 -FFmpegBin 'D:\你的路径\bin'`。脚本不会自动启动 Ollama；生成分镜前仍需确保 Ollama 正在运行。停止这些服务时运行 `.\stop.ps1`。
+
+如果 PowerShell 禁止执行脚本，可使用 `pwsh -ExecutionPolicy Bypass -File .\start.ps1`。下面的命令也可用于分别启动服务。
+
+在 `services\python` 目录单独启动 Python 服务：
 
 ```powershell
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir app
@@ -174,7 +186,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --reload-dir a
 
 `--reload-dir app` 限定热重载监视应用源码，避免虚拟环境里的模型库文件变化反复触发服务重启。打开 `http://localhost:8000/health` 查看服务状态。
 
-### 5. 启动 Web 和渲染 Worker
+### 5. 单独启动 Web 和渲染 Worker
 
 在仓库根目录的另一个 PowerShell 窗口执行：
 
@@ -212,6 +224,8 @@ Python 服务可使用 Windows 用户环境变量：
 
 ```powershell
 pnpm dev          # 启动 Web 和 Worker
+.\start.ps1       # 同时启动 Python、Web 和 Worker
+.\stop.ps1        # 停止 start.ps1 启动的服务
 pnpm build        # 构建所有 TypeScript 工作区
 pnpm typecheck    # 类型检查
 pnpm test         # 共享 Schema 测试
