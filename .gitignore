@@ -57,3 +57,4 @@ data/models/f5-tts/vocos-mel-24khz/*
 data/models/qwen3-4b/*
 !data/models/qwen3-4b/Modelfile
 !data/models/qwen3-4b/qwen3-4b.gguf.part*
+doc/
