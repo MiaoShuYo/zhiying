@@ -11,6 +11,7 @@ outputs/
 logs/
 examples/
 apps/web/public/audio/
+apps/web/public/projects/
 *.db
 *.db-journal
 __pycache__/
