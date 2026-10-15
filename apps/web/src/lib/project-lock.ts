@@ -1,6 +1,8 @@
 import { db } from './db';
+import { recoverInterruptedRenderJobs } from './render-recovery';
 
 export async function getProjectLock(projectId: string) {
+  await recoverInterruptedRenderJobs(projectId);
   const project = await db.project.findUnique({
     where: { id: projectId },
     select: {

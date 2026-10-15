@@ -4,14 +4,16 @@
 
 # 知影：本地 AI 知识视频生成器
 
-知影（Local Studio）是一个运行在 Windows 本机的 PDF、Markdown 和文本讲解视频工作台。它使用 Ollama 生成内容和分镜，用 F5-TTS 克隆用户提供的声音，最后由 Remotion 和 FFmpeg 导出 1080p H.264 MP4。源文件、声音参考、生成音频和视频默认保存在本地。
+知影（Local Studio）是一个运行在 Windows 本机的 PDF、PPTX、Markdown、公开网页和文本讲解视频工作台。它使用 Ollama 生成内容和分镜，用 F5-TTS 克隆用户提供的声音，最后由 Remotion 和 FFmpeg 导出横屏或竖屏 1080p H.264 MP4。源文件、声音参考、图片素材、生成音频和视频默认保存在本地。
 
 ## 功能
 
-- 导入 PDF、Markdown 或粘贴文本，生成可编辑故事板。
+- 导入 PDF、PPTX、Markdown、公开文章 URL 或粘贴文本，生成可编辑故事板。
+- PPTX 可提取内容重建，也可使用 PowerPoint/LibreOffice 保留原页画面；演讲者备注优先作为旁白依据。
 - 编辑、排序、删除或单独重新生成场景。
 - 通过参考音频和对应转录生成场景旁白，并试听。
-- 使用 Remotion 预览并导出 16:9、1920 × 1080、30 FPS MP4。
+- 使用 Remotion 预览并导出 16:9 或 9:16、30 FPS MP4；支持逐词字幕和本地 BGM。
+- 提供 Timeline、Math、Whiteboard 场景，以及本地图片素材和 Wikimedia Commons 图片搜索。
 - 使用 SQLite 保存项目和作业状态；Intel Quick Sync 可用时尝试硬件编码，否则使用 H.264 软件编码。
 
 ## 系统与硬件要求
@@ -41,6 +43,7 @@
 | Ollama for Windows | 本地大语言模型服务，默认 API 地址 `http://localhost:11434` |
 | FFmpeg | **8.x full-shared**，需包含 `ffmpeg.exe`、`ffprobe.exe` 和共享 DLL |
 | Chromium/Chrome | Remotion 会优先使用本机 Chrome；找不到时会下载渲染所需浏览器 |
+| PowerPoint 或 LibreOffice | 可选；用于 PPTX“保留原页画面”导出。未安装时仍可使用内容重建模式 |
 | Intel Graphics Driver | 使用 Intel Arc/XPU 或 Quick Sync 时需要；建议安装设备厂商提供的当前稳定驱动 |
 
 Remotion 渲染及 F5-TTS 音频处理都需要 FFmpeg。Python 服务必须能通过 `PATH` 找到 `ffmpeg` 和 `ffprobe`。TorchCodec 0.10 与 FFmpeg 4–8 兼容，因此此项目建议使用 FFmpeg 8 full-shared；不建议使用 FFmpeg 9。
@@ -166,6 +169,8 @@ uv sync --python 3.13 --extra tts
 
 `--extra tts` 会在 Python 文档服务依赖外安装锁定版本的 F5-TTS、PyTorch XPU、TorchAudio 和 TorchCodec。若只需要 PDF 解析、不需要语音克隆，可以省略 `--extra tts`。
 
+逐词字幕对齐复用 `tts` extra 中的 PyTorch/TorchAudio/Transformers 依赖。首次使用时会从 Hugging Face 下载中文或英文 wav2vec2 对齐模型；模型随后缓存在本机。PPT 保留原页模式需要安装 PowerPoint 或 LibreOffice。网页抽取和 Commons 图片搜索会在用户主动导入/搜索时访问互联网。
+
 ### 一键启动和停止
 
 完成上述依赖安装并配置 `apps\web\.env` 后，在仓库根目录运行：
@@ -239,4 +244,27 @@ pnpm db:push      # 同步 SQLite 数据库结构
 
 ## 当前范围
 
-首版支持 PDF/Markdown/文本输入、title/bullets/diagram/comparison/chart/code 六种场景、四种视频风格、场景编辑与重试、声音克隆、预览和 MP4 导出。PPT、URL、9:16 视频、逐词字幕高亮、BGM、品牌套件和云端模型 Provider 不在当前版本范围内。
+当前版本支持 PDF/PPTX/Markdown/公开文章 URL/文本输入、16:9 与 9:16 输出、title/bullets/diagram/comparison/chart/code/timeline/math/media 场景、五种视频风格、PPTX 双模式、逐词字幕、用户导入 BGM、Commons 图片搜索、场景编辑与重试、声音克隆、预览和 MP4 导出。品牌套件和云端模型 Provider 暂不支持。
+
+
+### 中文多音字与人工纠音
+
+生成语音前，系统使用现有的本机 Ollama 模型（`OLLAMA_BASE_URL`、`OLLAMA_MODEL`）结合完整旁白选择多音字读音，并校验输出只能采用该字的候选读音。随后把确定的逐字拼音直接接入 F5-TTS 的分段合成，避免内部再次分词猜音。该适配针对项目锁定的 F5-TTS 1.1.22。参考音频与旁白分别处理；字幕仍显示原文。
+
+在故事板的旁白下方展开“中文读音纠正”，填写汉字和带声调数字的拼音，例如 `几行代码` / `ji3 hang2 dai4 ma3`。可以先在旁白中选中文字，只标注该处，也可保存为场景、项目或所有项目的词组规则。`v` 表示 ü，5 表示轻声。位置标注优先，其次为场景、项目、通用规则，最后才由模型和词典判断。修改旁白会清除位置标注，避免错位。
+
+场景和项目规则随故事板保存；通用词典保存在 `data/settings/pronunciation.json`。添加或删除规则后，保存分镜并重新生成受影响场景的语音。全局规则对其他项目的已有音频不会自动重写，需要在对应项目重新生成。新音频使用独立文件名避免浏览器复用旧缓存；重新导出才能更新已有视频。
+
+自动判断无法保证所有语境都正确。本机模型连接失败、超时或返回无效结果时，保留人工规则并回退词典，界面会显示具体回退提示。不会为读音判断调用云端服务或自动下载模型。更新后需要重启 Python 服务；生产模式的 Web 需要重新构建和启动。
+
+### Windows 上重新生成 Prisma Client
+
+若 `prisma generate` 报 `EPERM ... rename ... query_engine-windows.dll.node`，说明运行中的 Web 或 Worker 正占用引擎 DLL。等待当前任务结束后，在项目根目录执行：
+
+```powershell
+.\stop.ps1
+pnpm db:generate
+.\start.ps1
+```
+
+只有 Client 生成成功后再检查 Web 类型。不要通过删除类型或添加 `any` 来绕过缺失的 Prisma Client。长文分镜现在按批保存到项目目录的 `storyboard-checkpoint.json`；选择“从失败步骤重试”会在输入和配置未改变时继续已完成的批次。旧版本失败任务没有该文件，需要重新生成。

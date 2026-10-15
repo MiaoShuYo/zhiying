@@ -1,3 +1,4 @@
+import { recoverInterruptedRenderJobs } from '@/lib/render-recovery';
 import { after, NextResponse } from 'next/server';
 import { readdir, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
@@ -8,6 +9,7 @@ import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 export const runtime = 'nodejs';
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  await recoverInterruptedRenderJobs();
   const recoverable = await recoverInterruptedStoryboardJobs(id);
   if (recoverable.length) after(async () => Promise.all(recoverable.map(job => processProject(job.projectId, job.stage))));
   const project = await db.project.findUnique({ where: { id }, include: { scenes: { orderBy: { orderIndex: 'asc' } }, jobs: { orderBy: { createdAt: 'desc' }, take: 10 } } });
@@ -50,5 +52,6 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     const files = await readdir(audioRoot);
     await Promise.all(files.filter((name) => name.startsWith(`${id}-`)).map((name) => rm(join(audioRoot, name), { force: true })));
   } catch { /* Generated audio may not exist. */ }
+  try { await rm(resolve(process.cwd(), 'public', 'projects', id), { recursive: true, force: true }); } catch { /* Project asset files may not exist. */ }
   return new Response(null, { status: 204 });
 }

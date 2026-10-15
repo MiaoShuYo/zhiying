@@ -12,6 +12,8 @@ model Project {
   sourceText String @default("")
   sourcePath String?
   styleId String @default("minimal-tech")
+  importMode String @default("rebuild")
+  assetsJson String @default("[]")
   voiceId String?
   aspectRatio String @default("16:9")
   status String @default("created")

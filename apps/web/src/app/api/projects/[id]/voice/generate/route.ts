@@ -6,13 +6,14 @@ import { join, resolve } from 'node:path';
 import { db } from '@/lib/db';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 import { StoryboardSchema } from '@m2v/schema';
+import { readPronunciationRules } from '@/lib/pronunciation';
 export const runtime = 'nodejs';
 
-type SynthesisResult = { ok: boolean; audioPath?: string; duration?: number; error?: string; detail?: string };
+type SynthesisResult = { ok: boolean; audioPath?: string; duration?: number; error?: string; detail?: string; warnings?: string[] };
 
-function requestSynthesis(service: string, text: string, voiceId: string, speed: number): Promise<SynthesisResult> {
+function requestSynthesis(service: string, text: string, voiceId: string, speed: number, scopes: unknown[]): Promise<SynthesisResult> {
   const endpoint = new URL(`${service.replace(/\/$/, '')}/synthesize`);
-  const payload = new URLSearchParams({ text, voice_id: voiceId, speed: String(speed) }).toString();
+  const payload = new URLSearchParams({ text, voice_id: voiceId, speed: String(speed), pronunciation_scopes: JSON.stringify(scopes), pronunciation_base: process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434', pronunciation_model: process.env.OLLAMA_MODEL ?? 'qwen3:4b' }).toString();
   const transport = endpoint.protocol === 'https:' ? httpsRequest : httpRequest;
   return new Promise((resolveRequest, rejectRequest) => {
     const request = transport(endpoint, {
@@ -33,6 +34,21 @@ function requestSynthesis(service: string, text: string, voiceId: string, speed:
     request.setTimeout(30 * 60 * 1000, () => request.destroy(new Error('Python 语音服务在 30 分钟内没有响应')));
     request.end(payload);
   });
+}
+
+async function alignNarration(service: string, audioPath: string, text: string): Promise<{ text: string; start: number; end: number }[]> {
+  const bytes = await readFile(audioPath);
+  const form = new FormData();
+  form.set('file', new Blob([bytes], { type: 'audio/wav' }), 'narration.wav');
+  form.set('text', text);
+  form.set('language', /[\u3400-\u9fff]/.test(text) ? 'zh' : 'en');
+  const response = await fetch(`${service.replace(/\/$/, '')}/align`, { method: 'POST', body: form, signal: AbortSignal.timeout(20 * 60 * 1000) });
+  const result = await response.json() as { words?: { text: string; start: number; end: number }[]; detail?: string; error?: string };
+  if (!response.ok || !result.words?.length) throw new Error(result.detail ?? result.error ?? '旁白时间对齐失败');
+  if (result.words.some(word => /<\s*unk\s*>/i.test(word.text) || !Number.isFinite(word.start) || !Number.isFinite(word.end) || word.start < 0 || word.end <= word.start)) {
+    throw new Error('对齐模型返回了无效词语时间，已改用逐句字幕');
+  }
+  return result.words;
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -69,14 +85,29 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // Windows Node may resolve localhost to ::1 while FastAPI listens on IPv4.
   const service = process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000';
   try {
+    const globalRules = await readPronunciationRules();
     for (const scene of targetScenes) {
       const existing = scene.audioSrc ? resolve(process.cwd(), 'public', scene.audioSrc) : '';
-      if (!sceneId && existing && !regenerateAtNewSpeed) { try { await access(existing); continue; } catch { /* Regenerate missing audio assets. */ } }
+      if (!sceneId && existing && !regenerateAtNewSpeed) {
+        try {
+          await access(existing);
+          if (!scene.wordTimings?.length || scene.wordTimings.some(word => /<\s*unk\s*>/i.test(word.text))) {
+            scene.wordTimings = undefined;
+            try { scene.wordTimings = await alignNarration(service, existing, scene.narration); }
+            catch (alignmentError) { console.warn(`[caption-align] ${scene.id}: ${alignmentError instanceof Error ? alignmentError.message : String(alignmentError)}`); }
+            await db.project.update({ where: { id }, data: { storyboardJson: JSON.stringify(storyboard) } });
+          }
+          continue;
+        } catch { /* Regenerate missing audio assets. */ }
+      }
       await db.job.update({ where: { id: job.id }, data: { sceneId: scene.id } });
-      const result = await requestSynthesis(service, scene.narration, voiceId, speed);
+      const result = await requestSynthesis(service, scene.narration, voiceId, speed, [globalRules, storyboard.pronunciationRules ?? [], scene.pronunciationOverrides ?? []]);
       if (!result.ok || !result.audioPath) throw new Error(result.detail ?? result.error ?? `场景 ${scene.id} 语音生成失败`);
-      const filename = `${id}-${scene.id}.wav`; const publicPath = join(publicAudio, filename); await copyFile(result.audioPath, publicPath);
+      scene.pronunciationWarnings = result.warnings ?? [];
+      const filename = `${id}-${scene.id}-${Date.now()}.wav`; const publicPath = join(publicAudio, filename); await copyFile(result.audioPath, publicPath);
       scene.audioSrc = `audio/${filename}`; if (result.duration && result.duration > 0) scene.duration = Math.max(2, result.duration + 0.5);
+      try { scene.wordTimings = await alignNarration(service, publicPath, scene.narration); }
+      catch (alignmentError) { scene.wordTimings = undefined; console.warn(`[caption-align] ${scene.id}: ${alignmentError instanceof Error ? alignmentError.message : String(alignmentError)}`); }
       await db.scene.update({ where: { id: scene.id }, data: { audioPath: `audio/${filename}`, duration: scene.duration } });
       await db.project.update({ where: { id }, data: { storyboardJson: JSON.stringify(storyboard) } });
     }
@@ -84,7 +115,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     await db.project.update({ where: { id }, data: { storyboardJson: JSON.stringify(storyboard), status: 'awaiting_review' } });
     await db.job.update({ where: { id: job.id }, data: { status: 'completed', stage: 'awaiting_review', sceneId: null } });
     const generatedScene = sceneId ? targetScenes[0] : null;
-    return NextResponse.json({ storyboard, message: generatedScene ? `场景「${generatedScene.title ?? '未命名'}」语音已生成` : '逐场景语音已生成' });
+    const unaligned = targetScenes.filter(scene => !scene.wordTimings?.length).length;
+    const alignmentNote = unaligned ? `；${unaligned} 个场景未能完成逐词对齐，仍可使用逐句字幕（请检查本地模型是否已下载）` : '';
+    const pronunciationNote = [...new Set(targetScenes.flatMap(scene => scene.pronunciationWarnings ?? []))].join('；');
+    return NextResponse.json({ storyboard, message: `${generatedScene ? `场景「${generatedScene.title ?? '未命名'}」语音已生成` : '逐场景语音已生成'}${alignmentNote}${pronunciationNote ? `；${pronunciationNote}` : ''}` });
   } catch (error) {
     const rawMessage = error instanceof Error ? error.message : '语音生成失败';
     // FileNotFoundError contains the substring "NotFound"; don't mistake a
