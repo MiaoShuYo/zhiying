@@ -2,12 +2,24 @@ import { after, NextResponse } from 'next/server';
 import { createProject, processProject } from '@/lib/pipeline';
 import { recoverInterruptedJobs } from '@/lib/project-recovery';
 import { db } from '@/lib/db';
+import type { Prisma } from '@prisma/client';
 export const runtime = 'nodejs';
 
-export async function GET() {
+export async function GET(request: Request) {
   const { restarted } = await recoverInterruptedJobs();
   if (restarted.length) after(async () => Promise.all(restarted.map(job => processProject(job.projectId, job.stage))));
-  const projects = await db.project.findMany({ orderBy: { updatedAt: 'desc' }, include: { scenes: { select: { id: true } }, jobs: { where: { status: { in: ['queued', 'running', 'cancelling'] } }, select: { stage: true }, take: 1, orderBy: { createdAt: 'desc' } } } });
+  const search = new URL(request.url).searchParams;
+  const q = search.get('q')?.trim() ?? '';
+  const status = search.get('status')?.trim() ?? '';
+  const sortParam = search.get('sort') ?? 'updated';
+  const sort = sortParam === 'created' || sortParam === 'name' ? sortParam : 'updated';
+  const order = search.get('order') === 'asc' ? 'asc' : 'desc';
+  const orderBy: Prisma.ProjectOrderByWithRelationInput = sort === 'name' ? { name: order } : sort === 'created' ? { createdAt: order } : { updatedAt: order };
+  const projects = await db.project.findMany({
+    where: { ...(q ? { OR: [{ name: { contains: q } }, { sourceText: { contains: q } }] } : {}), ...(status ? { status } : {}) },
+    orderBy,
+    include: { scenes: { select: { id: true } }, jobs: { where: { status: { in: ['queued', 'running', 'cancelling'] } }, select: { stage: true }, take: 1, orderBy: { createdAt: 'desc' } } },
+  });
   const activeStatuses = ['created', 'extracting', 'analyzing', 'storyboarding', 'generating_audio', 'rendering', 'encoding'];
   return NextResponse.json(projects.map(project => ({ id: project.id, name: project.name, status: project.status, styleId: project.styleId, createdAt: project.createdAt.toISOString(), sceneCount: project.scenes.length, busy: project.jobs.length > 0 || activeStatuses.includes(project.status), busyStage: project.jobs[0]?.stage ?? null })));
 }

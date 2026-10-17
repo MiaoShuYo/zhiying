@@ -8,6 +8,7 @@ import { db } from '@/lib/db';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const exec = promisify(execFile);
+const pnpmBinary = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 type Raw = { name: string; ok: boolean; detail: string; fix: string; warn?: boolean };
 type Check = { name: string; status: 'ok' | 'warn' | 'fail'; ok: boolean; detail: string; fix: string };
 const repoRoot = resolve(process.cwd(), '../..');
@@ -58,8 +59,8 @@ export async function GET() {
   const major = Number(process.versions.node.split('.')[0]);
   checks.push({ name: 'Node.js 运行时', ok: major >= 20, detail: `当前 ${process.version}`, fix: '安装 Node.js 20 或更高版本后重启 Web 与 Worker 服务' });
   let pnpmVersion = '';
-  try { pnpmVersion = (await exec('pnpm', ['--version'], { windowsHide: true, timeout: 15_000 })).stdout.trim(); } catch { pnpmVersion = ''; }
-  checks.push({ name: 'pnpm 包管理器', ok: Boolean(pnpmVersion), warn: true, detail: pnpmVersion ? `pnpm ${pnpmVersion}` : '未检测到 pnpm 命令', fix: '执行 npm install -g pnpm 后重新打开终端（若你使用 npm 安装依赖可忽略此项）' });
+  try { pnpmVersion = (await exec(pnpmBinary, ['--version'], { windowsHide: true, timeout: 15_000, shell: process.platform === 'win32' })).stdout.trim(); } catch { pnpmVersion = ''; }
+  checks.push({ name: 'pnpm 包管理器', ok: Boolean(pnpmVersion), warn: !pnpmVersion, detail: pnpmVersion ? `pnpm ${pnpmVersion}` : '未检测到 pnpm 命令', fix: '执行 npm install -g pnpm 后重新打开终端（若你使用 npm 安装依赖可忽略此项）' });
   let databaseOk = true; let databaseDetail = '';
   try { const projectCount = await db.project.count(); databaseDetail = `SQLite 可读写，现有 ${projectCount} 个项目`; } catch (error) { databaseOk = false; databaseDetail = `数据库不可用：${String(error)}`; }
   checks.push({ name: '数据库', ok: databaseOk, detail: databaseDetail, fix: '确认进程对仓库 data 目录有写权限，并执行 pnpm db:push 重建数据库结构' });

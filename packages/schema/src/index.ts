@@ -19,6 +19,13 @@ export const SubtitleSchema = z.object({
 });
 export type SubtitleSettings = z.infer<typeof SubtitleSchema>;
 
+export const SubtitleCueSchema = z.object({
+  text: z.string().min(1).max(200),
+  start: z.number().nonnegative(),
+  end: z.number().positive(),
+}).refine(cue => cue.end > cue.start, '字幕结束时间需晚于开始时间');
+export type SubtitleCue = z.infer<typeof SubtitleCueSchema>;
+
 const BaseSceneSchema = z.object({
   id: z.string().min(1),
   type: SceneTypeSchema,
@@ -37,6 +44,8 @@ const BaseSceneSchema = z.object({
   image: z.object({ fit: z.enum(['contain', 'cover']).default('contain'), zoom: z.number().min(1).max(3).default(1), x: z.number().min(0).max(100).default(50), y: z.number().min(0).max(100).default(50) }).optional(),
   audioSrc: z.string().optional(),
   wordTimings: z.array(z.object({ text: z.string(), start: z.number().nonnegative(), end: z.number().positive() })).optional(),
+  subtitleCues: z.array(SubtitleCueSchema).max(60).optional(),
+  sourcePage: z.number().int().min(1).optional(),
   visual: z.record(z.unknown()).default({}),
   animation: z.string().optional(),
   styleOverride: z.record(z.unknown()).optional(),
@@ -66,6 +75,18 @@ export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
   }
 });
 
+/** Basic delivery frame: a title card before the first scene or after the last one. */
+export const FrameCardSchema = z.object({
+  enabled: z.boolean().default(false),
+  title: z.string().max(50).optional(),
+  subtitle: z.string().max(120).optional(),
+  duration: z.number().min(1).max(15).default(3),
+});
+export type FrameCard = z.infer<typeof FrameCardSchema>;
+
+export const TransitionSchema = z.enum(['none', 'fade']).default('none');
+export type Transition = z.infer<typeof TransitionSchema>;
+
 export const StoryboardSchema = z.object({
   title: z.string().min(1),
   pronunciationRules: z.array(PronunciationRuleSchema.refine(rule => rule.occurrence === undefined, '项目规则不能指定出现位置')).max(200).optional(),
@@ -77,6 +98,9 @@ export const StoryboardSchema = z.object({
   bgmVolume: z.number().min(0).max(1).default(0.12),
   bgmFadeIn: z.number().min(0).max(10).default(1),
   bgmFadeOut: z.number().min(0).max(10).default(1),
+  intro: FrameCardSchema.optional(),
+  outro: FrameCardSchema.optional(),
+  transition: TransitionSchema,
   scenes: z.array(SceneSchema).min(1),
 }).superRefine((storyboard, ctx) => {
   if (storyboard.bgmSrc && !/^(?:projects\/[A-Za-z0-9_-]+\/assets\/[^/]+|audio\/[^/]+)$/.test(storyboard.bgmSrc)) {
@@ -102,3 +126,5 @@ export type Storyboard = z.infer<typeof StoryboardSchema>;
 export type StyleId = z.infer<typeof StyleIdSchema>;
 
 export * from "./editor";
+export * from "./preflight";
+export * from "./timeline";

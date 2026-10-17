@@ -1,9 +1,15 @@
-import { createSnapshot, listSnapshots, lockSnapshot, restoreSnapshot, snapshotResponse } from '@/lib/backups';
+import { createSnapshot, listSnapshots, lockSnapshot, restoreSnapshot, snapshotResponse, verifySnapshot } from '@/lib/backups';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 export const runtime = 'nodejs';
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  try { const { id } = await params; const snapshot = new URL(request.url).searchParams.get('download'); return snapshot ? await snapshotResponse(id, snapshot) : Response.json(await listSnapshots(id)); }
-  catch (error) { return Response.json({ error: String(error) }, { status: 400 }); }
+  try {
+    const { id } = await params; const search = new URL(request.url).searchParams;
+    const snapshot = search.get('download');
+    if (snapshot) return await snapshotResponse(id, snapshot);
+    const verify = search.get('verify');
+    return Response.json(verify ? await verifySnapshot(id, verify) : await listSnapshots(id));
+  }
+  catch (error) { return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 }); }
 }
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {

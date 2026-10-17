@@ -66,6 +66,45 @@ export function buildCaptionCues(narration: string, timings: WordTiming[] = [], 
   return cues;
 }
 
+export function captionDuration(scene: { duration?: number; audioDuration?: number }): number {
+  return scene.audioDuration ?? Math.max(3, scene.duration ?? 6);
+}
+
+export type CaptionScene = {
+  type: string;
+  narration: string;
+  visual: Record<string, unknown>;
+  wordTimings?: WordTiming[];
+  subtitleCues?: CaptionCue[];
+  duration?: number;
+  audioDuration?: number;
+};
+
+/** Manual cues stay relative to the scene start; they are clamped, never dropped by gaps. */
+function manualCues(cues: CaptionCue[], limit: number): CaptionCue[] {
+  const resolved: CaptionCue[] = [];
+  let previousStart = 0;
+  for (const cue of [...cues].sort((a, b) => a.start - b.start)) {
+    const text = cue.text.trim();
+    if (!text || !Number.isFinite(cue.start) || !Number.isFinite(cue.end) || cue.end <= cue.start) continue;
+    const start = Math.min(Math.max(previousStart, Math.max(0, cue.start)), Math.max(0, limit - 0.05));
+    resolved.push({ text, start, end: Math.min(Math.max(limit, start + 0.05), Math.max(start + 0.05, cue.end)) });
+    previousStart = start;
+  }
+  return resolved;
+}
+
+/** Single source of truth for captions in the preview, the export and the delivery check. */
+export function resolveCaptionCues(scene: CaptionScene, duration = captionDuration(scene), portrait = false): CaptionCue[] {
+  const manual = manualCues(scene.subtitleCues ?? [], duration);
+  if (manual.length) return manual;
+  return buildCaptionCues(captionNarration(scene), scene.wordTimings, duration, portrait);
+}
+
+export function hasManualCues(scene: { subtitleCues?: CaptionCue[] }): boolean {
+  return (scene.subtitleCues ?? []).length > 0;
+}
+
 export function captionAt(cues: CaptionCue[], seconds: number): string {
   return cues.find(cue => seconds >= cue.start && seconds < cue.end)?.text ?? '';
 }

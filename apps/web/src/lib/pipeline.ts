@@ -3,36 +3,50 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { SceneSchema as SceneSchemaForPipeline, StoryboardSchema, type Scene, type Storyboard } from '@m2v/schema';
 import { db } from './db';
+import type { ExtractionMeta, PageInfo } from './extraction';
 
-type Chapter = { title: string; text: string };
+export type Chapter = { title: string; text: string; page?: number };
 
-function splitIntoChapters(title: string, text: string): Chapter[] {
+export function splitIntoChapters(title: string, text: string): Chapter[] {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const heading = /^\s{0,3}(?:#{1,6}\s+.+|第\s*[0-9一二三四五六七八九十百零〇]+\s*[章节篇部].*|(?:章节|部分)\s*[0-9一二三四五六七八九十百零〇]+.*|[0-9]+(?:\.[0-9]+)*[、.．\s]+\S.*)\s*$/;
   const chapters: Chapter[] = [];
   let currentTitle = '';
   let current: string[] = [];
+  let currentPage = 0, chapterPage = 0;
   const flush = () => {
     const body = current.join('\n').trim();
-    if (body) chapters.push({ title: currentTitle || title, text: body });
+    if (body) chapters.push({ title: currentTitle || title, text: body, ...(chapterPage ? { page: chapterPage } : {}) });
   };
   for (const line of lines) {
-    const pdfPageMarker = /^\s*#{1,6}\s*第\s*\d+\s*页\s*$/.test(line);
-    if (heading.test(line) && !pdfPageMarker) {
+    const pageMarker = /^\s*#{1,6}\s*第\s*(\d+)\s*页\s*$/.exec(line);
+    if (pageMarker) { currentPage = Number(pageMarker[1]); continue; }
+    if (heading.test(line)) {
       flush();
       currentTitle = line.trim().replace(/^#{1,6}\s+/, '');
       current = [];
-    } else if (!pdfPageMarker) current.push(line);
+      chapterPage = currentPage;
+    } else {
+      if (!current.length && !chapterPage) chapterPage = currentPage;
+      current.push(line);
+    }
   }
   flush();
   if (chapters.length > 0) return chapters;
 
   // Unheaded documents are divided by paragraph groups so long sources are not
   // silently reduced to one tiny fallback storyboard.
-  const rawParagraphs = text.split(/\n\s*\n/).map(part => part.trim()).filter(Boolean);
+  let fallbackPage = 0;
+  const rawParagraphs: { text: string; page?: number }[] = [];
+  for (const part of text.split(/\n\s*\n/)) {
+    const trimmed = part.trim();
+    const marker = /^#{1,6}\s*第\s*(\d+)\s*页\s*$/.exec(trimmed);
+    if (marker) { fallbackPage = Number(marker[1]); continue; }
+    if (trimmed) rawParagraphs.push({ text: trimmed, ...(fallbackPage ? { page: fallbackPage } : {}) });
+  }
   const paragraphs = rawParagraphs.flatMap(paragraph => {
-    if (paragraph.length <= 3500) return [paragraph];
-    const sentences = paragraph.split(/(?<=[。！？.!?])\s*/).filter(Boolean);
+    if (paragraph.text.length <= 3500) return [paragraph];
+    const sentences = paragraph.text.split(/(?<=[。！？.!?])\s*/).filter(Boolean);
     const result: string[] = [];
     let part = '';
     for (const sentence of sentences) {
@@ -46,24 +60,28 @@ function splitIntoChapters(title: string, text: string): Chapter[] {
       }
     }
     if (part) result.push(part);
-    return result;
+    return result.map(text => ({ text, ...(paragraph.page ? { page: paragraph.page } : {}) }));
   });
-  if (paragraphs.length <= 1 && text.length < 5000) return [{ title, text: text.trim() }];
+  if (paragraphs.length <= 1 && text.length < 5000) return [{ title, text: text.trim(), ...(paragraphs[0]?.page ? { page: paragraphs[0].page } : {}) }];
   const groups: Chapter[] = [];
-  let buffer: string[] = [];
+  let buffer: { text: string; page?: number }[] = [];
   let size = 0;
+  const pushGroup = (items: { text: string; page?: number }[], fallbackTitle: string) => {
+    const page = items.find(item => item.page)?.page;
+    groups.push({ title: fallbackTitle, text: items.map(item => item.text).join('\n\n'), ...(page ? { page } : {}) });
+  };
   for (const paragraph of paragraphs) {
     if (size >= 3500 && buffer.length) {
-      groups.push({ title: `${title} · ${groups.length + 1}`, text: buffer.join('\n\n') });
+      pushGroup(buffer, `${title} · ${groups.length + 1}`);
       buffer = []; size = 0;
     }
-    buffer.push(paragraph); size += paragraph.length;
+    buffer.push(paragraph); size += paragraph.text.length;
   }
-  if (buffer.length) groups.push({ title: groups.length ? `${title} · ${groups.length + 1}` : title, text: buffer.join('\n\n') });
+  if (buffer.length) pushGroup(buffer, groups.length ? `${title} · ${groups.length + 1}` : title);
   return groups.length ? groups : [{ title, text: text.trim() }];
 }
 
-function limitChapters(chapters: Chapter[], maxScenes = 100): Chapter[] {
+export function limitChapters(chapters: Chapter[], maxScenes = 100): Chapter[] {
   if (chapters.length <= maxScenes) return chapters;
   const totalCharacters = chapters.reduce((sum, chapter) => sum + chapter.text.length, 0);
   const targetCount = Math.ceil(chapters.length / maxScenes);
@@ -76,7 +94,7 @@ function limitChapters(chapters: Chapter[], maxScenes = 100): Chapter[] {
     const first = group[0];
     const last = group[group.length - 1];
     const title = group.length === 1 ? first.title : `${first.title}–${last.title}`.slice(0, 50);
-    result.push({ title, text: group.map(chapter => `## ${chapter.title}\n${chapter.text}`).join('\n\n') });
+    result.push({ title, text: group.map(chapter => `## ${chapter.title}\n${chapter.text}`).join('\n\n'), ...(first.page ? { page: first.page } : {}) });
     group = [];
     characters = 0;
   };
@@ -156,7 +174,7 @@ function fallbackChapter(chapter: Chapter): Scene {
   const sentences = narration.split(/(?<=[。！？.!?])\s*/).map(x => x.trim()).filter(Boolean);
   const explicitBullets = chapter.text.match(/^\s*•\s+(.+)$/gm)?.map(item => item.replace(/^\s*•\s+/, '').trim()).filter(Boolean) ?? [];
   const items = (explicitBullets.length ? explicitBullets : sentences.length ? sentences : [narration]).slice(0, 5).map(x => x.length > 90 ? `${x.slice(0, 87)}…` : x);
-  return { id: randomUUID(), type: 'bullets', title: chapter.title.slice(0, 50), narration, duration: Math.max(12, narration.length / 5), visual: { items } };
+  return { id: randomUUID(), type: 'bullets', title: chapter.title.slice(0, 50), narration, duration: Math.max(12, narration.length / 5), visual: { items }, ...(chapter.page ? { sourcePage: chapter.page } : {}) };
 }
 
 function groupChapters(chapters: Chapter[], maxCount = 3, maxCharacters = 6000) {
@@ -176,7 +194,7 @@ function groupChapters(chapters: Chapter[], maxCount = 3, maxCharacters = 6000) 
   return batches;
 }
 
-export type ExtractionMeta = { kind: 'pdf' | 'pptx' | 'markdown' | 'url' | 'text'; filename?: string; pages?: number; ocrPages?: number[]; failedPages?: { page: number; error: string }[]; extractedAt: string };
+export type { ExtractionMeta } from './extraction';
 
 async function extractText(file: File | null, rawText: string, projectId: string, importMode: string): Promise<{ text: string; path: string | null; assets: { path: string; name: string }[]; meta: ExtractionMeta }> {
   const service = process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000';
@@ -209,9 +227,9 @@ async function extractText(file: File | null, rawText: string, projectId: string
   try {
     const response = await fetch(`${service}/extract/pdf`, { method: 'POST', body: form, signal: AbortSignal.timeout(600_000) });
     responseReceived = true;
-    const result = await response.json().catch(() => ({})) as { text?: string; detail?: string; pages?: number; ocrPages?: number[]; failedPages?: { page: number; error: string }[] };
+    const result = await response.json().catch(() => ({})) as { text?: string; detail?: string; pages?: number; ocrPages?: number[]; failedPages?: { page: number; error: string }[]; pageInfo?: PageInfo[] };
     if (!response.ok) throw new Error(result.detail ?? 'PDF 解析失败');
-    if (result.text?.trim()) return { text: result.text, path: null, assets: [] as { path: string; name: string }[], meta: { kind: 'pdf' as const, filename: file.name, pages: result.pages, ocrPages: result.ocrPages, failedPages: result.failedPages, extractedAt } };
+    if (result.text?.trim()) return { text: result.text, path: null, assets: [] as { path: string; name: string }[], meta: { kind: 'pdf' as const, filename: file.name, pages: result.pages, ocrPages: result.ocrPages, failedPages: result.failedPages, pageInfo: result.pageInfo, extractedAt } };
     throw new Error('此 PDF 未检测到可选中的文本。请在环境自检中检查 OCR 依赖，或粘贴识别后的文字。');
   } catch (error) {
     if (responseReceived && error instanceof Error) throw error;
@@ -235,9 +253,9 @@ async function ollamaChapters(title: string, chapters: Chapter[], styleId: strin
     if (!candidate.success) throw new Error(`模型生成的分镜未通过校验：${candidate.error.issues[0]?.message}`);
     const explicitBullets = chapters[index].text.match(/^\s*•\s+(.+)$/gm)?.map(item => item.replace(/^\s*•\s+/, '').trim()).filter(Boolean) ?? [];
     if (candidate.data.type === 'bullets' && explicitBullets.length > 0 && explicitBullets.length <= 5) {
-      return { ...candidate.data, id: randomUUID(), visual: { ...candidate.data.visual, items: explicitBullets } };
+      return { ...candidate.data, id: randomUUID(), visual: { ...candidate.data.visual, items: explicitBullets }, ...(chapters[index].page ? { sourcePage: chapters[index].page } : {}) };
     }
-    return { ...candidate.data, id: randomUUID() };
+    return { ...candidate.data, id: randomUUID(), ...(chapters[index].page ? { sourcePage: chapters[index].page } : {}) };
   });
 }
 
@@ -317,6 +335,9 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
     const batches = groupChapters(chapters);
     let completedChapters = 0;
     const checkpointDir = resolve(process.cwd(), '../../data/projects', projectId);
+    await mkdir(checkpointDir, { recursive: true });
+    // The task centre reads this to show which chapters are done and which are pending.
+    await writeFile(resolve(checkpointDir, 'chapters.json'), JSON.stringify(chapters.map((chapter, position) => ({ index: position + 1, title: chapter.title, ...(chapter.page ? { page: chapter.page } : {}) })))).catch(() => {});
     const checkpointPath = resolve(checkpointDir, 'storyboard-checkpoint.json');
     const checkpointKey = createHash('sha256').update(JSON.stringify({ chapters, title: project.name, style: project.styleId, mode: project.importMode, model: process.env.OLLAMA_MODEL, preferLocalAI })).digest('hex');
     if (startAt === 'storyboarding') {
