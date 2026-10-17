@@ -277,6 +277,75 @@ def _torchcodec_status() -> tuple[bool, str | None]:
     except Exception as exc:
         return False, str(exc)
 
+def _page_quality(chars: int, method: str) -> str:
+    if method == "none" or chars <= 0:
+        return "poor"
+    if method == "ocr":
+        return "fair" if chars >= 60 else "poor"
+    if chars >= 200:
+        return "good"
+    return "fair" if chars >= 30 else "poor"
+
+
+def _page_table_count(page) -> int:
+    finder = getattr(page, "find_tables", None)
+    if finder is None:
+        return 0
+    try:
+        return len(finder().tables)
+    except Exception:
+        return 0
+
+
+def _extract_pdf_page(page, number: int, force_ocr: bool = False, with_tables: bool = True) -> dict:
+    """One page in, one review row out. Failures stay local to the page."""
+    result = {
+        "page": number, "text": "", "method": "none", "chars": 0,
+        "quality": "poor", "warnings": [], "tables": 0, "images": 0,
+    }
+    try:
+        images = len(page.get_images())
+        tables = _page_table_count(page) if with_tables else 0
+        result.update({"tables": tables, "images": images})
+        text = page.get_text("text", sort=True).strip()
+        method = "ocr" if force_ocr else "text"
+        used_ocr = force_ocr
+        if force_ocr or (len(re.sub(r"\s+", "", text)) < 30 and images):
+            tessdata = _ocr_data_dir()
+            if not tessdata:
+                raise ValueError("扫描页需要本地 Tesseract OCR，请安装 chi_sim、eng 语言包并设置 TESSDATA_PREFIX")
+            textpage = page.get_textpage_ocr(language="chi_sim+eng", dpi=150, full=True, tessdata=tessdata)
+            text = page.get_text("text", textpage=textpage, sort=True).strip()
+            used_ocr = True
+            method = "ocr"
+        chars = len(re.sub(r"\s+", "", text))
+        warnings = []
+        if used_ocr:
+            warnings.append("此页来自 OCR 识别，请核对数字、公式与专有名词")
+        if chars == 0:
+            method = "none"
+            warnings.append("此页没有识别出文字")
+        elif chars < 30:
+            warnings.append(f"此页文字较少（{chars} 字），可能是纯图片或跨页内容")
+        if images and chars < 30:
+            warnings.append(f"此页有 {images} 张图片但几乎没有文字")
+        result.update({"text": text, "method": method, "chars": chars, "quality": _page_quality(chars, method), "warnings": warnings})
+    except Exception as exc:
+        result.update({"method": "none", "chars": 0, "quality": "poor", "error": str(exc)})
+    return result
+
+
+def _open_pdf(raw: bytes):
+    doc = pymupdf.open(stream=raw, filetype="pdf")
+    if doc.needs_pass:
+        doc.close()
+        raise ValueError("PDF 已加密，请先解除密码保护")
+    if len(doc) > 500:
+        doc.close()
+        raise ValueError("单个 PDF 最多支持 500 页")
+    return doc
+
+
 @app.post("/extract/pdf")
 async def extract_pdf(file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -286,39 +355,52 @@ async def extract_pdf(file: UploadFile = File(...)):
         raise HTTPException(413, "PDF 文件不能超过 100 MB")
     def parse():
         parts = []
-        ocr_pages = []
-        failed_pages = []
-        with pymupdf.open(stream=raw, filetype="pdf") as doc:
-            if doc.needs_pass:
-                raise ValueError("PDF 已加密，请先解除密码保护")
-            if len(doc) > 500:
-                raise ValueError("单个 PDF 最多支持 500 页")
+        page_info = []
+        with _open_pdf(raw) as doc:
             for index, page in enumerate(doc):
-                try:
-                    text = page.get_text("text", sort=True).strip()
-                    if len(re.sub(r"\s+", "", text)) < 30 and page.get_images():
-                        tessdata = _ocr_data_dir()
-                        if not tessdata:
-                            raise ValueError("扫描页需要本地 Tesseract OCR，请安装 chi_sim、eng 语言包并设置 TESSDATA_PREFIX")
-                        textpage = page.get_textpage_ocr(language="chi_sim+eng", dpi=150, full=True, tessdata=tessdata)
-                        text = page.get_text("text", textpage=textpage, sort=True).strip()
-                        ocr_pages.append(index + 1)
-                    if text: parts.append(f"## 第 {index + 1} 页\n{text}")
-                except Exception as exc:
-                    # A single unreadable page must not discard the pages that did
-                    # work, so record it and let the caller review the rest.
-                    failed_pages.append({"page": index + 1, "error": str(exc)})
+                info = _extract_pdf_page(page, index + 1, with_tables=len(doc) <= 120)
+                page_info.append(info)
+                if info["text"]:
+                    parts.append(f"## 第 {index + 1} 页\n{info['text']}")
             pages = len(doc)
         text = "\n\n".join(parts)
+        failed_pages = [{"page": item["page"], "error": item["error"]} for item in page_info if item.get("error")]
+        ocr_pages = [item["page"] for item in page_info if item["method"] == "ocr"]
         if failed_pages and len(failed_pages) >= pages:
             raise ValueError(f"全部 {pages} 页都无法提取，例如第 {failed_pages[0]['page']} 页：{failed_pages[0]['error']}")
         if len(re.sub(r"\s+", "", text)) < 30:
             raise ValueError("PDF 未提取到足够正文，请检查扫描质量或粘贴识别后的文字")
-        return {"text": text, "pages": pages, "ocrPages": ocr_pages, "failedPages": failed_pages, "filename": file.filename}
+        return {"text": text, "pages": pages, "ocrPages": ocr_pages, "failedPages": failed_pages, "pageInfo": page_info, "filename": file.filename}
     try:
         return await run_in_threadpool(parse)
     except Exception as exc:
         raise HTTPException(422, f"无法解析 PDF：{exc}") from exc
+
+
+@app.post("/extract/pdf/pages")
+async def extract_pdf_pages(file: UploadFile = File(...), pages: str = Form(...), forceOcr: str = Form("false")):
+    """Re-runs only the requested pages so a bad scan does not force a full re-import."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "只支持 PDF 文件")
+    try:
+        targets = sorted({int(value) for value in json.loads(pages)})
+    except Exception as exc:
+        raise HTTPException(400, "页号参数无效") from exc
+    if not targets or len(targets) > 50 or any(page < 1 or page > 500 for page in targets):
+        raise HTTPException(400, "每次可重跑 1 到 50 页，页号需在 1 到 500 之间")
+    raw = await file.read()
+    if len(raw) > 100 * 1024 * 1024:
+        raise HTTPException(413, "PDF 文件不能超过 100 MB")
+    force_ocr = str(forceOcr).strip().lower() in ("1", "true", "yes")
+    def parse():
+        with _open_pdf(raw) as doc:
+            if any(page > len(doc) for page in targets):
+                raise ValueError(f"PDF 只有 {len(doc)} 页，无法重跑第 {max(targets)} 页")
+            return {"pages": [_extract_pdf_page(doc[page - 1], page, force_ocr) for page in targets]}
+    try:
+        return await run_in_threadpool(parse)
+    except Exception as exc:
+        raise HTTPException(422, f"无法重跑 PDF 页面：{exc}") from exc
 
 _HUGGING = set(",;:.!?)]}%\"'”’")
 _OPENING = set("([{“‘")

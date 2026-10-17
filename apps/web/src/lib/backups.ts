@@ -107,6 +107,23 @@ export async function lockSnapshot(projectId: string, snapshotId: string, locked
   manifest.locked = locked;
   await writeFile(path + '.tmp', JSON.stringify(manifest)); await rename(path + '.tmp', path);
 }
+/** Re-reads every file a snapshot claims to hold and reports the ones that no longer match. */
+export async function verifySnapshot(projectId: string, snapshotId: string) {
+  const directory = join(root, safeId(projectId), safeId(snapshotId));
+  const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')) as Manifest;
+  const missing: string[] = [], mismatched: string[] = [];
+  let bytes = 0;
+  for (const file of manifest.files) {
+    let target: string;
+    try { target = inside(join(directory, 'files'), file.path); } catch { missing.push(file.path); continue; }
+    let size: number;
+    try { size = (await stat(target)).size; } catch { missing.push(file.path); continue; }
+    if (size !== file.size) { mismatched.push(file.path); continue; }
+    if (await digest(target) !== file.sha256) mismatched.push(file.path); else bytes += file.size;
+  }
+  return { id: snapshotId, ok: !missing.length && !mismatched.length, checked: manifest.files.length, bytes, missing, mismatched };
+}
+
 export async function snapshotResponse(projectId: string, snapshotId: string) {
   const directory = join(root, safeId(projectId), safeId(snapshotId));
   const raw = await readFile(join(directory, 'manifest.json'));

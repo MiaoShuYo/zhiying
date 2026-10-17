@@ -2,9 +2,9 @@ import React, { useCallback, useMemo, useLayoutEffect, useRef, useState } from '
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { AbsoluteFill, Audio, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig, delayRender, continueRender } from 'remotion';
-import { SubtitleSchema, sceneSeconds, layoutMetrics, type Scene, type Storyboard, type StyleId } from '@m2v/schema';
+import { SubtitleSchema, SceneSchema, layoutMetrics, timelineFrames, type Scene, type Storyboard, type StyleId, type FrameCard } from '@m2v/schema';
 import { styles } from '@m2v/styles';
-import { buildCaptionCues, captionAt, captionNarration as getCaptionNarration } from './captions';
+import { captionDuration, captionAt, resolveCaptionCues } from './captions';
 
 const palettes: Record<StyleId, { bg: string; fg: string; muted: string; accent: string; card: string; secondary: string }> = {
   'minimal-tech': { bg: '#080d19', fg: '#f3f7ff', muted: '#9aaac2', accent: '#50e3c2', card: '#111b2c', secondary: '#182741' },
@@ -28,7 +28,7 @@ function FitContent({ children, signature, onOverflow }: { children: React.React
   return <div ref={outer} style={{ position: 'absolute', inset: '15% 5% 20%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div ref={inner} style={{ width: '100%', flexShrink: 0, transform: `scale(${factor})`, transformOrigin: 'center', overflowWrap: 'anywhere' }}>{children}</div></div>;
 }
 
-function SceneView({ scene, styleId, subtitles, onOverflow }: { scene: Scene; styleId: StyleId; subtitles: Storyboard["subtitles"]; onOverflow?: (sceneId: string, overflowing: boolean) => void }) {
+function SceneView({ scene, styleId, subtitles, transition = 'none', durationInFrames, onOverflow }: { scene: Scene; styleId: StyleId; subtitles: Storyboard["subtitles"]; transition?: Storyboard["transition"]; durationInFrames?: number; onOverflow?: (sceneId: string, overflowing: boolean) => void }) {
   styleId = scene.sceneStyle ?? styleId;
   const reportOverflow = useCallback((overflowing: boolean) => onOverflow?.(scene.id, overflowing), [onOverflow, scene.id]);
   const layoutSignature = useMemo(() => JSON.stringify([scene, styleId]), [scene, styleId]);
@@ -50,17 +50,23 @@ function SceneView({ scene, styleId, subtitles, onOverflow }: { scene: Scene; st
       : style.motion.entrance === 'scale'
         ? { opacity: interpolate(frame, [0, 12], [0, 1], { extrapolateRight: 'clamp' }), transform: `scale(${interpolate(frame, [0, 12], [.92, 1], { extrapolateRight: 'clamp' })})` }
         : { opacity: interpolate(frame, [0, Math.min(16, fps / 2)], [0, 1], { extrapolateRight: 'clamp' }) };
+  const fadeFrames = Math.max(1, Math.round(fps * 0.6));
+  const fade = transition === 'fade' && durationInFrames
+    ? Math.min(
+      interpolate(frame, [0, fadeFrames], [0, 1], { extrapolateRight: 'clamp' }),
+      interpolate(frame, [Math.max(0, durationInFrames - fadeFrames), durationInFrames], [1, 0], { extrapolateLeft: 'clamp' }),
+    )
+    : 1;
   const centered = style.layout.alignment === 'center';
   const mediaSrc = String(scene.visual.src ?? '');
   const credit = [scene.visual['attribution'], scene.visual['license']].map(value => typeof value === 'string' ? value.trim() : '').filter(Boolean).join(' · ');
   const creditUrl = [scene.visual['licenseUrl'], scene.visual['sourceUrl']].find((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value));
   const creditText = credit && creditUrl ? `${credit} · ${creditUrl}` : credit;
   const isFullBleedSlide = scene.type === 'media' && (scene.visual.fullBleed === true || /(?:^|\/)slide-\d+\.png$/i.test(mediaSrc));
-  const captionNarration = getCaptionNarration(scene);
-  const captionCues = useMemo(() => buildCaptionCues(captionNarration, scene.wordTimings, scene.audioDuration ?? scene.audioDuration ?? Math.max(3, scene.duration ?? 6), height > width), [captionNarration, scene.wordTimings, scene.duration, scene.audioDuration, height, width]);
+  const captionCues = useMemo(() => resolveCaptionCues(scene, captionDuration(scene), height > width), [scene, height, width]);
   const caption = subtitle.enabled ? captionAt(captionCues, frame / fps) : "";
   if (isFullBleedSlide) {
-    return <AbsoluteFill style={{ backgroundColor: '#000' }}>
+    return <AbsoluteFill style={{ backgroundColor: '#000', opacity: fade }}>
       <Img src={staticFile(mediaSrc)} style={imageStyle} />
       {caption && <div style={captionStyle}>{caption}</div>}
       {creditText && <small style={{ position: 'absolute', right: 20 * scale, top: 16 * scale, padding: `${5 * scale}px ${8 * scale}px`, background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: 13 * scale }}>{creditText}</small>}
@@ -83,7 +89,7 @@ function SceneView({ scene, styleId, subtitles, onOverflow }: { scene: Scene; st
   }
   const bg = styleId === 'minimal-tech' ? `linear-gradient(rgba(80,227,194,.055) 1px, transparent 1px), linear-gradient(90deg, rgba(80,227,194,.055) 1px, transparent 1px), radial-gradient(ellipse at 85% 15%, #173553 0%, ${colors.bg} 56%)` : styleId === 'social-short' ? `radial-gradient(circle at 12% 85%, ${colors.secondary} 0%, transparent 34%), radial-gradient(circle at 88% 15%, #6346bd 0%, ${colors.bg} 50%)` : colors.bg;
   const texture = styleId === 'academic' ? 'repeating-linear-gradient(0deg, transparent, transparent 43px, rgba(90,70,45,.08) 44px)' : styleId === 'clean-light' ? 'radial-gradient(#d8e0ef 1px, transparent 1px)' : 'none';
-  return <AbsoluteFill style={{ ...entering, background: bg, backgroundSize: styleId === 'minimal-tech' ? '42px 42px, 42px 42px, cover' : 'cover', color: colors.fg, padding: style.layout.padding, justifyContent: 'center', fontFamily: style.typography.bodyFont }}>
+  return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, backgroundSize: styleId === 'minimal-tech' ? '42px 42px, 42px 42px, cover' : 'cover', color: colors.fg, padding: style.layout.padding, justifyContent: 'center', fontFamily: style.typography.bodyFont }}>
     {texture !== 'none' && <div style={{ position: 'absolute', inset: 0, background: texture, backgroundSize: styleId === 'academic' ? 'auto' : '20px 20px', pointerEvents: 'none' }} />}
     {styleId === 'minimal-tech' && <div style={{ position: 'absolute', top: 44, left: style.layout.padding, color: colors.accent, fontSize: 17, letterSpacing: 4 }}>◈ KNOWLEDGE / {scene.type.toUpperCase()}</div>}
     {styleId === 'clean-light' && <div style={{ position: 'absolute', top: 0, left: 0, width: 22, height: '100%', background: colors.accent }} />}
@@ -95,16 +101,30 @@ function SceneView({ scene, styleId, subtitles, onOverflow }: { scene: Scene; st
   </AbsoluteFill>;
 }
 
+function frameCardScene(card: FrameCard, id: string, fallbackTitle: string): Scene {
+  return SceneSchema.parse({ id, type: 'title', title: card.title?.trim() || fallbackTitle, narration: card.subtitle ?? '', duration: card.duration });
+}
+
 export function ExplainerVideo({ storyboard, onOverflow }: { storyboard: Storyboard; onOverflow?: (sceneId: string, overflowing: boolean) => void }) {
   const { fps } = useVideoConfig();
-  let cursor = 0;
+  const { segments } = timelineFrames(storyboard, fps);
   const music = storyboard.bgmSrc;
   const totalFrames = getDurationInFrames(storyboard, fps);
   const fadeInFrames = Math.round((storyboard.bgmFadeIn ?? 1) * fps);
   const fadeOutFrames = Math.round((storyboard.bgmFadeOut ?? 1) * fps);
   const baseVolume = storyboard.bgmVolume ?? 0.12;
   const volume = (frame: number) => Math.min(baseVolume, fadeInFrames ? baseVolume * frame / fadeInFrames : baseVolume, fadeOutFrames ? baseVolume * Math.max(0, totalFrames - frame) / fadeOutFrames : baseVolume);
-  return <AbsoluteFill>{music && <Audio src={staticFile(music)} volume={volume} loop loopVolumeCurveBehavior="extend" />}{storyboard.scenes.map(scene => { const duration = Math.round(sceneSeconds(scene) * fps); const from = cursor; cursor += duration; return <Sequence key={scene.id} from={from} durationInFrames={duration}><SceneView scene={scene} styleId={storyboard.styleId} subtitles={storyboard.subtitles} onOverflow={onOverflow} /></Sequence>; })}</AbsoluteFill>;
+  const introSegment = segments.find(segment => segment.kind === 'intro');
+  const outroSegment = segments.find(segment => segment.kind === 'outro');
+  const sceneSegments = segments.filter(segment => segment.kind === 'scene');
+  const intro = storyboard.intro?.enabled ? storyboard.intro : null;
+  const outro = storyboard.outro?.enabled ? storyboard.outro : null;
+  return <AbsoluteFill style={{ backgroundColor: '#000' }}>
+    {music && <Audio src={staticFile(music)} volume={volume} loop loopVolumeCurveBehavior="extend" />}
+    {introSegment && intro && <Sequence from={introSegment.startFrame} durationInFrames={introSegment.frames}><SceneView scene={frameCardScene(intro, 'intro', storyboard.title)} styleId={storyboard.styleId} subtitles={storyboard.subtitles} transition={storyboard.transition} durationInFrames={introSegment.frames} onOverflow={onOverflow} /></Sequence>}
+    {storyboard.scenes.map((scene, index) => { const segment = sceneSegments[index]; return <Sequence key={scene.id} from={segment.startFrame} durationInFrames={segment.frames}><SceneView scene={scene} styleId={storyboard.styleId} subtitles={storyboard.subtitles} transition={storyboard.transition} durationInFrames={segment.frames} onOverflow={onOverflow} /></Sequence>; })}
+    {outroSegment && outro && <Sequence from={outroSegment.startFrame} durationInFrames={outroSegment.frames}><SceneView scene={frameCardScene(outro, 'outro', storyboard.title)} styleId={storyboard.styleId} subtitles={storyboard.subtitles} transition={storyboard.transition} durationInFrames={outroSegment.frames} onOverflow={onOverflow} /></Sequence>}
+  </AbsoluteFill>;
 }
 
-export const getDurationInFrames = (storyboard: Storyboard, fps = 30) => storyboard.scenes.reduce((sum, scene) => sum + Math.round(sceneSeconds(scene) * fps), 0);
+export const getDurationInFrames = (storyboard: Storyboard, fps = 30) => timelineFrames(storyboard, fps).totalFrames;

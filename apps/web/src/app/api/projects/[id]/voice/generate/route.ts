@@ -40,6 +40,8 @@ function requestSynthesis(service: string, text: string, voiceId: string, speed:
 type AudioPatch = {
   /** Narration this audio was synthesized from; skip if the scene text changed meanwhile. */
   narration: string;
+  /** Fresh audio invalidates hand-timed captions. */
+  resetCaptions?: boolean;
   audio: {
     audioSrc?: string;
     audioKey?: string;
@@ -65,6 +67,7 @@ async function mergeSceneAudio(projectId: string, patches: Map<string, AudioPatc
     for (const scene of board.scenes) {
       const patch = patches.get(scene.id);
       if (!patch || scene.narration !== patch.narration) continue;
+      if (patch.resetCaptions) scene.subtitleCues = undefined;
       Object.assign(scene, patch.audio);
     }
     const updated = await db.project.updateMany({
@@ -154,7 +157,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       try { scene.wordTimings = await alignNarration(service, publicPath, scene.narration); }
       catch (alignmentError) { scene.wordTimings = undefined; console.warn(`[caption-align] ${scene.id}: ${alignmentError instanceof Error ? alignmentError.message : String(alignmentError)}`); }
       await db.scene.update({ where: { id: scene.id }, data: { audioPath: `audio/${filename}`, duration: scene.duration } });
-      await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, audio: { audioSrc: scene.audioSrc, audioKey: scene.audioKey, audioDuration: scene.audioDuration, duration: scene.duration, wordTimings: scene.wordTimings, pronunciationWarnings: scene.pronunciationWarnings } }]]));
+      await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, resetCaptions: true, audio: { audioSrc: scene.audioSrc, audioKey: scene.audioKey, audioDuration: scene.audioDuration, duration: scene.duration, wordTimings: scene.wordTimings, pronunciationWarnings: scene.pronunciationWarnings } }]]));
     }
     await writeFile(settingsPath, JSON.stringify(sceneId ? { ...voiceSettings, speed } : { ...voiceSettings, speed, generatedSpeed: speed }), 'utf8');
     const persisted = await mergeSceneAudio(id, new Map(), { status: 'awaiting_review' });

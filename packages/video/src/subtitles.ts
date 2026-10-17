@@ -1,5 +1,5 @@
-import { SubtitleSchema, sceneSeconds, type Storyboard } from '@m2v/schema';
-import { buildCaptionCues, captionNarration } from './captions';
+import { SubtitleSchema, timelineFor, type Storyboard } from '@m2v/schema';
+import { captionDuration, resolveCaptionCues } from './captions';
 
 const clock = (seconds: number, ass = false) => {
   const ticks = Math.round(seconds * (ass ? 100 : 1000));
@@ -7,11 +7,10 @@ const clock = (seconds: number, ass = false) => {
   return `${String(Math.floor(ticks / (3600 * unit))).padStart(ass ? 1 : 2, '0')}:${String(Math.floor(ticks / (60 * unit)) % 60).padStart(2, '0')}:${String(Math.floor(ticks / unit) % 60).padStart(2, '0')}.${String(ticks % unit).padStart(ass ? 2 : 3, '0')}`;
 };
 export function exportSubtitles(storyboard: Storyboard, format: 'srt' | 'vtt' | 'ass') {
-  let offset = 0;
-  const cues = storyboard.scenes.flatMap(scene => {
-    const cues = buildCaptionCues(captionNarration(scene), scene.wordTimings, scene.audioDuration ?? Math.max(3, scene.duration ?? 6), storyboard.aspectRatio === '9:16').map(cue => ({ ...cue, start: cue.start + offset, end: cue.end + offset }));
-    offset += Math.round(sceneSeconds(scene) * 30) / 30;
-    return cues;
+  const timeline = timelineFor(storyboard);
+  const cues = storyboard.scenes.flatMap((scene, index) => {
+    const offset = timeline.scenes[index].start;
+    return resolveCaptionCues(scene, captionDuration(scene), storyboard.aspectRatio === '9:16').map(cue => ({ ...cue, start: cue.start + offset, end: cue.end + offset }));
   });
   if (format !== 'ass') return (format === 'vtt' ? 'WEBVTT\n\n' : '') + cues.map((cue, index) => `${index + 1}\n${clock(cue.start).replace('.', format === 'srt' ? ',' : '.')} --> ${clock(cue.end).replace('.', format === 'srt' ? ',' : '.')}\n${cue.text.replace(/-->/g, '→')}\n`).join('\n');
   const style = SubtitleSchema.parse(storyboard.subtitles ?? {});
