@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 导入可搜索文本的 PDF、PPTX、Markdown、无需登录的公开文章 URL 或粘贴文本，生成可编辑故事板；URL 提取失败时可改用粘贴文本。
+- 导入可搜索文本或配置本地 OCR 后的扫描 PDF、PPTX、Markdown、无需登录的公开文章 URL 或粘贴文本，先预览和编辑抽取正文，再生成可编辑故事板；URL 提取失败时可改用粘贴文本。
 - PPTX 支持提取内容重建和保留原页画面两种模式。备注优先作为旁白依据；重建模式可提取图片，保留画面模式需本机安装 PowerPoint 或 LibreOffice。
 - 编辑、排序、添加、删除或单独重新生成场景；长文分批生成并保存检查点，输入和配置未变时可从失败步骤继续。
 - 通过参考音频及其转录生成场景旁白并试听；中文多音字可使用场景、项目或全局读音规则纠正。逐词字幕由本地模型强制对齐生成。
@@ -254,7 +254,7 @@ pnpm db:push      # 同步 SQLite 数据库结构
 
 当前支持 PDF/PPTX/Markdown/公开文章 URL/粘贴文本输入，16:9 与 9:16 输出，title/bullets/diagram/comparison/chart/code/timeline/math/media 场景，Minimal Tech、Clean Light、Academic、Social Short 和 Whiteboard 五种风格，PPTX 双模式，场景编辑与重试，声音克隆、逐词字幕、Commons 图片、本地 BGM、实时预览和 MP4 导出。旧项目默认保持 16:9。品牌套件和云端模型 Provider 暂不支持。
 
-- **PDF**：当前读取 PDF 中可选中的文字，不提供扫描件 OCR。扫描 PDF 请先转换为可搜索 PDF，或粘贴已识别的文字。
+- **PDF**：优先读取可选择的文本；扫描页使用本地 Tesseract OCR，需要 chi_sim 与 eng 语言包及 TESSDATA_PREFIX。环境自检会显示缺失项；也可粘贴已识别的文字。
 - **网页**：仅支持无需登录的公开文章；本机、内网或非公开网络地址会被拒绝。页面抽取失败时可粘贴正文。
 - **PPTX**：内容重建不依赖演示软件；保留原页画面依赖本机 PowerPoint 或 LibreOffice。两者都不可用时，该模式会被禁用并显示提示。
 - **网络与模型**：分镜及语音在本机处理。网页导入、Commons 搜索和素材下载需要网络；首次逐词对齐会下载对应语言的模型并缓存到本机。
@@ -283,3 +283,42 @@ pnpm db:generate
 ```
 
 只有 Client 生成成功后再检查 Web 类型。不要通过删除类型或添加 `any` 来绕过缺失的 Prisma Client。长文分镜现在按批保存到项目目录的 `storyboard-checkpoint.json`；选择“从失败步骤重试”会在输入和配置未改变时继续已完成的批次。旧版本失败任务没有该文件，需要重新生成。
+
+## V1.1：成片质量与制作效率
+
+故事板上方新增“分镜精修 / 字幕与节奏 / 素材库 / 备份与恢复”。支持模板、复制场景、批量时长与风格、自动排版、字幕预设和 SRT/VTT/ASS 导出、场景语速与停顿、片段试听，以及图片裁切/缩放/焦点。Commons 图片需先确认许可与署名。
+
+编辑停止约 1.2 秒后自动保存；保存失败或版本冲突会显示在页首，未保存时离开页面会提示。导出和语音生成前会保存当前分镜。音频按场景缓存，更新语音只重生成受影响的场景。
+
+导出页支持 540p 草稿、阶段进度、取消渲染与历史下载。新成片使用独立文件；旧版本已被覆盖的 final.mp4 无法恢复，这类记录仅作历史状态保留、不提供下载。准备资源期间取消会在该阶段结束后停止，画面渲染和 FFmpeg 编码使用取消信号中止。
+
+项目包使用 .m2v 格式，包含项目源文件、声音参考、图片、旁白及全部历史导出视频，不包含模型权重。首页“恢复项目包”会新建项目，保留原项目。自动快照在保存后创建，每五分钟最多一次，保留最近十份未锁定快照；锁定快照长期保留。备份会占用与项目媒体相应的磁盘空间。
+
+首页“环境自检”检查 Python、Ollama 模型、FFmpeg/ffprobe、TTS 模型、TorchCodec、OCR 和 Worker。OCR 需自行安装 Tesseract 与中文简体/英文语言包；设置 TESSDATA_PREFIX 指向含 chi_sim.traineddata 和 eng.traineddata 的目录后重启 Python 服务。自检不会自动下载或安装。
+
+### 升级现有数据库
+
+先停止旧版 Web/Worker，再执行：
+
+~~~powershell
+pnpm db:generate
+pnpm db:migrate:v11
+~~~
+
+迁移脚本在 data/database-backups 下保存升级前 SQLite 副本，再为旧表增量添加字段；可重复执行。start.ps1 会检查并执行该迁移。新安装仍先使用 pnpm db:push 初始化。
+
+### V1.1 验证命令
+
+~~~powershell
+pnpm typecheck
+pnpm test
+pnpm test:v11
+pnpm test:v11:integration
+pnpm test:v11:render
+cd services/python
+.venv/Scripts/python.exe -m unittest discover -s tests -v
+~~~
+
+隔离集成测试使用 Node.js 22.13+ 的 node:sqlite 创建临时数据库，测试备份恢复、快照轮转、保存冲突、取消状态及导入预览；不修改真实项目。渲染冒烟测试位于 apps/worker/test/render-v11.ts，需要本机 Chromium/Edge 与 FFmpeg，可通过 REMOTION_BROWSER_EXECUTABLE 指定浏览器。
+
+竖屏字幕预览受视口高度限制，整幅 1080 × 1920 画面只能缩到约 0.37 倍显示，密集正文在屏幕上仅约 8px。预览工具栏的「1:1 原始尺寸」按钮会按画布原始像素显示并可滚动，字号与成片一致，便于判断阅读效果。

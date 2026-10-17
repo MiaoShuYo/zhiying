@@ -11,6 +11,14 @@ export const PronunciationRuleSchema = z.object({
 }).refine(rule => rule.text.length === rule.pinyin.length, '每个汉字需要一个拼音');
 export type PronunciationRule = z.infer<typeof PronunciationRuleSchema>;
 
+export const SubtitleSchema = z.object({
+  enabled: z.boolean().default(true), preset: z.enum(['minimal', 'boxed', 'highlight']).default('boxed'),
+  position: z.enum(['top', 'center', 'bottom']).default('bottom'),
+  fontSize: z.number().min(18).max(72).default(30), color: z.string().regex(/^#[0-9a-f]{6}$/i).default('#ffffff'),
+  background: z.string().regex(/^#[0-9a-f]{6}$/i).default('#000000'), backgroundOpacity: z.number().min(0).max(1).default(0.72),
+});
+export type SubtitleSettings = z.infer<typeof SubtitleSchema>;
+
 const BaseSceneSchema = z.object({
   id: z.string().min(1),
   type: SceneTypeSchema,
@@ -19,6 +27,14 @@ const BaseSceneSchema = z.object({
   pronunciationOverrides: z.array(PronunciationRuleSchema).max(200).optional(),
   pronunciationWarnings: z.array(z.string()).optional(),
   duration: z.number().positive().optional(),
+  layout: z.enum(['auto', 'stack', 'columns', 'compact']).optional(),
+  sceneStyle: StyleIdSchema.optional(),
+  speechSpeed: z.number().min(0.5).max(3).optional(),
+  sentencePause: z.number().min(0).max(3).optional(),
+  sceneGap: z.number().min(0).max(10).optional(),
+  audioDuration: z.number().nonnegative().optional(),
+  audioKey: z.string().optional(),
+  image: z.object({ fit: z.enum(['contain', 'cover']).default('contain'), zoom: z.number().min(1).max(3).default(1), x: z.number().min(0).max(100).default(50), y: z.number().min(0).max(100).default(50) }).optional(),
   audioSrc: z.string().optional(),
   wordTimings: z.array(z.object({ text: z.string(), start: z.number().nonnegative(), end: z.number().positive() })).optional(),
   visual: z.record(z.unknown()).default({}),
@@ -56,6 +72,7 @@ export const StoryboardSchema = z.object({
   aspectRatio: AspectRatioSchema.default('16:9'),
   styleId: StyleIdSchema,
   durationTarget: z.number().positive().optional(),
+  subtitles: SubtitleSchema.optional(),
   bgmSrc: z.string().optional(),
   bgmVolume: z.number().min(0).max(1).default(0.12),
   bgmFadeIn: z.number().min(0).max(10).default(1),
@@ -66,8 +83,8 @@ export const StoryboardSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bgmSrc'], message: 'BGM 必须引用本地项目素材' });
   }
 });
-export const ProjectStatusSchema = z.enum(['created', 'extracting', 'analyzing', 'writing', 'storyboarding', 'awaiting_review', 'generating_audio', 'building_timeline', 'rendering', 'encoding', 'completed', 'failed']);
-export const JobStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);
+export const ProjectStatusSchema = z.enum(['awaiting_source_review', 'created', 'extracting', 'analyzing', 'writing', 'storyboarding', 'awaiting_review', 'generating_audio', 'building_timeline', 'rendering', 'encoding', 'completed', 'failed']);
+export const JobStatusSchema = z.enum(['queued', 'running', 'cancelling', 'cancelled', 'completed', 'failed']);
 
 export const StyleSchema = z.object({
   id: StyleIdSchema,
@@ -83,3 +100,5 @@ export type Scene = z.infer<typeof SceneSchema>;
 export type SceneType = z.infer<typeof SceneTypeSchema>;
 export type Storyboard = z.infer<typeof StoryboardSchema>;
 export type StyleId = z.infer<typeof StyleIdSchema>;
+
+export * from "./editor";

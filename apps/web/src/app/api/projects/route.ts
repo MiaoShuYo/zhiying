@@ -1,15 +1,13 @@
-import { recoverInterruptedRenderJobs } from '@/lib/render-recovery';
 import { after, NextResponse } from 'next/server';
 import { createProject, processProject } from '@/lib/pipeline';
-import { recoverInterruptedStoryboardJobs } from '@/lib/project-recovery';
+import { recoverInterruptedJobs } from '@/lib/project-recovery';
 import { db } from '@/lib/db';
 export const runtime = 'nodejs';
 
 export async function GET() {
-  await recoverInterruptedRenderJobs();
-  const recoverable = await recoverInterruptedStoryboardJobs();
-  if (recoverable.length) after(async () => Promise.all(recoverable.map(job => processProject(job.projectId, job.stage))));
-  const projects = await db.project.findMany({ orderBy: { updatedAt: 'desc' }, include: { scenes: { select: { id: true } }, jobs: { where: { status: { in: ['queued', 'running'] } }, select: { stage: true }, take: 1, orderBy: { createdAt: 'desc' } } } });
+  const { restarted } = await recoverInterruptedJobs();
+  if (restarted.length) after(async () => Promise.all(restarted.map(job => processProject(job.projectId, job.stage))));
+  const projects = await db.project.findMany({ orderBy: { updatedAt: 'desc' }, include: { scenes: { select: { id: true } }, jobs: { where: { status: { in: ['queued', 'running', 'cancelling'] } }, select: { stage: true }, take: 1, orderBy: { createdAt: 'desc' } } } });
   const activeStatuses = ['created', 'extracting', 'analyzing', 'storyboarding', 'generating_audio', 'rendering', 'encoding'];
   return NextResponse.json(projects.map(project => ({ id: project.id, name: project.name, status: project.status, styleId: project.styleId, createdAt: project.createdAt.toISOString(), sceneCount: project.scenes.length, busy: project.jobs.length > 0 || activeStatuses.includes(project.status), busyStage: project.jobs[0]?.stage ?? null })));
 }

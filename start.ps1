@@ -66,6 +66,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'apps\web\.env'))) { throw
 $pnpm = Get-Command pnpm.cmd -ErrorAction SilentlyContinue
 if (-not $pnpm) { throw '未找到 pnpm.cmd。请先安装并启用 pnpm。' }
 
+& node (Join-Path $repoRoot 'scripts\migrate-v11.cjs')
+if ($LASTEXITCODE -ne 0) { throw 'V1.1 数据库迁移失败，请检查提示后重试。' }
+
 $pathFFmpeg = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
 $ffmpegCandidates = @($FFmpegBin, $env:M2V_FFMPEG_BIN, 'D:\Tools\ffmpeg-8.1.2-full-shared\bin', $(if ($pathFFmpeg) { Split-Path -Parent $pathFFmpeg.Source }))
 $selectedFFmpeg = $null

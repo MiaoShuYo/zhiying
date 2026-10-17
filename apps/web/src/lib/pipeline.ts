@@ -63,6 +63,32 @@ function splitIntoChapters(title: string, text: string): Chapter[] {
   return groups.length ? groups : [{ title, text: text.trim() }];
 }
 
+function limitChapters(chapters: Chapter[], maxScenes = 100): Chapter[] {
+  if (chapters.length <= maxScenes) return chapters;
+  const totalCharacters = chapters.reduce((sum, chapter) => sum + chapter.text.length, 0);
+  const targetCount = Math.ceil(chapters.length / maxScenes);
+  const targetCharacters = Math.ceil(totalCharacters / maxScenes);
+  const result: Chapter[] = [];
+  let group: Chapter[] = [];
+  let characters = 0;
+  const flush = () => {
+    if (!group.length) return;
+    const first = group[0];
+    const last = group[group.length - 1];
+    const title = group.length === 1 ? first.title : `${first.title}–${last.title}`.slice(0, 50);
+    result.push({ title, text: group.map(chapter => `## ${chapter.title}\n${chapter.text}`).join('\n\n') });
+    group = [];
+    characters = 0;
+  };
+  for (const chapter of chapters) {
+    if (result.length < maxScenes - 1 && group.length && (group.length >= targetCount || characters >= targetCharacters)) flush();
+    group.push(chapter);
+    characters += chapter.text.length;
+  }
+  flush();
+  return result;
+}
+
 function splitPptxSlides(text: string): Chapter[] {
   return text.split(/(?=^## 幻灯片 \d+\s*$)/m).map(section => section.trim()).filter(section => /^## 幻灯片 \d+\s*$/m.test(section)).map(section => {
     const heading = section.match(/^## 幻灯片 (\d+)\s*$/m);
@@ -150,39 +176,43 @@ function groupChapters(chapters: Chapter[], maxCount = 3, maxCharacters = 6000) 
   return batches;
 }
 
-async function extractText(file: File | null, rawText: string, projectId: string, importMode: string) {
+export type ExtractionMeta = { kind: 'pdf' | 'pptx' | 'markdown' | 'url' | 'text'; filename?: string; pages?: number; ocrPages?: number[]; failedPages?: { page: number; error: string }[]; extractedAt: string };
+
+async function extractText(file: File | null, rawText: string, projectId: string, importMode: string): Promise<{ text: string; path: string | null; assets: { path: string; name: string }[]; meta: ExtractionMeta }> {
   const service = process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000';
+  const extractedAt = new Date().toISOString();
   if (!file && /^https?:\/\//i.test(rawText.trim())) {
     const response = await fetch(`${service}/extract/url`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: rawText.trim() }), signal: AbortSignal.timeout(45_000) });
-    const result = await response.json().catch(() => ({})) as { text?: string; error?: string; detail?: string };
+    const result = await response.json().catch(() => ({})) as { text?: string; error?: string; detail?: string; pages?: number };
     if (!response.ok || !result.text) throw new Error(result.error ?? result.detail ?? '网页正文提取失败');
-    return { text: result.text, path: null as string | null, assets: [] as { path: string; name: string }[] };
+    // A web page is still one page; without it the review panel reports 0 pages.
+    return { text: result.text, path: null as string | null, assets: [] as { path: string; name: string }[], meta: { kind: 'url', pages: result.pages ?? 1, extractedAt } };
   }
-  if (!file) return { text: rawText, path: null as string | null, assets: [] as { path: string; name: string }[] };
+  if (!file) return { text: rawText, path: null as string | null, assets: [] as { path: string; name: string }[], meta: { kind: 'text', extractedAt } };
   const fileName = file.name.toLowerCase();
   if (fileName.endsWith('.md') || fileName.endsWith('.markdown')) {
     if (file.size > 5 * 1024 * 1024) throw new Error('Markdown 文件不能超过 5 MB');
     const text = normalizeMarkdown((await file.text()).replace(/^\uFEFF/, ''));
     if (!text.trim()) throw new Error('Markdown 文件内容为空');
-    return { text, path: null as string | null, assets: [] as { path: string; name: string }[] };
+    return { text, path: null as string | null, assets: [] as { path: string; name: string }[], meta: { kind: 'markdown', filename: file.name, extractedAt } };
   }
   if (fileName.endsWith('.pptx')) {
     const form = new FormData(); form.set('file', file); form.set('projectId', projectId); form.set('mode', importMode);
     const response = await fetch(`${service}/extract/pptx`, { method: 'POST', body: form, signal: AbortSignal.timeout(180_000) });
-    const result = await response.json().catch(() => ({})) as { text?: string; assets?: { path: string; name: string }[]; error?: string; detail?: string };
+    const result = await response.json().catch(() => ({})) as { text?: string; assets?: { path: string; name: string }[]; pages?: number; error?: string; detail?: string };
     if (!response.ok || !result.text) throw new Error(result.error ?? result.detail ?? 'PPTX 解析失败');
-    return { text: result.text, path: null as string | null, assets: result.assets ?? [] };
+    return { text: result.text, path: null as string | null, assets: result.assets ?? [], meta: { kind: 'pptx', filename: file.name, pages: result.pages, extractedAt } };
   }
   if (!fileName.endsWith('.pdf')) throw new Error('目前支持 PDF、PPTX、Markdown 文件或直接输入文本');
   const form = new FormData(); form.set('file', file);
   let responseReceived = false;
   try {
-    const response = await fetch(`${service}/extract/pdf`, { method: 'POST', body: form, signal: AbortSignal.timeout(120_000) });
+    const response = await fetch(`${service}/extract/pdf`, { method: 'POST', body: form, signal: AbortSignal.timeout(600_000) });
     responseReceived = true;
-    const result = await response.json().catch(() => ({})) as { text?: string; detail?: string };
+    const result = await response.json().catch(() => ({})) as { text?: string; detail?: string; pages?: number; ocrPages?: number[]; failedPages?: { page: number; error: string }[] };
     if (!response.ok) throw new Error(result.detail ?? 'PDF 解析失败');
-    if (result.text?.trim()) return { text: result.text, path: null, assets: [] as { path: string; name: string }[] };
-    throw new Error('此 PDF 未检测到可选中的文本。当前版本不支持扫描件 OCR，请转换为可搜索 PDF，或粘贴识别后的文字再试。');
+    if (result.text?.trim()) return { text: result.text, path: null, assets: [] as { path: string; name: string }[], meta: { kind: 'pdf' as const, filename: file.name, pages: result.pages, ocrPages: result.ocrPages, failedPages: result.failedPages, extractedAt } };
+    throw new Error('此 PDF 未检测到可选中的文本。请在环境自检中检查 OCR 依赖，或粘贴识别后的文字。');
   } catch (error) {
     if (responseReceived && error instanceof Error) throw error;
   }
@@ -227,6 +257,8 @@ export async function createProject(input: { name: string; text: string; styleId
     sourcePath = relativePath;
     await db.project.update({ where: { id: project.id }, data: { sourcePath } });
   }
+  await mkdir(resolve(process.cwd(), '../../data/projects', project.id), { recursive: true });
+  await writeFile(resolve(process.cwd(), '../../data/projects', project.id, 'import-settings.json'), JSON.stringify({ preferLocalAI: input.preferLocalAI === true }));
   await db.job.create({ data: { projectId: project.id, kind: 'storyboard', status: 'queued', stage: 'extracting' } });
   return { ...project, sourcePath };
 }
@@ -238,7 +270,7 @@ const activeProjectRuns = new Set<string>();
 export async function processProject(projectId: string, startAt: ProjectStage = 'extracting', preferLocalAI = false) {
   if (activeProjectRuns.has(projectId)) return;
   activeProjectRuns.add(projectId);
-  try { await runProject(projectId, startAt, preferLocalAI); }
+  try { let requiredAI = preferLocalAI; try { requiredAI ||= JSON.parse(await readFile(resolve(process.cwd(), '../../data/projects', projectId, 'import-settings.json'), 'utf8')).preferLocalAI === true; } catch {} await runProject(projectId, startAt, requiredAI); }
   finally { activeProjectRuns.delete(projectId); }
 }
 
@@ -262,12 +294,15 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
       const extracted = await extractText(sourceFile, sourceText, projectId, current.importMode);
       sourceText = extracted.text;
       await db.project.update({ where: { id: projectId }, data: { sourceText, assetsJson: JSON.stringify(extracted.assets), status: 'analyzing' } });
-      await db.job.update({ where: { id: job.id }, data: { stage: 'analyzing', progress: JSON.stringify({ phase: 'analyzing', message: '资料读取完成，正在整理章节', percent: 24 }) } });
+      await writeFile(resolve(process.cwd(), '../../data/projects', projectId, 'extraction.json'), JSON.stringify(extracted.meta)).catch(() => {});
+      await db.project.update({ where: { id: projectId }, data: { status: 'awaiting_source_review' } });
+      await db.job.update({ where: { id: job.id }, data: { status: 'completed', stage: 'awaiting_source_review', progress: JSON.stringify({ message: '请预览并编辑抽取结果，然后生成分镜' }) } });
+      return;
     }
     if (sourceText.trim().length < 30) {
       const isPdfSource = current.sourcePath?.toLowerCase().endsWith('.pdf') ?? false;
       throw new Error(isPdfSource
-        ? '此 PDF 未提取到足够的可选中文本。若这是扫描件，当前版本不支持 OCR；请转换为可搜索 PDF，或粘贴识别后的文字再试。'
+        ? '此 PDF 未提取到足够的可选中文本。若这是扫描件，请检查 OCR 语言包与扫描质量，或粘贴识别后的文字。'
         : '没有足够的源文本（至少需要 30 个字符），请补充内容后重新执行。');
     }
     const project = await db.project.update({ where: { id: projectId }, data: { status: startAt === 'storyboarding' ? 'storyboarding' : 'analyzing' } });
@@ -277,7 +312,7 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
     const pptxSource = current.sourcePath?.toLowerCase().endsWith('.pptx') ?? false;
     const pptxSlides = pptxSource ? splitPptxSlides(sourceText) : [];
     const preserveSlides = project.importMode === 'preserve' && slideAssets.length > 0 ? pptxSlides : [];
-    const chapters = pptxSlides.length ? pptxSlides : splitIntoChapters(project.name, sourceText);
+    const chapters = limitChapters(pptxSlides.length ? pptxSlides : splitIntoChapters(project.name, sourceText));
     const scenes: Scene[] = [];
     const batches = groupChapters(chapters);
     let completedChapters = 0;
@@ -357,7 +392,7 @@ export function parseProject<T extends { storyboardJson: string | null; assetsJs
   return { ...project, assets: JSON.parse(project.assetsJson || '[]') as { path: string; name: string; kind?: string; attribution?: string; license?: string; licenseUrl?: string; sourceUrl?: string }[], storyboard: hydratedStoryboard };
 }
 
-export async function saveStoryboard(projectId: string, storyboard: unknown) {
+export async function saveStoryboard(projectId: string, storyboard: unknown, expectedRevision?: number) {
   const parsed = StoryboardSchema.parse(storyboard);
   const previousProject = await db.project.findUniqueOrThrow({ where: { id: projectId }, select: { storyboardJson: true } });
   const previous = previousProject.storyboardJson ? StoryboardSchema.parse(JSON.parse(previousProject.storyboardJson)) : null;
@@ -367,17 +402,21 @@ export async function saveStoryboard(projectId: string, storyboard: unknown) {
     const old = previous?.scenes.find(item => item.id === scene.id);
     const textChanged = old && old.narration !== scene.narration;
     if (textChanged) scene.pronunciationOverrides = scene.pronunciationOverrides?.filter(rule => rule.occurrence === undefined);
-    if (textChanged || (old && JSON.stringify(old.pronunciationOverrides ?? []) !== JSON.stringify(scene.pronunciationOverrides ?? [])) || changedPhrases.some(text => scene.narration.includes(text))) {
+    if (textChanged || (old && (old.speechSpeed !== scene.speechSpeed || old.sentencePause !== scene.sentencePause)) || (old && JSON.stringify(old.pronunciationOverrides ?? []) !== JSON.stringify(scene.pronunciationOverrides ?? [])) || changedPhrases.some(text => scene.narration.includes(text))) {
       scene.audioSrc = undefined;
+      scene.audioDuration = undefined; scene.audioKey = undefined;
       scene.wordTimings = undefined;
       scene.pronunciationWarnings = undefined;
     }
   }
-  await db.$transaction([
-    db.scene.deleteMany({ where: { projectId } }),
-    ...parsed.scenes.map((s, i) => db.scene.upsert({ where: { id: s.id }, create: { id: s.id, projectId, orderIndex: i, type: s.type, title: s.title, narration: s.narration, duration: s.duration, visualJson: JSON.stringify(s.visual), animationJson: s.animation, styleOverrideJson: s.styleOverride ? JSON.stringify(s.styleOverride) : null, audioPath: s.audioSrc }, update: { orderIndex: i, type: s.type, title: s.title, narration: s.narration, duration: s.duration, visualJson: JSON.stringify(s.visual), animationJson: s.animation, styleOverrideJson: s.styleOverride ? JSON.stringify(s.styleOverride) : null, audioPath: s.audioSrc } })),
-    db.project.update({ where: { id: projectId }, data: { styleId: parsed.styleId, aspectRatio: parsed.aspectRatio, storyboardJson: JSON.stringify(parsed), status: 'awaiting_review' } }),
-  ]);
+  if (new Set(parsed.scenes.map(scene => scene.id)).size !== parsed.scenes.length) throw new Error('场景 ID 重复');
+  await db.$transaction(async tx => {
+    const changed = await tx.project.updateMany({ where: { id: projectId, ...(expectedRevision === undefined ? {} : { revision: expectedRevision }) }, data: { revision: { increment: 1 }, styleId: parsed.styleId, aspectRatio: parsed.aspectRatio, storyboardJson: JSON.stringify(parsed), status: 'awaiting_review' } });
+    if (!changed.count) throw new Error('保存冲突：项目已在其他窗口更新，请重新加载后合并修改');
+    if (await tx.scene.count({ where: { id: { in: parsed.scenes.map(scene => scene.id) }, projectId: { not: projectId } } })) throw new Error('场景不属于此项目');
+    await tx.scene.deleteMany({ where: { projectId } });
+    for (const [i, s] of parsed.scenes.entries()) await tx.scene.create({ data: { id: s.id, projectId, orderIndex: i, type: s.type, title: s.title, narration: s.narration, duration: s.duration, visualJson: JSON.stringify(s.visual), animationJson: s.animation, styleOverrideJson: s.styleOverride ? JSON.stringify(s.styleOverride) : null, audioPath: s.audioSrc } });
+  });
   return parsed;
 }
 
