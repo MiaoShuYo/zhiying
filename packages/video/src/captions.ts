@@ -69,3 +69,9 @@ export function buildCaptionCues(narration: string, timings: WordTiming[] = [], 
 export function captionAt(cues: CaptionCue[], seconds: number): string {
   return cues.find(cue => seconds >= cue.start && seconds < cue.end)?.text ?? '';
 }
+
+export function captionNarration(scene: { type: string; narration: string; visual: Record<string, unknown> }): string {
+  const attribution = String(scene.visual.attribution ?? '') + '，' + String(scene.visual.license ?? '');
+  const narration = scene.type === 'media' && attribution !== '，' && scene.narration.startsWith(attribution) ? scene.narration.slice(attribution.length).replace(/^[，,。\s]+/, '') : scene.narration;
+  return narration.trim() === '请添加图片讲解。' ? '' : narration;
+}

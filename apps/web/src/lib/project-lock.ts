@@ -1,13 +1,16 @@
 import { db } from './db';
+import { recoverInterruptedAudioJobs, recoverStuckProjects } from './project-recovery';
 import { recoverInterruptedRenderJobs } from './render-recovery';
 
 export async function getProjectLock(projectId: string) {
   await recoverInterruptedRenderJobs(projectId);
+  await recoverInterruptedAudioJobs(projectId);
+  await recoverStuckProjects(projectId);
   const project = await db.project.findUnique({
     where: { id: projectId },
     select: {
       status: true,
-      jobs: { where: { status: { in: ['queued', 'running'] } }, select: { id: true, kind: true, stage: true, status: true }, take: 1, orderBy: { createdAt: 'desc' } },
+      jobs: { where: { status: { in: ['queued', 'running', 'cancelling'] } }, select: { id: true, kind: true, stage: true, status: true }, take: 1, orderBy: { createdAt: 'desc' } },
     },
   });
   if (!project) return { exists: false, locked: false, reason: null as string | null };

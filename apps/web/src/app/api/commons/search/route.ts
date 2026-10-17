@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { readCredit } from '@/lib/commons-license';
 
 export const runtime = 'nodejs';
 type SearchImage = { thumburl?: string; url?: string; extmetadata?: Record<string, { value?: string }> };
@@ -16,9 +17,8 @@ export async function GET(request: Request) {
     const images = Object.values(payload.query?.pages ?? {}).flatMap(page => {
       const info = page.imageinfo?.[0];
       if (!info?.thumburl || !info.url || !info.url.startsWith('https://upload.wikimedia.org/')) return [];
-      const meta = info.extmetadata ?? {};
-      const clean = (key: string) => (meta[key]?.value ?? '').replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').trim();
-      return [{ title: page.title, thumbnail: info.thumburl, sourceUrl: page.fullurl ?? `https://commons.wikimedia.org/wiki/${encodeURIComponent(page.title.replaceAll(' ', '_'))}`, fileUrl: info.url, attribution: clean('Attribution') || clean('Artist') || clean('Credit'), license: clean('LicenseShortName') || '许可信息未提供', licenseUrl: clean('LicenseUrl') }];
+      const sourceUrl = page.fullurl ?? `https://commons.wikimedia.org/wiki/${encodeURIComponent(page.title.replaceAll(' ', '_'))}`;
+      return [{ title: page.title, thumbnail: info.thumburl, fileUrl: info.url, ...readCredit(info.extmetadata ?? {}, sourceUrl) }];
     });
     return NextResponse.json({ images });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : '图片搜索失败' }, { status: 502 }); }

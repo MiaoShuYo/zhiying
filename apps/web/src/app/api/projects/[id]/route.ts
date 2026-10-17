@@ -1,18 +1,18 @@
-import { recoverInterruptedRenderJobs } from '@/lib/render-recovery';
+import { createSnapshot } from '@/lib/backups';
 import { after, NextResponse } from 'next/server';
 import { readdir, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { db } from '@/lib/db';
 import { parseProject, processProject } from '@/lib/pipeline';
-import { recoverInterruptedStoryboardJobs } from '@/lib/project-recovery';
+import { recoverInterruptedJobs } from '@/lib/project-recovery';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 export const runtime = 'nodejs';
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await recoverInterruptedRenderJobs();
-  const recoverable = await recoverInterruptedStoryboardJobs(id);
-  if (recoverable.length) after(async () => Promise.all(recoverable.map(job => processProject(job.projectId, job.stage))));
+  const { restarted } = await recoverInterruptedJobs(id);
+  if (restarted.length) after(async () => Promise.all(restarted.map(job => processProject(job.projectId, job.stage))));
   const project = await db.project.findUnique({ where: { id }, include: { scenes: { orderBy: { orderIndex: 'asc' } }, jobs: { orderBy: { createdAt: 'desc' }, take: 10 } } });
+  if (project && ['awaiting_review', 'completed'].includes(project.status)) after(async () => { try { await createSnapshot(id, true); } catch (error) { console.warn('[snapshot]', error); } });
   return project ? NextResponse.json(parseProject(project)) : NextResponse.json({ error: '项目不存在' }, { status: 404 });
 }
 
@@ -36,7 +36,7 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const lock = await getProjectLock(id);
   if (!lock.exists) return NextResponse.json({ error: '项目不存在' }, { status: 404 });
   if (lock.locked) return projectLockedResponse(lock.reason);
-  const project = await db.project.findUnique({ where: { id }, select: { id: true, jobs: { where: { status: { in: ['queued', 'running'] } }, select: { id: true } } } });
+  const project = await db.project.findUnique({ where: { id }, select: { id: true, jobs: { where: { status: { in: ['queued', 'running', 'cancelling'] } }, select: { id: true } } } });
   if (!project) return NextResponse.json({ error: '项目不存在' }, { status: 404 });
   if (project.jobs.length) return NextResponse.json({ error: '项目有正在运行的任务，请等待任务结束后再删除' }, { status: 409 });
 

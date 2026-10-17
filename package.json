@@ -8,7 +8,14 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm --filter @m2v/schema test",
     "db:generate": "pnpm --filter @m2v/web db:generate",
-    "db:push": "pnpm --filter @m2v/web db:push"
+    "db:push": "pnpm --filter @m2v/web db:push",
+    "db:migrate:v11": "node scripts/migrate-v11.cjs",
+    "test:v11": "tsx --test packages/video/test/v11.test.ts",
+    "test:v11:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v11-integration.ts",
+    "test:v11:render": "tsx apps/worker/test/render-v11.ts"
   },
-  "devDependencies": { "typescript": "^5.7.3", "tsx": "^4.19.2" }
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "tsx": "^4.19.2"
+  }
 }

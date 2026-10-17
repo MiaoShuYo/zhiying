@@ -18,6 +18,7 @@ model Project {
   aspectRatio String @default("16:9")
   status String @default("created")
   storyboardJson String?
+  revision Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   jobs Job[]
@@ -48,6 +49,8 @@ model Job {
   attempt Int @default(0)
   error String?
   progress String?
+  inputJson String?
+  outputPath String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SceneSchema, StoryboardSchema } from '../src/index';
+import { SceneSchema, StoryboardSchema, layoutMetrics } from '../src/index';
 
 test('preserves scoped pronunciation rules without changing narration', () => {
   const scene = { id: 'voice', type: 'title', narration: '几行代码', pronunciationOverrides: [{ text: '行', pinyin: ['hang2'], occurrence: 1 }] };
@@ -34,6 +34,21 @@ test('validates timeline and math scenes', () => {
   assert.equal(SceneSchema.safeParse({ id: 'timeline', type: 'timeline', narration: '时间线', visual: { items: [{ date: '2020', label: '开始' }, { date: '2024', label: '现在' }] } }).success, true);
   assert.equal(SceneSchema.safeParse({ id: 'math', type: 'math', narration: '公式', visual: { formula: 'E=mc^2' } }).success, true);
   assert.equal(SceneSchema.safeParse({ id: 'timeline-bad', type: 'timeline', narration: '时间线', visual: { items: [{ date: '2020', label: '开始' }] } }).success, false);
+});
+
+test('keeps dense text legible on both canvases and stacks portrait layouts', () => {
+  const dense = SceneSchema.parse({ id: 'dense', type: 'title', title: '密集', narration: '正文'.repeat(400) });
+  assert.equal(layoutMetrics(dense, true).density, .85);
+  assert.equal(layoutMetrics(dense, false).density, .85);
+  assert.ok(layoutMetrics(dense, true).warnings.length > 0);
+  const medium = SceneSchema.parse({ id: 'medium', type: 'title', title: '中等', narration: '正文'.repeat(200) });
+  assert.equal(layoutMetrics(medium, false).density, 1);
+  assert.ok(layoutMetrics(medium, true).density < 1 && layoutMetrics(medium, true).density > .85);
+  const points = SceneSchema.parse({ id: 'points', type: 'bullets', narration: '要点', visual: { items: ['一'] } });
+  assert.equal(layoutMetrics(points, true).stacked, true);
+  assert.equal(layoutMetrics(points, false).stacked, false);
+  assert.equal(layoutMetrics({ ...points, layout: 'columns' }, true).stacked, false);
+  assert.equal(layoutMetrics({ ...points, layout: 'compact' }, false).density, .85);
 });
 
 import { randomUUID } from 'node:crypto';
