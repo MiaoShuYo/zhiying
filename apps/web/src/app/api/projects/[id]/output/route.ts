@@ -4,7 +4,7 @@ import { createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { resolve } from 'node:path';
 import { db } from '@/lib/db';
-import { PER_JOB_VIDEO, SHARED_VIDEO, sharedVideoOwner } from '@/lib/job-video';
+import { outputDirFor, fileStamp, ownedVideoPath, safeFileBaseName, videoFileIsCurrent } from '@/lib/job-video';
 export const runtime = 'nodejs';
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -16,21 +16,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   ]);
   if (!job) return NextResponse.json({ error: '视频尚未渲染完成' }, { status: 404 });
   if (!project) return NextResponse.json({ error: '项目不存在' }, { status: 404 });
-  const safeProjectName = project.name
-    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
-    .trim()
-    .replace(/[.\s]+$/g, '') || '项目';
+  const safeProjectName = safeFileBaseName(project.name);
   let preset = 'full';
   try { preset = JSON.parse(job.inputJson ?? '{}').preset === 'draft' ? 'draft' : 'full'; } catch {}
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const at = new Date(job.updatedAt);
-  const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}`;
+  const stamp = fileStamp(job.updatedAt);
   // The name has to say which render this is. When every download of a project is
   // called <project>.mp4, an old file is indistinguishable from the one just made.
   const readableName = `${safeProjectName}-${preset === 'draft' ? '草稿' : '成片'}-${stamp}.mp4`;
   const asciiName = `video-${preset}-${stamp}.mp4`;
-  const outputDir = resolve(process.cwd(), '..', '..', 'data', 'projects', id, 'output');
-  const owned = job.outputPath && PER_JOB_VIDEO.test(job.outputPath) ? job.outputPath : job.id === sharedVideoOwner(renders) ? SHARED_VIDEO : null;
+  const outputDir = outputDirFor(id);
+  const owned = ownedVideoPath(job, renders);
   if (!owned) return NextResponse.json({ error: '这条导出记录的视频已被后续导出覆盖，只有最近一次导出可以下载，请重新导出后再试' }, { status: 409 });
   let streamPath: string | null = null;
   let size = 0;
@@ -39,7 +34,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const info = await stat(path);
     // A shared final.mp4 is only trustworthy when it is not older than the render that
     // claims it; per-job files are already unambiguous.
-    if (info.isFile() && (owned !== SHARED_VIDEO || info.mtimeMs + 1000 >= new Date(job.createdAt).getTime())) {
+    if (info.isFile() && videoFileIsCurrent(owned, job, info.mtimeMs)) {
       streamPath = path;
       size = info.size;
     }

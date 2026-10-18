@@ -3,11 +3,12 @@ import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition, makeCancelSignal } from '@remotion/renderer';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile, copyFile, rename } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile, copyFile, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { StoryboardSchema } from '@m2v/schema';
+import { StoryboardSchema, evaluateRender, type ExpectedRender } from '@m2v/schema';
+import { probeVideoFile } from '@m2v/video/probe';
 import dotenv from 'dotenv';
 
 const repo = resolve(process.cwd(), '../..');
@@ -85,7 +86,7 @@ async function renderJob(jobId: string, projectId: string) {
   const check = async () => { const current = await prisma.job.findUnique({ where: { id: jobId } }); if (!current || current.status !== 'running') { abort.abort(); cancel(); } };
 
   let lastProgress = 0;
-  const progress = async (phase: string, percent?: number) => { if (percent !== undefined && Date.now() - lastProgress < 500) return; lastProgress = Date.now(); await prisma.job.updateMany({ where: { id: jobId, status: 'running' }, data: { stage: phase, progress: JSON.stringify({ phase, percent, message: ({ bundling: '准备渲染资源', rendering: '渲染画面', encoding: '编码视频' } as Record<string,string>)[phase] }) } }); };
+  const progress = async (phase: string, percent?: number) => { if (percent !== undefined && Date.now() - lastProgress < 500) return; lastProgress = Date.now(); await prisma.job.updateMany({ where: { id: jobId, status: 'running' }, data: { stage: phase, progress: JSON.stringify({ phase, percent, message: ({ bundling: '准备渲染资源', rendering: '渲染画面', encoding: '编码视频', validating: '校验成片' } as Record<string,string>)[phase] }) } }); };
   const ensureActive = async () => { await check(); if (abort.signal.aborted) throw new Error('已取消渲染'); };
   const dir = join(outputRoot, projectId, 'output'); await mkdir(dir, { recursive: true });
   const temp = await mkdtemp(join(tmpdir(), 'm2v-render-')); const raw = join(temp, 'raw.mp4'); const final = join(dir, `${jobId}.mp4`); const partial = join(dir, `${jobId}.partial.mp4`);
@@ -96,8 +97,9 @@ async function renderJob(jobId: string, projectId: string) {
     await ensureActive();
     const inputProps = { storyboard };
     const composition = await selectComposition({ serveUrl, id: 'ExplainerVideo', inputProps, browserExecutable });
+    const scale = input.preset === 'draft' ? .5 : 1;
     await ensureActive(); await progress('rendering');
-    await renderMedia({ composition, serveUrl, codec: 'h264', outputLocation: raw, inputProps, browserExecutable, scale: input.preset === 'draft' ? .5 : 1, cancelSignal, onProgress: ({ progress: value }) => { void progress('rendering', Math.round(value * 100)).catch(console.error); } });
+    await renderMedia({ composition, serveUrl, codec: 'h264', outputLocation: raw, inputProps, browserExecutable, scale, cancelSignal, onProgress: ({ progress: value }) => { void progress('rendering', Math.round(value * 100)).catch(console.error); } });
     await ensureActive();
     await prisma.$transaction(async tx => {
       const updated = await tx.job.updateMany({ where: { id: jobId, status: 'running' }, data: { stage: 'encoding' } });
@@ -107,11 +109,35 @@ async function renderJob(jobId: string, projectId: string) {
     await progress('encoding');
     await encode(raw, partial, abort.signal, seconds => { void progress('encoding', Math.min(99, Math.round(seconds / (composition.durationInFrames / composition.fps) * 100))).catch(console.error); });
     await ensureActive(); await rename(partial, final);
-    await prisma.job.updateMany({ where: { id: jobId, status: 'running' }, data: { outputPath: `${jobId}.mp4` } });
+    await progress('validating');
+    // The file is already complete; a failed probe must not turn this job red, so the
+    // verdict is written when available and skipped otherwise.
+    const validation = await validateRender(final, {
+      width: Math.round(composition.width * scale),
+      height: Math.round(composition.height * scale),
+      duration: composition.durationInFrames / composition.fps,
+      requireAudio: storyboard.scenes.some(scene => scene.narration.trim().length > 0 || Boolean(scene.audioSrc)) || Boolean(storyboard.bgmSrc),
+    });
+    await prisma.job.updateMany({
+      where: { id: jobId, status: 'running' },
+      data: { outputPath: `${jobId}.mp4`, ...(validation ? { validationJson: JSON.stringify(validation) } : {}) },
+    });
     await finishJob(jobId, projectId, 'completed', null);
     const terminal = await prisma.job.findUnique({ where: { id: jobId } });
     if (terminal?.status === 'cancelling') { await rm(final, { force: true }); await finishJob(jobId, projectId, 'cancelled', null); }
   } finally { clearInterval(watcher); await rm(partial, { force: true }).catch(() => {}); await rm(temp, { recursive: true, force: true }).catch(error => console.warn('[worker] temporary cleanup failed', error)); }
+}
+
+/** Best-effort file check; returns `null` when the probe itself fails so the job still completes. */
+async function validateRender(file: string, expected: ExpectedRender) {
+  try {
+    const bytes = (await stat(file).catch(() => null))?.size ?? 0;
+    const probed = await probeVideoFile(file);
+    return evaluateRender(probed?.probe ?? null, expected, probed?.bytes ?? bytes);
+  } catch (error) {
+    console.warn('[worker] render validation skipped', error);
+    return null;
+  }
 }
 
 async function finishJob(jobId: string, projectId: string, status: 'completed' | 'failed' | 'cancelled', error: string | null) {

@@ -57,8 +57,9 @@ export const preflightFixLabels: Record<PreflightFix, string> = {
 
 const sceneLabel = (scene: Scene, index: number) => `场景 ${index + 1}${scene.title ? `「${scene.title}」` : ''}`;
 const sceneAssetPath = /^projects\/[A-Za-z0-9_-]+\/assets\/[^/]+$/;
-const displayWidth = (text: string) => (text.match(/[A-Za-z0-9]/g)?.length ?? 0) * 0.55 + [...text.replace(/[A-Za-z0-9]/g, '')].length;
-const captionLimit = (portrait: boolean) => (portrait ? 24 : 38);
+/** Shared with the V1.3 subtitle QC so the panel and the render check never disagree. */
+export const captionDisplayWidth = (text: string) => (text.match(/[A-Za-z0-9]/g)?.length ?? 0) * 0.55 + [...text.replace(/[A-Za-z0-9]/g, '')].length;
+export const captionCharLimit = (portrait: boolean) => (portrait ? 24 : 38);
 
 /** Longest run the automatic splitter cannot break: sentence enders and commas are its only stops. */
 function longestUnbreakableRun(narration: string): number {
@@ -67,11 +68,11 @@ function longestUnbreakableRun(narration: string): number {
 
 function cueIssues(scene: Scene, index: number, portrait: boolean): PreflightIssue[] {
   const issues: PreflightIssue[] = [];
-  const limit = captionLimit(portrait);
+  const limit = captionCharLimit(portrait);
   const target = sceneLabel(scene, index);
   const cues = scene.subtitleCues ?? [];
   if (cues.length) {
-    const overflow = cues.filter(cue => displayWidth(cue.text) > limit || cue.text.split('\n').length > 2);
+    const overflow = cues.filter(cue => captionDisplayWidth(cue.text) > limit || cue.text.split('\n').length > 2);
     if (overflow.length) {
       issues.push({ code: 'caption_overflow', severity: 'warning', sceneIndex: index, sceneId: scene.id, message: `${target}有 ${overflow.length} 条手动字幕超过 ${limit} 字或两行，导出后会被裁切。`, fix: 'open_captions' });
     }
