@@ -144,6 +144,9 @@ importers:
         specifier: ^4.0.315
         version: 4.0.534(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
     devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.20.5
       '@types/react':
         specifier: ^19.0.8
         version: 19.3.0

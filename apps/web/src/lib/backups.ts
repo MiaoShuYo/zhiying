@@ -6,7 +6,7 @@ import { PER_JOB_VIDEO, SHARED_VIDEO, sharedVideoOwner } from './job-video';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { db } from './db';
-import { StoryboardSchema } from '@m2v/schema';
+import { StoryboardSchema, type Storyboard } from '@m2v/schema';
 
 const repo = resolve(process.cwd(), '../..');
 const root = join(repo, 'data/backups');
@@ -53,6 +53,19 @@ export async function listSnapshots(projectId: string) {
   }
   return result.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
+/** Every file a project owns outside the database: its folder, audio and templates. */
+async function collectSources(projectId: string, storyboard: Storyboard | null, includeOutput: boolean) {
+  const sources = (await tree(join(repo, 'data/projects', projectId), 'project'))
+    .filter(item => includeOutput || !item.path.startsWith('project/output/'));
+  const audioFiles = (await readdir(join(publicRoot, 'audio')).catch(() => [])).filter(name => name.startsWith(`${projectId}-`));
+  sources.push(...audioFiles.map(name => ({ source: join(publicRoot, 'audio', name), path: `public/audio/${name}` })));
+  for (const path of new Set(storyboard?.scenes.map(scene => scene.audioSrc).filter((path): path is string => Boolean(path)) ?? [])) {
+    if (!/^audio\/[^/\\]+$/.test(path)) throw new Error('项目音频路径无效');
+    if (!sources.some(item => item.path === `public/${path}`)) sources.push({ source: inside(publicRoot, path), path: `public/${path}` });
+  }
+  return sources;
+}
+
 const pending = new Map<string, Promise<string | null>>();
 export function createSnapshot(projectId: string, automatic = false): Promise<string | null> {
   const existing = pending.get(projectId); if (existing) return existing;
@@ -71,14 +84,8 @@ async function snapshot(projectId: string, automatic: boolean) {
   const id = randomUUID(), directory = join(root, projectId, `.${id}`), final = join(root, projectId, id);
   await mkdir(directory, { recursive: true });
   try {
-    const sources = await tree(join(repo, 'data/projects', projectId), 'project');
-    const audioFiles = (await readdir(join(publicRoot, 'audio')).catch(() => [])).filter(name => name.startsWith(`${projectId}-`));
-    sources.push(...audioFiles.map(name => ({ source: join(publicRoot, 'audio', name), path: `public/audio/${name}` })));
     const storyboard = project.storyboardJson ? StoryboardSchema.parse(JSON.parse(project.storyboardJson)) : null;
-    for (const path of new Set(storyboard?.scenes.map(scene => scene.audioSrc).filter((path): path is string => Boolean(path)) ?? [])) {
-      if (!/^audio\/[^/\\]+$/.test(path)) throw new Error('项目音频路径无效');
-      if (!sources.some(item => item.path === `public/${path}`)) sources.push({ source: inside(publicRoot, path), path: `public/${path}` });
-    }
+    const sources = await collectSources(projectId, storyboard, true);
     let voiceId = project.voiceId;
     if (!voiceId) { try { voiceId = JSON.parse(await readFile(join(repo, 'data/settings/general-voice.json'), 'utf8')).voiceId; } catch { /* No voice selected. */ } }
     if (voiceId) sources.push(...await tree(join(repo, 'data/voices', safeId(voiceId)), 'voice'));
@@ -218,4 +225,53 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
     });
     return newId;
   } catch (error) { await Promise.all(copied.map(path => rm(path, { force: true }))); throw error; }
+}
+
+/**
+ * Writes the V1.1 container straight from the live project for the delivery package.
+ * The output folder is skipped by default because the MP4 already travels as its own
+ * file, and the manifest keeps `outputPath` so a restore still explains the gap.
+ */
+export async function writeProjectArchive(projectId: string, target: string, options: { includeOutput?: boolean } = {}) {
+  safeId(projectId);
+  const project = await db.project.findUniqueOrThrow({ where: { id: projectId }, include: { jobs: true } });
+  const storyboard = project.storyboardJson ? StoryboardSchema.parse(JSON.parse(project.storyboardJson)) : null;
+  const sources = await collectSources(projectId, storyboard, options.includeOutput ?? false);
+  let voiceId = project.voiceId;
+  if (!voiceId) { try { voiceId = JSON.parse(await readFile(join(repo, 'data/settings/general-voice.json'), 'utf8')).voiceId; } catch { /* No voice selected. */ } }
+  if (voiceId) sources.push(...await tree(join(repo, 'data/voices', safeId(voiceId)), 'voice'));
+  let pronunciation: Buffer | null = null;
+  try { pronunciation = await readFile(join(repo, 'data/settings/pronunciation.json')); } catch { /* No global rules. */ }
+  const files: Entry[] = [];
+  for (const item of sources) files.push({ path: item.path, size: (await stat(item.source)).size, sha256: await digest(item.source) });
+  if (pronunciation) files.push({ path: 'settings/pronunciation.json', size: pronunciation.length, sha256: createHash('sha256').update(pronunciation).digest('hex') });
+  const { jobs, ...record } = project;
+  // Only the newest record may claim a legacy shared final.mp4; with the output folder
+  // excluded this is null, and every record keeps the name it was stored with.
+  const sharedOwner = sources.some(item => item.path === `project/output/${SHARED_VIDEO}`) ? sharedVideoOwner(jobs) : null;
+  const manifest: Manifest = { version: 1, id: randomUUID(), createdAt: new Date().toISOString(), locked: false, project: { ...record, voiceId: voiceId ?? null }, jobs: jobs.map(job => ({ kind: job.kind, status: job.status, stage: job.stage, outputPath: job.id === sharedOwner ? SHARED_VIDEO : job.outputPath, inputJson: job.inputJson, error: job.error, createdAt: job.createdAt.toISOString() })), files };
+  const raw = Buffer.from(JSON.stringify(manifest));
+  const prefix = Buffer.alloc(12);
+  prefix.write('M2VBK001');
+  prefix.writeUInt32BE(raw.length, 8);
+  const handle = await open(target, 'w');
+  let offset = 0;
+  const write = async (chunk: Buffer) => {
+    let done = 0;
+    while (done < chunk.length) {
+      const { bytesWritten } = await handle.write(chunk, done, chunk.length - done, offset);
+      offset += bytesWritten;
+      done += bytesWritten;
+    }
+  };
+  try {
+    await write(prefix);
+    await write(raw);
+    for (const item of sources) for await (const chunk of createReadStream(item.source)) await write(chunk as Buffer);
+    if (pronunciation) await write(pronunciation);
+  } finally {
+    await handle.close();
+  }
+  const expected = 12 + raw.length + files.reduce((sum, file) => sum + file.size, 0);
+  if ((await stat(target)).size !== expected) throw new Error('项目备份写入不完整，请重试');
 }

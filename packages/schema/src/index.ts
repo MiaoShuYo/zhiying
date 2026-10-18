@@ -1,8 +1,8 @@
 import { z } from 'zod';
+import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } from './delivery';
 
 export const SceneTypeSchema = z.enum(['title', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'media']);
 export const StyleIdSchema = z.enum(['minimal-tech', 'clean-light', 'academic', 'social-short', 'whiteboard']);
-export const AspectRatioSchema = z.enum(['16:9', '9:16']).default('16:9');
 
 export const PronunciationRuleSchema = z.object({
   text: z.string().regex(/^[\u3400-\u9fff]{1,80}$/, '纠音词组需为 1 到 80 个汉字'),
@@ -10,14 +10,6 @@ export const PronunciationRuleSchema = z.object({
   occurrence: z.number().int().positive().optional(),
 }).refine(rule => rule.text.length === rule.pinyin.length, '每个汉字需要一个拼音');
 export type PronunciationRule = z.infer<typeof PronunciationRuleSchema>;
-
-export const SubtitleSchema = z.object({
-  enabled: z.boolean().default(true), preset: z.enum(['minimal', 'boxed', 'highlight']).default('boxed'),
-  position: z.enum(['top', 'center', 'bottom']).default('bottom'),
-  fontSize: z.number().min(18).max(72).default(30), color: z.string().regex(/^#[0-9a-f]{6}$/i).default('#ffffff'),
-  background: z.string().regex(/^#[0-9a-f]{6}$/i).default('#000000'), backgroundOpacity: z.number().min(0).max(1).default(0.72),
-});
-export type SubtitleSettings = z.infer<typeof SubtitleSchema>;
 
 export const SubtitleCueSchema = z.object({
   text: z.string().min(1).max(200),
@@ -76,15 +68,8 @@ export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
 });
 
 /** Basic delivery frame: a title card before the first scene or after the last one. */
-export const FrameCardSchema = z.object({
-  enabled: z.boolean().default(false),
-  title: z.string().max(50).optional(),
-  subtitle: z.string().max(120).optional(),
-  duration: z.number().min(1).max(15).default(3),
-});
 export type FrameCard = z.infer<typeof FrameCardSchema>;
 
-export const TransitionSchema = z.enum(['none', 'fade']).default('none');
 export type Transition = z.infer<typeof TransitionSchema>;
 
 export const StoryboardSchema = z.object({
@@ -125,6 +110,9 @@ export type SceneType = z.infer<typeof SceneTypeSchema>;
 export type Storyboard = z.infer<typeof StoryboardSchema>;
 export type StyleId = z.infer<typeof StyleIdSchema>;
 
+export * from "./delivery";
 export * from "./editor";
+export * from "./presets";
 export * from "./preflight";
+export * from "./render-validation";
 export * from "./timeline";

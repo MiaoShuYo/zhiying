@@ -51,6 +51,7 @@ model Job {
   progress String?
   inputJson String?
   outputPath String?
+  validationJson String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
