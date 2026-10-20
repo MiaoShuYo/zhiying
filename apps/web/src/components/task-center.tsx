@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { formatElapsed, isActiveTask, retryLabels, retryRequest, taskKindLabels, taskStatusLabels, type ChapterTask, type RetryMode } from '@/lib/task-actions';
+import { formatElapsed, isActiveTask, retryLabels, retryRequest, taskKindLabels, taskStatusLabels, type ChapterTask, type FailureInfo, type RetryMode } from '@/lib/task-actions';
 import type { PreflightIssue } from '@m2v/schema';
 
 export type TaskEntry = {
@@ -20,6 +20,7 @@ export type TaskEntry = {
   createdAt: string;
   updatedAt: string;
   retryMode: RetryMode | null;
+  failure?: FailureInfo | null;
   chapters?: ChapterTask[];
   confirmed?: boolean;
 };
@@ -81,10 +82,18 @@ export function TaskCard({ task, onChange, compact = false }: { task: TaskEntry;
         <p className="task-message">
           {active
             ? task.message ?? `${taskStatusLabels[task.status] ?? task.status}…`
-            : task.error
-              ? task.error
-              : task.status === 'completed' ? '已完成' : task.message ?? '已停止'}
+            : task.failure
+              ? task.failure.title
+              : task.error
+                ? task.error
+                : task.status === 'completed' ? '已完成' : task.message ?? '已停止'}
         </p>
+        {!active && task.failure && (
+          <div className="task-failure" role="status">
+            <p className="task-failure-detail">{task.failure.detail}</p>
+            <p className="task-hint">{task.failure.hint}</p>
+          </div>
+        )}
         {typeof task.percent === 'number' && active && (
           <div className="task-progress"><span style={{ width: `${Math.min(100, Math.max(0, task.percent))}%` }} /></div>
         )}
@@ -118,13 +127,12 @@ export function TaskCard({ task, onChange, compact = false }: { task: TaskEntry;
             <button className="button primary" disabled={!!busy} onClick={() => void run('render', true)}>{busy === 'render' ? '提交中…' : '确认风险并重新渲染'}</button>
             <button className="text-button" disabled={!!busy} onClick={() => setBlocked(null)}>返回</button>
           </>
-        ) : task.retryMode && (
-          <button className="button subtle" disabled={!!busy} onClick={() => run(task.retryMode as RetryMode)}>
-            {busy === task.retryMode ? '处理中…' : retryLabels[task.retryMode]}
-          </button>
-        )}
-        {task.status === 'failed' && task.kind === 'storyboard' && task.retryMode !== 'restart' && (
-          <button className="text-button" disabled={!!busy} onClick={() => run('restart')}>从头重新执行</button>
+        ) : (
+          (task.failure?.actions ?? (task.retryMode ? [task.retryMode] : [])).map((mode, index) => (
+            <button key={mode} className={index === 0 ? 'button subtle' : 'text-button'} disabled={!!busy} onClick={() => run(mode)}>
+              {busy === mode ? '处理中…' : retryLabels[mode]}
+            </button>
+          ))
         )}
         <Link className="text-button" href={`/project/${task.projectId}`}>打开项目</Link>
       </div>

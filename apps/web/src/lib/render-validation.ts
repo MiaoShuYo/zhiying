@@ -52,6 +52,52 @@ export type ExportValidationOutcome =
   | { ok: true; validation: RenderValidation }
   | { ok: false; status: number; error: string };
 
+export type ExportVideoState = 'current' | 'superseded' | 'missing';
+
+/** Whether the file behind a completed export still exists and still belongs to that record. */
+export async function exportVideoState(
+  projectId: string,
+  job: { id: string; status: string; outputPath: string | null },
+  renders: { id: string; kind: string; status: string; outputPath: string | null; createdAt: Date | string }[],
+): Promise<ExportVideoState> {
+  if (job.status !== 'completed') return 'missing';
+  const owned = ownedVideoPath(job, renders);
+  if (!owned) return 'superseded';
+  try {
+    const info = await stat(resolve(outputDirFor(projectId), owned));
+    return info.isFile() && info.size > 0 ? 'current' : 'missing';
+  } catch {
+    return 'missing';
+  }
+}
+
+const validating = new Map<string, Promise<RenderValidation | null>>();
+
+/** Validates a completed export once, sharing the in-flight probe between history requests. */
+export async function ensureExportValidation(
+  projectId: string,
+  job: { id: string; status: string; validationJson: string | null },
+): Promise<RenderValidation | null> {
+  const cached = parseValidation(job.validationJson);
+  if (cached || job.status !== 'completed') return cached;
+  const key = `${projectId}:${job.id}`;
+  const pending = validating.get(key);
+  if (pending) return pending;
+  const task = (async () => {
+    try {
+      const outcome = await validateExport(projectId, job.id);
+      return outcome?.ok ? outcome.validation : null;
+    } catch {
+      return null;
+    } finally {
+      validating.delete(key);
+    }
+  })();
+  validating.set(key, task);
+  return task;
+}
+
+
 /** Re-reads the exported file and stores the verdict on the job; `null` means the job is unknown. */
 export async function validateExport(projectId: string, jobId: string): Promise<ExportValidationOutcome | null> {
   const job = await db.job.findFirst({ where: { id: jobId, projectId, kind: 'render' } });

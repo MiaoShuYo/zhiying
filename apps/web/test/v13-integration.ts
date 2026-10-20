@@ -20,6 +20,7 @@ async function main() {
   const { GET: readExports } = await import('../src/app/api/projects/[id]/exports/route');
   const { POST: validateExportRoute } = await import('../src/app/api/projects/[id]/exports/[jobId]/validate/route');
   const { POST: buildDeliveryRoute } = await import('../src/app/api/projects/[id]/delivery/route');
+  const { GET: readDelivery } = await import('../src/app/api/projects/[id]/delivery/[jobId]/route');
   const { GET: readPresets, POST: writePreset, DELETE: removePreset } = await import('../src/app/api/settings/export-presets/route');
 
   const params = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -187,11 +188,14 @@ async function main() {
 
         const packed = await buildDeliveryRoute(new Request(url('/'), { method: 'POST', body: JSON.stringify({ jobId: filmJob.id }) }), params(filmProject.id));
         assert.equal(packed.status, 200);
-        assert.equal(packed.headers.get('content-type'), 'application/zip');
-        const disposition = packed.headers.get('content-disposition') ?? '';
-        assert.match(decodeURIComponent(disposition), /启航交付-交付包-\d{8}-\d{4}\.zip/, '交付包文件名要带项目名与时间戳');
-        const archive = Buffer.from(await packed.arrayBuffer());
-        assert.equal(Number(packed.headers.get('content-length')), archive.length);
+        const packedBody = await body(packed);
+        assert.equal(packedBody.ok, true, '打包成功时返回记录，ZIP 由下载接口单独提供');
+        assert.match(packedBody.name, /启航交付-交付包-\d{8}-\d{4}\.zip/, '交付包文件名要带项目名与时间戳');
+        const download = await readDelivery(new Request(url('/')), jobParams(filmProject.id, filmJob.id));
+        assert.equal(download.status, 200);
+        assert.equal(download.headers.get('content-type'), 'application/zip');
+        const archive = Buffer.from(await download.arrayBuffer());
+        assert.equal(archive.length, packedBody.bytes, '下载到的字节数与记录一致');
         assert.ok(archive.readUInt32LE(0) === 0x04034b50, '交付包必须是 ZIP');
         assert.ok(archive.includes(Buffer.from([0x50, 0x4b, 0x05, 0x06])), '交付包必须以中央目录收尾');
         for (const entry of ['启航交付-成片-', '-字幕-', '.srt', '.vtt', '.ass', '启航交付-封面-', '启航交付-项目备份-', '.m2v', '启航交付-交付说明.txt']) {
@@ -202,7 +206,7 @@ async function main() {
 
         const fallback = await buildDeliveryRoute(new Request(url('/'), { method: 'POST' }), params(filmProject.id));
         assert.equal(fallback.status, 200, '不带 jobId 时默认打包最近一次完成的渲染');
-        await (fallback.arrayBuffer());
+        assert.equal((await body(fallback)).ok, true);
         const stored = await db.job.findUniqueOrThrow({ where: { id: filmJob.id } });
         assert.ok(stored.validationJson, '校验结果要留在导出记录里');
       }

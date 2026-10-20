@@ -114,5 +114,6 @@ export * from "./delivery";
 export * from "./editor";
 export * from "./presets";
 export * from "./preflight";
+export * from "./qc";
 export * from "./render-validation";
 export * from "./timeline";

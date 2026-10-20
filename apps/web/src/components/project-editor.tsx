@@ -365,7 +365,8 @@ export function ProjectEditor({ initial }: { initial: Data }) {
     if (issue.fix === 'upload_asset' || issue.fix === 'open_captions' || issue.fix === 'rewrite_narration') { if (issue.sceneIndex !== undefined) setActive(issue.sceneIndex); setTab('storyboard'); return; }
     setTab('render');
   }
-  function locateQcIssue(issue: { sceneIndex: number; kind: 'subtitle' | 'audio' }) {
+  function locateQcIssue(issue: { sceneIndex: number; kind: 'subtitle' | 'audio' | 'render' }) {
+    if (issue.kind === 'render') { setTab('render'); return; }
     setActive(issue.sceneIndex);
     setToolsFocus({ section: issue.kind === 'subtitle' ? 'captions' : 'layout', nonce: Date.now() });
     setTab('storyboard');

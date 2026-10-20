@@ -16,6 +16,8 @@
     "test:v12:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v12-integration.ts",
     "test:v13": "tsx --test packages/video/test/qc.test.ts packages/schema/test/render-validation.test.ts packages/schema/test/presets.test.ts apps/web/test/zip.test.ts && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/qc-panel-render.tsx",
     "test:v13:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v13-integration.ts",
+    "test:v14": "tsx --test packages/video/test/qc.test.ts packages/schema/test/qc-status.test.ts packages/schema/test/presets.test.ts packages/video/test/subtitle-timeline.test.ts apps/web/test/delivery-records.test.ts apps/web/test/task-recovery.test.ts && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/qc-panel-render.tsx && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/export-history-render.tsx",
+    "test:v14:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v14-integration.ts",
     "test:v11:render": "tsx apps/worker/test/render-v11.ts"
   },
   "devDependencies": {
