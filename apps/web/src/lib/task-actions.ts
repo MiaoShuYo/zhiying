@@ -30,10 +30,52 @@ export function retryModeFor(job: { kind?: string | null; status: string; ageMs?
     if (job.kind === 'tts') return 'voice';
     return projectStatus === 'failed' ? 'step' : null;
   }
-  if (job.status === 'cancelled') return job.kind === 'render' ? 'render' : null;
+  if (job.status === 'cancelled') {
+    if (job.kind === 'render') return 'render';
+    if (job.kind === 'tts') return 'voice';
+    return 'step';
+  }
   // A job that has produced nothing for 15 minutes is treated as abandoned; the
   // recovery endpoint is the only way out of the project lock.
   if (activeTaskStatuses.includes(job.status) && (job.ageMs ?? 0) > 15 * 60_000) return 'recover';
+  return null;
+}
+
+export type FailureInfo = { title: string; detail: string; hint: string; actions: RetryMode[] };
+
+/** Why a task stopped and which of the existing retry routes can carry it forward. */
+export function failureInfo(
+  job: { kind?: string | null; status: string; stage?: string | null; error?: string | null; ageMs?: number },
+  projectStatus?: string,
+): FailureInfo | null {
+  const detail = job.error?.trim() || '';
+  if (job.status === 'failed') {
+    if (job.kind === 'render') {
+      return { title: '视频渲染失败', detail: detail || '渲染进程在完成前意外结束。', hint: '重新渲染会先检查导出条件；已生成的语音和字幕不会重做，未完成的视频不会进入导出记录。', actions: ['render'] };
+    }
+    if (job.kind === 'tts') {
+      return { title: '语音生成失败', detail: detail || '语音任务没有生成完整的音频。', hint: '重新生成语音会覆盖未完成的音频，分镜和旁白文案保持不变。', actions: ['voice'] };
+    }
+    const stageTitle = job.stage === 'extracting' ? '资料读取失败' : job.stage === 'storyboarding' ? '分镜生成失败' : '内容解析失败';
+    return {
+      title: stageTitle,
+      detail: detail || '长文生成任务在执行中停止。',
+      hint: projectStatus === 'failed' ? '从失败步骤重试会保留已完成的章节；只有选择从头执行才会清空现有分镜。' : '项目当前不允许重试，请打开项目查看状态后再试。',
+      actions: projectStatus === 'failed' ? ['step', 'restart'] : [],
+    };
+  }
+  if (job.status === 'cancelled') {
+    if (job.kind === 'render') {
+      return { title: '渲染已取消', detail: '任务在成片完成前被取消。', hint: '可以直接重新渲染；取消时未完成的文件不会作为导出记录出现。', actions: ['render'] };
+    }
+    if (job.kind === 'tts') {
+      return { title: '语音生成已取消', detail: '任务在语音生成完成前被取消。', hint: '重新生成语音即可继续，已生成的分镜不会改变。', actions: ['voice'] };
+    }
+    return { title: '内容生成已取消', detail: '任务在长文生成完成前被取消。', hint: '从中断处继续会保留已完成章节；从头执行会重新解析全文。', actions: ['step', 'restart'] };
+  }
+  if (activeTaskStatuses.includes(job.status) && (job.ageMs ?? 0) > 15 * 60_000) {
+    return { title: '任务疑似中断', detail: `已经 ${Math.round((job.ageMs ?? 0) / 60_000)} 分钟没有收到进度更新。`, hint: '先检查并释放占用，再按提示重新执行；直接重复提交可能被项目锁拒绝。', actions: ['recover'] };
+  }
   return null;
 }
 

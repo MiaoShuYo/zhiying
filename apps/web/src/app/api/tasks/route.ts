@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { activeTaskStatuses, chapterProgress, isActiveTask, readTaskProgress, retryModeFor, type ChapterEntry } from '@/lib/task-actions';
+import { activeTaskStatuses, chapterProgress, failureInfo, isActiveTask, readTaskProgress, retryModeFor, type ChapterEntry } from '@/lib/task-actions';
 
 export const runtime = 'nodejs';
 
@@ -40,6 +40,7 @@ export async function GET(request: Request) {
   const tasks = await Promise.all(jobs.map(async job => {
     const progress = readTaskProgress(job.progress);
     const since = new Date(isActiveTask(job.status) ? job.updatedAt : job.createdAt).getTime();
+    const ageMs = now - since;
     return {
       id: job.id,
       projectId: job.projectId,
@@ -54,7 +55,8 @@ export async function GET(request: Request) {
       error: job.error,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
-      retryMode: retryModeFor({ kind: job.kind, status: job.status, ageMs: now - since }, job.project.status),
+      retryMode: retryModeFor({ kind: job.kind, status: job.status, ageMs }, job.project.status),
+      failure: failureInfo({ kind: job.kind, status: job.status, stage: job.stage, error: job.error, ageMs }, job.project.status),
       // A render job carries the whole storyboard in inputJson; a substring test avoids parsing it.
       confirmed: job.kind === 'render' && Boolean(job.inputJson?.includes('"allowIssues":true')),
       chapters: job.kind === 'storyboard' ? chapterProgress(await chaptersOf(job.projectId), progress) : undefined,

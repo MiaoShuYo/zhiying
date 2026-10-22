@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ExportPresetSchema, SceneSchema, StoryboardSchema, presetBoardPatch } from '../src/index';
+import { ExportPresetSchema, SceneSchema, StoryboardSchema, changedPresetCount, presetBoardPatch, presetChanges } from '../src/index';
 
 const preset = (patch: Record<string, unknown> = {}) => ExportPresetSchema.parse({
   id: 'preset-1', name: ' 竖屏交付 ', aspectRatio: '9:16', subtitles: {},
@@ -50,4 +50,40 @@ test('applying a preset keeps the storyboard content untouched', () => {
   assert.equal(merged.styleId, 'minimal-tech');
   assert.equal(merged.aspectRatio, '9:16');
   assert.ok(!JSON.stringify(presetBoardPatch(preset())).includes('scenes'), '预设内容里不能混入分镜');
+});
+
+test('presets are only default when explicitly marked', () => {
+  assert.equal(preset().isDefault, false);
+  assert.equal(preset({ isDefault: true }).isDefault, true);
+});
+
+test('presetChanges lists every delivery field with readable before/after values', () => {
+  const board = StoryboardSchema.parse({
+    title: '例子', styleId: 'minimal-tech', subtitles: { preset: 'minimal', fontSize: 24 },
+    scenes: [{ id: 'a', type: 'title', narration: '一句话。', visual: {} }],
+  });
+  const target = preset({ intro: { enabled: true, title: '开场', duration: 2 }, transition: 'fade', renderPreset: 'draft' });
+  const changes = presetChanges(board, target, 'full');
+  assert.deepEqual(changes.map(change => change.key), ['aspectRatio', 'subtitles', 'intro', 'outro', 'transition', 'renderPreset']);
+  const byKey = (key: string) => changes.find(change => change.key === key)!;
+  assert.equal(byKey('aspectRatio').current, '横屏 16:9');
+  assert.equal(byKey('aspectRatio').next, '竖屏 9:16');
+  assert.equal(byKey('aspectRatio').changed, true);
+  assert.notEqual(byKey('subtitles').current, byKey('subtitles').next);
+  assert.match(byKey('intro').next, /开场/);
+  assert.equal(byKey('outro').changed, false);
+  assert.equal(byKey('transition').changed, true);
+  assert.equal(byKey('renderPreset').next, '草稿');
+  assert.equal(changedPresetCount(changes), 5);
+});
+
+test('applying a preset that matches the board reports no changes', () => {
+  const board = StoryboardSchema.parse({
+    title: '例子', styleId: 'minimal-tech', aspectRatio: '9:16', transition: 'fade', subtitles: {},
+    scenes: [{ id: 'a', type: 'title', narration: '一句话。', visual: {} }],
+  });
+  const target = preset({ aspectRatio: '9:16', transition: 'fade' });
+  const changes = presetChanges(board, target);
+  assert.equal(changedPresetCount(changes), 0);
+  assert.equal(changes.every(change => change.current === change.next), true);
 });

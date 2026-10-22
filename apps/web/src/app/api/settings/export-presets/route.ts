@@ -3,8 +3,11 @@ import {
   ExportPresetError,
   MAX_EXPORT_PRESETS,
   deleteExportPreset,
+  duplicateExportPreset,
   readExportPresets,
+  renameExportPreset,
   saveExportPreset,
+  setDefaultExportPreset,
 } from '@/lib/export-presets';
 
 export const runtime = 'nodejs';
@@ -30,6 +33,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ preset: await saveExportPreset(payload, id) });
   } catch (error) {
     return failure(error, '保存导出预设失败');
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const body = (await request.json()) as { id?: unknown; action?: unknown; name?: unknown };
+    const id = typeof body.id === 'string' ? body.id : '';
+    if (!id) return NextResponse.json({ error: '缺少预设 ID' }, { status: 400 });
+    if (body.action === 'rename') return NextResponse.json({ preset: await renameExportPreset(id, body.name) });
+    if (body.action === 'duplicate') return NextResponse.json({ preset: await duplicateExportPreset(id) });
+    if (body.action === 'default') return NextResponse.json({ preset: await setDefaultExportPreset(id) });
+    return NextResponse.json({ error: '不支持的预设操作' }, { status: 400 });
+  } catch (error) {
+    return failure(error, '更新导出预设失败');
   }
 }
 

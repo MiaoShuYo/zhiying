@@ -1,4 +1,4 @@
-import { createSnapshot, listSnapshots, lockSnapshot, restoreSnapshot, snapshotResponse, verifySnapshot } from '@/lib/backups';
+import { createSnapshot, listSnapshots, lockSnapshot, restoreErrorBody, restoreSnapshot, snapshotResponse, verifySnapshot } from '@/lib/backups';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 export const runtime = 'nodejs';
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -22,5 +22,5 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const snapshotId = await createSnapshot(id);
     if (body.action === 'duplicate') return Response.json({ id: await restoreSnapshot(id, snapshotId!) });
     return Response.json({ snapshotId });
-  } catch (error) { return Response.json({ error: error instanceof Error ? error.message : '备份失败' }, { status: 400 }); }
+  } catch (error) { return Response.json(restoreErrorBody(error), { status: 400 }); }
 }

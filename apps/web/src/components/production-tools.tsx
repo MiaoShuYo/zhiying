@@ -10,7 +10,66 @@ import { SnapshotVerifier, StoragePanel } from './maintenance-panel';
 
 type Asset = { path: string; name: string; displayName?: string; kind?: string; attribution?: string; license?: string; licenseUrl?: string; sourceUrl?: string; licenseClass?: string; requiresAttribution?: boolean; warnings?: string[] };
 type Snapshot = { id: string; createdAt: string; locked: boolean; bytes: number };
-type Export = { id: string; status: string; stage: string; progress: string | null; error: string | null; createdAt: string; outputPath?: string | null; inputJson?: string | null; validation?: RenderValidation | null };
+export type DeliveryRecord = { status: 'ready' | 'failed'; name?: string; bytes?: number; files?: number; missing: { step: string; message: string }[]; error?: string; attempts: number; updatedAt: string; fileExists?: boolean; revision?: number; qc?: { status: string; errors: number; warnings: number }; stale?: 'qc-blocking' | 'project-changed' | null };
+type Export = { id: string; status: string; stage: string; progress: string | null; error: string | null; createdAt: string; outputPath?: string | null; inputJson?: string | null; validation?: RenderValidation | null; videoState?: 'current' | 'superseded' | 'missing'; delivery?: DeliveryRecord | null };
+const deliveryStepLabels: Record<string, string> = { render: '成片渲染', validation: '成片校验', qc: '质检', video: '视频文件', subtitles: '字幕时间轴', cover: '封面图', backup: '项目备份', package: '打包 ZIP' };
+
+export function deliveryState(delivery?: DeliveryRecord | null) {
+  if (!delivery) return 'missing' as const;
+  if (delivery.status === 'failed') return 'failed' as const;
+  if (delivery.stale) return 'stale' as const;
+  return delivery.fileExists ? 'ready' as const : 'expired' as const;
+}
+
+export function deliveryMissingText(delivery: DeliveryRecord) {
+  return delivery.missing.map(item => `${deliveryStepLabels[item.step] ?? item.step}（${item.message}）`).join('、');
+}
+
+/** Why an existing archive can no longer be handed out as the current delivery. */
+export function deliveryStaleText(delivery: DeliveryRecord) {
+  if (delivery.stale === 'qc-blocking') return '生成时质检未通过（存在阻断问题），当前质检仍未通过，这个包不能再作为交付依据。';
+  if (delivery.stale === 'project-changed') return '生成之后项目又有修改，包内内容已不是最新版本。';
+  return '';
+}
+
+export function ExportDelivery({ delivery, busy, onDownload, onRegenerate }: { delivery?: DeliveryRecord | null; busy: boolean; onDownload: () => void; onRegenerate: () => void }) {
+  const state = deliveryState(delivery);
+  return (
+    <div className="task-failure">
+      <b>交付包：{state === 'missing' ? '未生成' : state === 'failed' ? '生成失败' : state === 'ready' ? '已生成' : state === 'stale' ? '已过期' : '文件已过期'}</b>
+      {delivery && <span className="task-failure-detail">
+        {delivery.name ?? ''}{delivery.bytes ? ` · ${(delivery.bytes / 1024 / 1024).toFixed(1)} MB` : ''}
+        {delivery.files ? ` · ${delivery.files} 个文件` : ''} · 第 {delivery.attempts} 次生成
+        {delivery.updatedAt ? ` · ${new Date(delivery.updatedAt).toLocaleString()}` : ''}
+      </span>}
+      {state === 'failed' && delivery && (
+        <span className="task-failure-detail">
+          {delivery.error ?? '交付包生成失败'}
+          {delivery.missing.length > 0 ? `：缺少 ${deliveryMissingText(delivery)}` : ''}
+        </span>
+      )}
+      {state === 'stale' && delivery && <span className="task-failure-detail">{deliveryStaleText(delivery)}请重新生成后再交付。</span>}
+      {state === 'expired' && <span className="task-failure-detail">交付包文件已被清理，需要重新生成。</span>}
+      <span>
+        {state === 'ready' && (
+          <button className="button subtle" disabled={busy} onClick={onDownload}>{busy ? '下载中…' : '再次下载'}</button>
+        )}
+        <button className="button subtle" disabled={busy} onClick={onRegenerate}>
+          {busy ? '打包中…' : delivery ? '重新生成交付包' : '生成交付包'}
+        </button>
+      </span>
+    </div>
+  );
+}
+/**
+ * Hands the ZIP to the browser's own download stack. A 14 MB package must not go through
+ * fetch + blob: buffering it in the page is what turned a finished archive into a failed request.
+ */
+function startDownload(url: string, name?: string) {
+  const link = document.createElement('a');
+  link.href = url; link.download = name ?? ''; link.rel = 'noopener';
+  document.body.appendChild(link); link.click(); link.remove();
+}
 async function json(response: Response) { const result = await response.json(); if (!response.ok) throw new Error(result.error ?? '操作失败'); return result; }
 const safeLink = (value?: string) => value && /^https?:\/\//i.test(value) ? value : undefined;
 export const licenseLabels: Record<string, string> = { 'public-domain': '公有领域', 'cc-by': 'CC BY · 需署名', 'cc-by-sa': 'CC BY-SA · 需署名并相同方式共享', other: '其他许可', unknown: '许可未知' };export function ProductionTools({ id, board, active, assets, busy, save, onChange, onSelect, reload, speed, focus }: { id: string; board: Storyboard; active: number; assets: Asset[]; busy: boolean; save: () => Promise<boolean>; onChange: (board: Storyboard) => void; onSelect: (index: number) => void; reload: () => Promise<void>; speed: number; focus?: { section: string; nonce: number } | null }) {
@@ -49,6 +108,7 @@ export const licenseLabels: Record<string, string> = { 'public-domain': '公有�
 export function ExportHistory({ id, busy, onRecheck }: { id: string; busy: boolean; onRecheck?: () => void }) {
   const [exports, setExports] = useState<Export[]>([]), [error, setError] = useState('');
   const [validating, setValidating] = useState('');
+  const [deliveryBusy, setDeliveryBusy] = useState('');
   async function validate(jobId: string) {
     setValidating(jobId); setError('');
     try {
@@ -57,11 +117,114 @@ export function ExportHistory({ id, busy, onRecheck }: { id: string; busy: boole
     } catch (problem) { setError(problem instanceof Error ? problem.message : '校验失败'); } finally { setValidating(''); }
   }
   async function refresh() { try { setExports(await json(await fetch(`/api/projects/${id}/exports`))); } catch (error) { setError(String(error)); } }
+  async function readExports(): Promise<Export[] | null> {
+    try {
+      const rows = await json(await fetch(`/api/projects/${id}/exports`)) as Export[];
+      setExports(rows);
+      return rows;
+    } catch { return null; }
+  }
+  const deliveryUrl = (jobId: string) => `/api/projects/${id}/delivery/${encodeURIComponent(jobId)}`;
+  async function downloadPackage(job: Export) {
+    setDeliveryBusy(job.id); setError('');
+    try {
+      // 只用预检判断能不能下载；ZIP 交给浏览器自己传输，避免大响应体把 fetch 拖成失败。
+      const probe = await fetch(`${deliveryUrl(job.id)}?probe=1`, { cache: 'no-store' }).catch(() => null);
+      if (probe && !probe.ok) throw new Error((await probe.json().catch(() => ({}))).error ?? '交付包不可下载');
+      startDownload(deliveryUrl(job.id), job.delivery?.name);
+    } catch (problem) { setError(problem instanceof Error ? problem.message : '下载交付包失败'); } finally { setDeliveryBusy(''); }
+  }
+  async function deliverPackage(job: Export) {
+    setDeliveryBusy(job.id); setError('');
+    try {
+      const response = await fetch(`/api/projects/${id}/delivery`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobId: job.id }) }).catch(() => null);
+      // The build writes its record before replying, so a dropped connection must not be
+      // reported as a failure when the package was in fact generated.
+      if (!response) {
+        const record = (await readExports())?.find(row => row.id === job.id)?.delivery;
+        if (record?.status === 'ready' && !record.stale) { setError(''); await downloadPackage(job); return; }
+        throw new Error('与服务器的连接中断，交付包状态未知。请刷新页面后查看导出记录。');
+      }
+      const data = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) { await refresh(); throw new Error(data?.error ?? '生成交付包失败'); }
+      await refresh();
+      await downloadPackage(job);
+    } catch (problem) { setError(problem instanceof Error ? problem.message : '生成交付包失败'); } finally { setDeliveryBusy(''); }
+  }
   useEffect(() => { void refresh(); if (busy) { const timer = setInterval(refresh, 1500); return () => clearInterval(timer); } }, [id, busy]);
   // 接口按创建时间倒序返回：旧的共享 final.mp4 只属于最近一次完成的导出记录。
   const sharedClaimed = exports.some(job => job.outputPath === 'final.mp4');
   const sharedOwner = sharedClaimed ? null : exports.find(job => job.status === 'completed' && !job.outputPath)?.id;
-  return <section className="settings-card"><h3>导出记录</h3>{error && <p role="alert">{error}</p>}{exports.map(job => { let progress: { percent?: number; message?: string } = {}; try { progress = JSON.parse(job.progress ?? '{}'); } catch {} let preset = 'full'; try { preset = JSON.parse(job.inputJson ?? '{}').preset; } catch {} const unavailable = job.status === 'completed' && !job.outputPath && job.id !== sharedOwner; return <div className="settings-card" key={job.id}><b>{preset === 'draft' ? '540p 草稿' : '1080p 成片'} · {new Date(job.createdAt).toLocaleString()}{unavailable ? ' · 历史记录' : ''}</b><p>{({ queued:'排队中', running:'执行中', cancelling:'正在停止并清理', cancelled:'已取消', completed:'已完成', failed:'失败' } as Record<string,string>)[job.status]} {progress.message} {progress.percent !== undefined ? `${progress.percent}%` : ''}</p>{progress.percent !== undefined && job.status === 'running' && <progress value={progress.percent} max={100} />}{job.validation && <p className={`qc-verdict-line ${job.validation.ok ? 'ok' : job.validation.issues.some(issue => issue.blocking) ? 'error' : 'warning'}`}>成片校验：{job.validation.ok ? '通过' : job.validation.issues.some(issue => issue.blocking) ? '文件不可用' : `${job.validation.issues.length} 项提醒`} · {job.validation.width ?? '?'} × {job.validation.height ?? '?'} · {job.validation.duration === undefined ? '时长未知' : `${job.validation.duration.toFixed(1)} 秒`} · 音频轨道 {job.validation.hasAudio ? '有' : '无'}{job.validation.issues.length > 0 ? ` · ${job.validation.issues.map(issue => renderValidationLabels[issue.code] ?? issue.code).join('、')}` : ''}</p>}{job.error && <p className="error-text">{job.error}</p>}{job.status === 'failed' && onRecheck && <button className="button subtle" onClick={onRecheck}>先做导出前检查再重试</button>}{['queued','running','cancelling'].includes(job.status) && <button className="button danger" disabled={job.status === 'cancelling'} onClick={() => void fetch(`/api/jobs/${job.id}/cancel`, { method: 'POST' }).then(json).then(refresh).catch(error => setError(String(error)))}>取消渲染</button>}{job.status === 'completed' && (job.outputPath || job.id === sharedOwner ? <button className="button subtle" disabled={busy} onClick={async () => { setError(''); try { const probe = await fetch(`/api/projects/${id}/output?jobId=${job.id}`, { method: 'HEAD' }); if (!probe.ok) { const data = await probe.json().catch(() => ({})); throw new Error(data.error ?? '视频文件不存在，请重新渲染'); } window.location.assign(`/api/projects/${id}/output?jobId=${job.id}`); } catch (error) { setError(error instanceof Error ? error.message : '下载失败'); } }}>下载视频</button> : <p className="hint">历史记录（视频不可用）：V1.0 的多次导出共用同一个视频文件，这条记录的视频已被后续导出覆盖，文件已不存在。需要成片请重新导出。</p>)}{job.status === 'completed' && <button className="text-button" disabled={validating === job.id} onClick={() => void validate(job.id)}>{validating === job.id ? '校验中…' : job.validation ? '重新校验成片' : '校验成片文件'}</button>}</div>; })}</section>;
+  return (
+    <section className="settings-card">
+      <h3>导出记录</h3>
+      <p className="hint">最新一次尝试总排在最前面；成片、校验与交付包状态分开显示，历史失败不会把更早的成功标成最新。</p>
+      {error && <p role="alert">{error}</p>}
+      {exports.map((job, index) => {
+        let progress: { percent?: number; message?: string } = {};
+        try { progress = JSON.parse(job.progress ?? '{}'); } catch {}
+        let preset = 'full';
+        try { preset = JSON.parse(job.inputJson ?? '{}').preset; } catch {}
+        const unavailable = job.status === 'completed' && !job.outputPath && job.id !== sharedOwner;
+        const statusText = ({ queued: '排队中', running: '执行中', cancelling: '正在停止并清理', cancelled: '已取消', completed: '已完成', failed: '失败' } as Record<string, string>)[job.status];
+        const validationState = job.validation?.ok ? 'ok' : job.validation?.issues.some(issue => issue.blocking) ? 'error' : 'warning';
+        const delivery = job.delivery;
+        return (
+          <div className="settings-card" key={job.id}>
+            <b>
+              {preset === 'draft' ? '540p 草稿' : '1080p 成片'} · {new Date(job.createdAt).toLocaleString()}
+              {index === 0 && <span className="preset-default">最新一次</span>}
+              {unavailable ? ' · 历史记录' : ''}
+            </b>
+            <p>{statusText} {progress.message} {progress.percent !== undefined ? `${progress.percent}%` : ''}</p>
+            {progress.percent !== undefined && job.status === 'running' && <progress value={progress.percent} max={100} />}
+            {job.validation && (
+              <p className={`qc-verdict-line ${validationState}`}>
+                成片校验：{job.validation.ok ? '通过' : job.validation.issues.some(issue => issue.blocking) ? '文件不可用' : `${job.validation.issues.length} 项提醒`}
+                {' · '}{job.validation.width ?? '?'} × {job.validation.height ?? '?'}
+                {' · '}{job.validation.duration === undefined ? '时长未知' : `${job.validation.duration.toFixed(1)} 秒`}
+                {' · '}音频轨道 {job.validation.hasAudio ? '有' : '无'}
+                {job.validation.issues.length > 0 ? ` · ${job.validation.issues.map(issue => renderValidationLabels[issue.code] ?? issue.code).join('、')}` : ''}
+              </p>
+            )}
+            {job.status === 'completed' && job.videoState === 'superseded' && <p className="qc-verdict-line error">成片文件已被后续导出覆盖，需要重新渲染后再校验。</p>}
+            {job.status === 'completed' && job.videoState === 'missing' && <p className="qc-verdict-line error">成片文件缺失或未渲染完成，请重新渲染后再校验。</p>}
+            {job.error && <p className="error-text">{job.error}</p>}
+            {job.status === 'failed' && onRecheck && <button className="button subtle" onClick={onRecheck}>先做导出前检查再重试</button>}
+            {['queued', 'running', 'cancelling'].includes(job.status) && (
+              <button className="button danger" disabled={job.status === 'cancelling'} onClick={() => void fetch(`/api/jobs/${job.id}/cancel`, { method: 'POST' }).then(json).then(refresh).catch(error => setError(String(error)))}>取消渲染</button>
+            )}
+            {job.status === 'completed' && (job.outputPath || job.id === sharedOwner ? (
+              <button className="button subtle" disabled={busy} onClick={async () => {
+                setError('');
+                try {
+                  const probe = await fetch(`/api/projects/${id}/output?jobId=${job.id}`, { method: 'HEAD' });
+                  if (!probe.ok) {
+                    const data = await probe.json().catch(() => ({}));
+                    throw new Error(data.error ?? '视频文件不存在，请重新渲染');
+                  }
+                  window.location.assign(`/api/projects/${id}/output?jobId=${job.id}`);
+                } catch (error) { setError(error instanceof Error ? error.message : '下载失败'); }
+              }}>下载视频</button>
+            ) : <p className="hint">历史记录（视频不可用）：V1.0 的多次导出共用同一个视频文件，这条记录的视频已被后续导出覆盖，文件已不存在。需要成片请重新导出。</p>)}
+            {job.status === 'completed' && (
+              <button className="text-button" disabled={validating === job.id} onClick={() => void validate(job.id)}>
+                {validating === job.id ? '校验中…' : job.validation ? '重新校验成片' : '校验成片文件'}
+              </button>
+            )}
+            {job.status === 'completed' && (
+              <ExportDelivery
+                delivery={delivery}
+                busy={deliveryBusy === job.id}
+                onDownload={() => void downloadPackage(job)}
+                onRegenerate={() => void deliverPackage(job)}
+              />
+            )}
+          </div>
+        );
+      })}
+    </section>
+  );
 }
 
 type ExtractionInfo = { kind?: ExtractionMeta['kind']; filename?: string; pages?: number; ocrPages?: number[]; failedPages?: { page: number; error: string }[]; pageInfo?: PageInfo[]; extractedAt?: string };
@@ -163,7 +326,37 @@ export function SourceReview({ id, onContinue }: { id: string; onContinue: () =>
     <button className="button primary" disabled={busy || loading || text.trim().length < 30} onClick={async () => { setBusy(true); setError(''); try { await json(await fetch(`/api/projects/${id}/source`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) })); onContinue(); } catch (error) { setError(String(error)); } finally { setBusy(false); } }}>{busy ? '提交中…' : '使用此正文生成分镜'}</button></section>;
 }
 
+const restoreStepLabels: Record<string, string> = { read: '读取备份', validate: '校验备份', files: '写入文件', database: '写入数据' };
 export function RestoreProject() {
-  const [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
-  return <label className="button subtle file-picker">{busy ? '正在恢复…' : '恢复项目包'}<input aria-label="选择项目备份包" type="file" accept=".m2v" disabled={busy} onChange={async e => { const file = e.target.files?.[0]; e.target.value = ''; if (!file) return; setBusy(true); try { const result = await json(await fetch('/api/backups/restore', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file })); location.assign(`/project/${result.id}`); } catch (error) { setMessage(String(error)); setBusy(false); } }} />{message && <span role="alert">{message}</span>}</label>;
+  const [failure, setFailure] = useState<{ step: string; message: string; missing: string[] } | null>(null), [busy, setBusy] = useState(false);
+  async function submit(file: File) {
+    setBusy(true); setFailure(null);
+    try {
+      const response = await fetch('/api/backups/restore', { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string; step?: string; missing?: string[] };
+        setFailure({ step: data.step ?? '', message: data.error ?? '恢复失败', missing: data.missing ?? [] });
+        setBusy(false);
+        return;
+      }
+      const result = await response.json() as { id: string };
+      location.assign(`/project/${result.id}`);
+    } catch (error) {
+      setFailure({ step: '', message: error instanceof Error ? error.message : '恢复失败', missing: [] });
+      setBusy(false);
+    }
+  }
+  return (
+    <label className="button subtle file-picker">
+      {busy ? '正在恢复…' : failure ? '重试恢复' : '恢复项目包'}
+      <input aria-label="选择项目备份包" type="file" accept=".m2v" disabled={busy} onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void submit(file); }} />
+      {failure && (
+        <span role="alert" className="restore-failure">
+          {failure.step ? `${restoreStepLabels[failure.step] ?? failure.step}失败：` : ''}{failure.message}
+          {failure.missing.length > 0 ? `（缺少 ${failure.missing.join('、')}）` : ''}
+          {' · 原项目未改动，可重试'}
+        </span>
+      )}
+    </label>
+  );
 }

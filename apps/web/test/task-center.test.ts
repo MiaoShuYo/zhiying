@@ -14,7 +14,9 @@ test('only abandoned or cancelled tasks offer recovery', () => {
   assert.equal(retryModeFor({ kind: 'storyboard', status: 'running', ageMs: 60_000 }), null);
   assert.equal(retryModeFor({ kind: 'storyboard', status: 'running', ageMs: 16 * 60_000 }), 'recover');
   assert.equal(retryModeFor({ kind: 'render', status: 'cancelled' }), 'render');
-  assert.equal(retryModeFor({ kind: 'tts', status: 'cancelled' }), null);
+  // V1.4 起取消的语音与长文任务也能继续，不再只有渲染可重试。
+  assert.equal(retryModeFor({ kind: 'tts', status: 'cancelled' }), 'voice');
+  assert.equal(retryModeFor({ kind: 'storyboard', status: 'cancelled' }), 'step');
   assert.equal(retryModeFor({ kind: 'render', status: 'completed' }), null);
   assert.equal(isActiveTask('queued') && isActiveTask('running'), true);
   assert.equal(isActiveTask('failed'), false);

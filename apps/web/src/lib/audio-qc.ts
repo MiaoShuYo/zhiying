@@ -95,3 +95,8 @@ export async function measureSceneAudio(scenes: { id: string; audioSrc?: string 
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, scenes.length) }, worker));
   return results;
 }
+
+/** Measure a single source such as `bgmSrc`; shares the same mtime/size cache. */
+export function measureAudioSource(src: string | undefined, refresh = false): Promise<AudioProbeEntry> {
+  return measureOne(src, refresh);
+}
