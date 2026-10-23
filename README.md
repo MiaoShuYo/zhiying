@@ -436,7 +436,9 @@ pnpm test:v14:integration
 
 2026-10-23 补的自动化断言：`test:v14:integration` 增加“解开 ZIP 后包内成片与渲染输出逐字节一致、同时带项目备份与交付说明”，以及“项目改动 → `project-changed` 拒绝下载 → 重新生成 → 版本号跟上、恢复可下载、包内仍是同一条最新成片”；`test:v15:integration` 增加缺失素材的两条修复路径（文件丢失走 `replace + scenes`、未登记走补齐上传再改引用，修好后导出检查不再拦缺图）与批量精修的应用落盘（只改选中场景、字幕样式对全项目生效、旧配音与旧字幕一并作废、未选中场景不受影响）。ZIP 目录解析抽到 `apps/web/test/zip-reader.ts`，与 `zip.test.ts` 共用。
 
-2026-10-23 本轮验证结果：`pnpm typecheck` 五个工作区通过；单元测试 `pnpm test:v11` 6 项、`pnpm test:v12` 47 项、`pnpm test:v13` 38 项、`pnpm test:v14` 45 项、`pnpm test:v15` 39 项全部通过；`pnpm test:v11:integration` / `test:v12:integration` / `test:v13:integration` / `test:v14:integration` / `test:v15:integration` 全部 PASS（各自打印一行 `PASS:` 摘要）。仍待人工点击确认的是：浏览器里真实的文件选择上传（`上传并关联` 的原生文件框）、在界面里点「应用」执行一次批量精修并复看成片、保存/复制/应用制作方案的界面效果。
+2026-10-23 本轮自动化验证结果：`pnpm typecheck` 五个工作区通过；单元测试 `pnpm test:v11` 6 项、`pnpm test:v12` 47 项、`pnpm test:v13` 38 项、`pnpm test:v14` 45 项、`pnpm test:v15` 39 项全部通过；`pnpm test:v11:integration` / `test:v12:integration` / `test:v13:integration` / `test:v14:integration` / `test:v15:integration` 全部 PASS（各自打印一行 `PASS:` 摘要）。当时尚待浏览器人工确认的操作，见下方 2026-10-23 复验记录。人工验收清单见 `doc/V1.5_manual_acceptance.md`。
+
+2026-10-23 浏览器人工复验：在本机项目 `复验-竖屏-20261013` 实际操作「成片精修」字幕定位、播放与时间微调，随后撤销测试时间改动；通过浏览器原生文件选择框上传测试图片，验证缺失素材补齐并关联成功，然后恢复原素材引用并删除测试素材；在实际 MP4 上修改两条字幕文本、将场景 2 延长至 3.2 秒并重新渲染。最终成片质检为通过（错误 0、提醒 0），MP4 校验通过（1080×1920、10.2 秒、含音轨），交付包生成 7 个文件，包内 MP4 与最新成片 SHA256 一致。批量精修的影响范围预览在浏览器中实际打开并取消，确认取消不写入；批量应用及制作方案保存/复制/跨项目应用由 V1.5 集成测试覆盖，尚未作为浏览器点击用例验收。测试上传文件已清理。
 
 ## V1.4：稳定性与交付体验
 
