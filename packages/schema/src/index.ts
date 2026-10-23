@@ -110,10 +110,14 @@ export type SceneType = z.infer<typeof SceneTypeSchema>;
 export type Storyboard = z.infer<typeof StoryboardSchema>;
 export type StyleId = z.infer<typeof StyleIdSchema>;
 
+export * from "./batch";
+export * from "./captions";
 export * from "./delivery";
 export * from "./editor";
+export * from "./export-flow";
 export * from "./presets";
 export * from "./preflight";
+export * from "./production-template";
 export * from "./qc";
 export * from "./render-validation";
 export * from "./timeline";

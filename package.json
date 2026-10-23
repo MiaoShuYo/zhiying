@@ -18,6 +18,8 @@
     "test:v13:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v13-integration.ts",
     "test:v14": "tsx --test packages/video/test/qc.test.ts packages/schema/test/qc-status.test.ts packages/schema/test/presets.test.ts packages/video/test/subtitle-timeline.test.ts apps/web/test/delivery-records.test.ts apps/web/test/task-recovery.test.ts && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/qc-panel-render.tsx && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/export-history-render.tsx",
     "test:v14:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v14-integration.ts",
+  "test:v15": "tsx --test packages/schema/test/preflight-gaps.test.ts packages/schema/test/export-flow.test.ts packages/schema/test/batch.test.ts packages/schema/test/production-template.test.ts apps/web/test/video-range.test.ts && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/preflight-panel-render.tsx",
+  "test:v15:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v15-integration.ts",
     "test:v11:render": "tsx apps/worker/test/render-v11.ts"
   },
   "devDependencies": {

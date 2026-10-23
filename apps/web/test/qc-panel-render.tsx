@@ -19,6 +19,8 @@ const render = (patch: Record<string, unknown> = {}) => renderToStaticMarkup(cre
   onRegenerateAudio: () => {},
   onApplyPreset: () => {},
   onOpenRender: () => {},
+  currentPreset: 'full',
+  onTemplateApplied: () => {},
   ...patch,
 }));
 

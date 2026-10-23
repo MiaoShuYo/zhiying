@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useRef, useState } from 'react';
 import { sceneSeconds, type Scene, type SubtitleCue } from '@m2v/schema';
-import { captionDuration, resolveCaptionCues } from '@m2v/video/captions';
+import { captionDuration, resolveCaptionCues } from '@m2v/schema';
 
 const round = (value: number) => Math.round(value * 100) / 100;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));

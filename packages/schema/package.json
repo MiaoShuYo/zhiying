@@ -1,1 +1,4 @@
-{"name":"@m2v/schema","version":"0.1.0","private":true,"type":"module","exports":"./src/index.ts","scripts":{"typecheck":"tsc --noEmit","test":"tsx --test test/schema.test.ts test/preflight.test.ts test/render-validation.test.ts test/presets.test.ts"},"dependencies":{"zod":"^3.24.2"},"devDependencies":{"@types/node":"^22.13.4","tsx":"^4.19.2","typescript":"^5.7.3"}}
+{"name":"@m2v/schema","version":"0.1.0","private":true,"type":"module","exports": {
+    ".": "./src/index.ts",
+    "./captions": "./src/captions.ts"
+  },"scripts":{"typecheck":"tsc --noEmit","test":"tsx --test test/schema.test.ts test/preflight.test.ts test/render-validation.test.ts test/presets.test.ts"},"dependencies":{"zod":"^3.24.2"},"devDependencies":{"@types/node":"^22.13.4","tsx":"^4.19.2","typescript":"^5.7.3"}}

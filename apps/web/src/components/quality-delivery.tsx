@@ -14,6 +14,7 @@ import {
   type RenderValidation,
   type Storyboard,
 } from '@m2v/schema';
+import { ProductionTemplates, type TemplateApplyResult } from './production-templates';
 
 type QcIssueKind = 'subtitle' | 'audio' | 'render';
 
@@ -122,11 +123,14 @@ function startDownload(url: string, name?: string) {
   document.body.appendChild(link); link.click(); link.remove();
 }
 
+/** Render statuses that will not change without another user action. */
+const settledStatuses = ['completed', 'failed', 'cancelled'];
+
 const seconds = (value?: number) => (value === undefined || !Number.isFinite(value) ? '—' : `${value.toFixed(1)} 秒`);
 const megabytes = (bytes?: number) => (bytes === undefined || !Number.isFinite(bytes) ? '—' : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
 export function QualityDelivery({
-  id, board, busy, save, onLocate, onRegenerateAudio, onApplyPreset, onOpenRender,
+  id, board, busy, save, onLocate, onRegenerateAudio, onApplyPreset, onOpenRender, currentPreset, onTemplateApplied,
 }: {
   id: string;
   board: Storyboard;
@@ -136,6 +140,8 @@ export function QualityDelivery({
   onRegenerateAudio: (sceneId: string) => void;
   onApplyPreset: (patch: ExportPresetPatch) => void;
   onOpenRender: () => void;
+  currentPreset: 'full' | 'draft';
+  onTemplateApplied: (result: TemplateApplyResult) => void;
 }) {
   const [qc, setQc] = useState<QcResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -168,11 +174,28 @@ export function QualityDelivery({
 
   useEffect(() => {
     let stopped = false;
-    void fetch(`/api/projects/${id}/exports`, { cache: 'no-store' }).then(json).then((rows: ExportRow[]) => { if (!stopped) setExports(rows); }).catch(() => undefined);
+    // A dropped request used to leave the panel claiming "还没有渲染完成的成片" until the next
+    // manual refresh, so a failed read is retried once and then surfaced.
+    const loadExports = async () => {
+      if (await readExports() !== null || stopped) return;
+      await new Promise(resolve => setTimeout(resolve, 4000));
+      if (stopped) return;
+      if (await readExports() === null && !stopped) setError('读取导出记录失败，成片列表可能不是最新的，请点「刷新导出记录」重试。');
+    };
+    void loadExports();
     void fetch(`/api/projects/${id}/qc?cached=1`, { cache: 'no-store' }).then(json).then((cached: QcResult) => { if (!stopped) setQc(cached); }).catch(() => undefined);
     void fetch('/api/settings/export-presets', { cache: 'no-store' }).then(json).then(result => { if (!stopped) setPresets(result.presets ?? []); }).catch(error => { if (!stopped) setPresetError(String(error)); });
     return () => { stopped = true; };
   }, [id]);
+
+  // A render that finishes while this tab stays open stays invisible otherwise: keep
+  // polling the export list until every job has settled.
+  const unsettled = exports.some(job => !settledStatuses.includes(job.status));
+  useEffect(() => {
+    if (!unsettled) return;
+    const timer = window.setInterval(() => { void readExports(); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [unsettled]);
 
   async function run(action: () => Promise<void>) {
     setChecking(true); setError(''); setMessage('');
@@ -183,6 +206,9 @@ export function QualityDelivery({
   const checkQc = (refresh: boolean) => run(async () => {
     if (!await save()) { setError('请先处理分镜保存错误'); return; }
     setQc(await json(await fetch(`/api/projects/${id}/qc${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' })));
+    // The check is the moment users expect the newest final cut to be picked up, so the
+    // export list is refreshed alongside it instead of waiting for a manual refresh.
+    await readExports();
     setMessage(refresh ? '已重新检查字幕与语音质量' : '');
   });
 
@@ -275,7 +301,7 @@ export function QualityDelivery({
         body: JSON.stringify({
           name: presetName.trim() || '我的导出预设',
           aspectRatio: board.aspectRatio,
-          renderPreset: 'full',
+          renderPreset: currentPreset,
           subtitles: SubtitleSchema.parse(board.subtitles ?? {}),
           intro: board.intro,
           outro: board.outro,
@@ -494,5 +520,7 @@ export function QualityDelivery({
         </span>
       </li>      )}</ul> : <p className="hint">还没有保存过导出预设。</p>}
     </section>
+
+    <ProductionTemplates id={id} board={board} busy={busy} save={save} currentPreset={currentPreset} onApplied={onTemplateApplied} />
   </>;
 }

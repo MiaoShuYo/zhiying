@@ -78,6 +78,19 @@
 - 任务中心给出可操作的失败原因（渲染失败 / 语音失败 / 内容生成取消 / 渲染取消 / 疑似中断），并按任务类型提供「从中断处继续」「从头执行」「重新渲染」「重新生成语音」等动作。
 - 人工验收清单见 `doc/V1.4_manual_acceptance.md`。
 
+### V1.5 制作效率与成片精修
+
+- 导出前检查改成可操作清单：缺失的图片、语音、字幕与素材文件按「文件」归并，一行就能看清影响到几个场景，每个场景都能直接跳到分镜处理；检查结果的分类计数与列表一致，可只筛选某一类。
+- 面板会说清“这次修好了几项、又新增了几项”，两个版本之间用 `preflightDelta` 对比，不用自己数。
+- 导出拆成「检查 → 渲染 → 校验 → 打包」四步，`resumeFrom` 永远指向第一个没通过的步骤；已通过的步骤不会重做，分镜改动后检查自动作废并说明原因。
+- 「成片精修」标签页在真实 MP4 上对照字幕时间：点轨道上的字幕块跳到那一刻复看，改起止时间或文本后播放器立刻按新时间显示，并可一键跳回所属场景；成片接口支持 `Range` 与 `HEAD`，拖动进度条返回 206 而不是重下整段。
+- 字幕改动只影响时间与文本，保存后 SRT / VTT / ASS 与交付包同步更新；已经烧进画面的字幕才需要重新导出，面板把这条差别写在提示里。
+- 「批量选择与调整」先给影响范围再动手：影响表逐行列出「场景 / 字段 / 现在 / 之后」，可批量改字幕样式、语速、句间停顿、场景时长、场景间隔与版式；改语速会明确提示语音需要重新生成，并支持撤销上一次批量修改。
+- 素材管理分区显示被引用、未使用、缺失、重复与归档；重复项按内容 sha256 判定，缺失项直接指出引用它的场景。
+- 「替换素材」只改勾选的场景，未勾选的保持原样、旧素材不会被归档；全部替换完才归档，归档区可恢复或彻底删除（删除需二次确认，仍被引用时服务端拒绝）。
+- 「制作方案」把声音、语速与停顿、场景间隔、画幅、字幕样式、片头片尾、转场、背景音乐音量与导出画质组成一份可复用方案，可保存、重命名、复制、设为默认，上限 30 份；旁白、分镜内容、素材与发音规则不会被修改。
+- 应用方案前先看前后对照（区分项目级与场景级），一致项不再报改动；语速或停顿有变化的场景会清掉旧语音与旧字幕时间，返回里列出受影响场景数。
+
 应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
 
 ## 基本使用流程
@@ -311,6 +324,8 @@ pnpm test:v13     # V1.3 质检与交付测试（含面板渲染检查）
 pnpm test:v13:integration  # V1.3 集成测试（真实 MP4 与 ZIP 需 FFmpeg）
 pnpm test:v14     # V1.4 稳定性测试（四态质检、交付包记录、导出记录渲染）
 pnpm test:v14:integration  # V1.4 全链路集成测试（含真实 MP4 与 ZIP，需 FFmpeg）
+pnpm test:v15     # V1.5 制作效率与成片精修测试（导出检查归并、导出流程、批量、制作方案、Range 解析）
+pnpm test:v15:integration  # V1.5 集成测试（真实路由与数据库，无需 FFmpeg）
 pnpm db:generate  # 生成 Prisma Client
 pnpm db:push      # 同步 SQLite 数据库结构
 ```
@@ -354,6 +369,75 @@ pnpm db:generate
 
 只有 Client 生成成功后再检查 Web 类型。不要通过删除类型或添加 `any` 来绕过缺失的 Prisma Client。长文分镜现在按批保存到项目目录的 `storyboard-checkpoint.json`；选择“从失败步骤重试”会在输入和配置未改变时继续已完成的批次。旧版本失败任务没有该文件，需要重新生成。
 
+### 开发模式下 `UnhandledSchemeError` 与端口占用
+
+`next dev` 会无条件额外创建 edge 编译器并重新编译 `src/instrumentation.ts`，即使本项目没有任何 edge 代码。该编译器的 `externalsPresets.node` 是关闭的，所以 instrumentation 里 `@/lib/backups` 引入的 `node:crypto`、`node:fs` 等内置模块会报 `UnhandledSchemeError: Reading from "node:crypto" is not handled by plugins`。这个错误会让所有路由（包括首页）返回 500，`next build` 却不会复现，因为生产构建会跳过空的 edge instrumentation 入口。`apps/web/next.config.ts` 为 edge 编译器打开 `externalsPresets.node`，让这段永远不会执行的 instrumentation 能编译通过；修改该文件后需要重启 `pnpm dev` 或 `.\start.ps1` 才生效。
+
+上一条报错会连带表现为 `.\start.ps1` 卡住：脚本等的是 `http://127.0.0.1:3000` 返回 2xx–4xx，500 会让它一直等到 120 秒超时。现在超时信息会说明是「已监听但返回 HTTP 500」，并指出该看哪个日志文件，而不再只报“等待服务启动超时”。真正的端口冲突也会直接列出端口和占用进程，例如 `端口已被其他进程占用：3000（占用进程：node (PID 1234)）`；`.\stop.ps1` 结束后若仍有非脚本启动的监听者，也会给出同样的提示。就绪探测用 `System.Net.Http.HttpClient` 取状态码，而不是 `Invoke-WebRequest`：`-SkipHttpErrorCheck` 只有 PowerShell 6+ 才有，Windows PowerShell 5.1 遇到非 2xx 会直接抛异常，于是健康检查会被误判成超时。`start.ps1` 与 `stop.ps1` 在 5.1 和 7 上都能运行。
+
+`next dev` 运行时不要执行 `pnpm build`（或 `apps/web` 的 `pnpm build`）：两者共用 `apps/web/.next`，生产构建会覆盖开发服务器正在使用的 server chunk，之后项目页会返回 500 并报 `Cannot find module './vendor-chunks/zod@<version>.js'`。遇到该报错先 `.\stop.ps1` 停掉服务，删除 `apps/web/.next`，再用 `.\start.ps1` 启动即可；需要生产构建时先停服务、构建完再重启开发服务。
+
+## V1.5：制作效率与成片精修
+
+V1.5 的目标不是加新页面，而是把“改多个场景 → 修正字幕与成片同步 → 处理素材缺失 → 重新导出 → 交付包与最新成片一致”这条路径补顺，全程让用户看清修改范围和失败原因。五个标签页的位置不变：导出前检查与导出步骤在「渲染导出」，字幕对照在「成片精修」，批量调整在「故事板」，素材与制作方案分别在「故事板」素材区和「质检交付」。
+
+导出前检查由 `packages/schema/src/preflight.ts` 的 `preflightGroups` 与 `preflightDelta` 支撑。`PreflightIssue` 现在带上 `sceneTitle`、`assetPath` 与 `assetKind`，`preflightGaps` 用 `path:`（按文件）或 `kind:sceneId`（按场景）做去重键，于是“三个场景引用同一张丢失的图”合成一行、写成 `scenes[]` 而不是三行；`PreflightGapKind` 把问题归到「缺失语音 / 缺失图片 / 字幕 / 素材文件 / 旁白 / 导出设置」，面板的分类计数直接来自分组结果。`preflightDelta(previous, current)` 用同一套键比较前后两次检查，返回 `{ fixed, added, remaining }`，所以面板能说“已修好 3 项、新增 0 项”，而不是只说还剩几项。缺失素材的修复动作也分成两种：文件根本没上传给 `upload_asset`（补充素材），上传了但没登记或不在项目目录给 `open_assets`（打开素材）。
+
+导出流程是 `packages/schema/src/export-flow.ts` 的四步状态机：`preflight` / `render` / `validate` / `package`。每一步由输入推导 `state`（`passed` / `pending` / `running` / `failed` / `blocked`）与一句可操作的话，`resumeFrom` 取第一个非 `passed` 的步骤，`passed[]` 列出已通过的步骤供界面承诺“不会重做”，`invalidated` 在中间某步未通过时把后面的 `passed` 降级。检查通过的时间与 `revision` 存在 `data/projects/<id>/preflight.json`（`preflight-state.ts`），所以“分镜改了就要重新检查”是拿 `revision` 比出来的，不需要重跑检查。路由 `GET /api/projects/<id>/export-flow` 通过 `projectExportFlow` 汇总最近一次渲染任务、成片状态与交付记录，**返回扁平结构**（`{ projectId, headline, canExport, resumeFrom, passed, steps, revision, jobId, checkedAt }`），不再把结果藏在 `flow` 字段里。
+
+成片精修要能在播放器里拖动，所以 `apps/web/src/lib/video-range.ts` 的 `parseByteRange` 负责解析 `Range`，`videoStreamResponse` 负责 206 / 416 / 200 与 `accept-ranges`；`output` 路由的 GET 支持 `Range`、HEAD 只回头不回体，`dispositionFor(found, inline)` 区分下载与内联播放。字幕时间轴从视频包搬到 `packages/schema/src/captions.ts`（视频包保留再导出的 shim），除原有的切分与校验外新增 `subtitleCues`（给每条 cue 标上 `sceneIndex` 与 `cueIndex`）、`cueAt`（按成片绝对时间取当前 cue）、`cueSceneIndex`（同一时刻属于哪个场景）、`sceneStartTimes`（各场景在成片里的起始时间），所以点一条字幕既能跳到那一刻，也能跳回它所属的场景。
+
+批量精修拆成“先算、再写”两步：`batchImpact(board, selection, changes)` 只返回会变的行（`{ sceneIndex, sceneTitle, field, label, current, next }`），`applyBatch` 才真正改，界面因此可以先展示影响范围。字幕类改动是项目级的（一行 `全部场景`），语速、句间停顿、场景时长与场景间隔是场景级的；语速、停顿变化会清掉 `audioSrc`、`audioDuration`、`wordTimings` 与手动 `subtitleCues`，并在影响表里单独提示“语音需要重新生成”。`sentencePause` 的默认值统一为 `0.12`（此前 `batch.ts` 用了 `0`，导致“没改停顿也报改动”，已修）。
+
+素材清单由 `apps/web/src/lib/asset-usage.ts` 的 `scanAssetUsage` 生成：`assetDirs` 同时看 `data/projects/<id>/assets`、其下的 `archive` 与 `public/projects/<id>/assets`，`storyboardReferences` 收集每个文件的引用场景（`{ index, title }`）与背景音乐标记，重复项按内容 sha256（缓存键为 `size+mtimeMs`）分组，结果归为 `referenced` / `unused` / `archived` / `missing` / `duplicates`。`POST /api/projects/<id>/assets` 支持 `replace` + `scenes`（JSON 数组）：只替换调用方勾选的场景，`parseScenes` 反序列化并去重，没有图片的场景进入 `skipped` 不会被凭空补上引用；只有换了之后没有场景再引用时才归档——归档是把文件挪到 `assets/archive/` 并从 `public` 删掉，渲染 Worker 会跳过这些文件，但记录与字节都保留，可以 `restore` 或 `purge`（`purge` 要 `confirm === true`，仍被引用返回 409）。
+
+制作方案在 `packages/schema/src/production-template.ts`：`templateFromProject` 取当前项目的众数（声音、语速、停顿、间隔）与项目级设置，`templateChanges` 生成 11 行前后对照并标注 `scope` 是项目级还是场景级，`templateSummary` 给列表一行摘要。存盘在 `data/settings/production-templates.json`（`production-templates.ts`，最多 30 份），接口为 `GET/POST /api/settings/production-templates` 与 `PATCH/DELETE`（`rename` / `duplicate` / `default`）；应用到项目走 `POST /api/projects/<id>/production-template`，按 `applyVoice` / `applyScenes` / `applyExport` 三组开关写入，语速或停顿真的变化时清空 `audioSrc`、`audioKey`、`audioDuration`、`wordTimings`、`subtitleCues`，并把受影响的场景与 `renderPreset` 一起返回，前端据此更新默认画质与提示重新生成语音。
+
+### V1.5 验证命令
+
+~~~powershell
+pnpm typecheck
+pnpm test:v15
+pnpm test:v15:integration
+pnpm test:v11
+pnpm test:v12
+pnpm test:v13
+pnpm test:v13:integration
+pnpm test:v14
+pnpm test:v14:integration
+~~~
+
+`pnpm test:v15` 是 V1.5 的单元测试（39 项）：`preflight-gaps` 覆盖归并键（同文件合并、语音按场景、分类映射、`delta` 的修好/新增/剩余）、`export-flow` 覆盖四步状态机（阻断、未检查、改动作废、渲染中、失败带原因、覆盖/缺失、`resumeFrom`、`passed`、全部通过）、`batch` 覆盖影响表（字幕项目级行、语速与停顿的场景级行、默认 `0.12` 不误报、版式与时长、撤销）、`production-template` 覆盖保存与应用的往返（一致时不报改动、混合语速只报受影响场景、只改字幕时不清语音）、`video-range` 覆盖 `parseByteRange` 的越界与后缀边界。字幕时间轴警告（`caption_overflow` / `caption_overtime`）不计入“缺失文件”，由 `preflightGapCounts()` 单独统计，最后一项测试锁定该计数口径。`apps/web/test/preflight-panel-render.tsx` 再把面板本身渲染出来，断言“没有缺失素材时「缺失文件」为 0、字幕问题单独显示 1、缺图时两路各自计数、干净项目不显示字幕分组”，并对“点选素材替换当前场景画面”“缺失素材关联已有素材”“质检页等到最新成片”三处修复做了源码级防回归断言。
+
+`pnpm test:v15:integration` 在临时数据库里跑通 V1.5 的关键路径：同一个缺失文件在两个场景引用时只出现一行并给出两个场景、修好后 `delta` 报告全部已修且无新增、检查通过后 `resumeFrom` 为渲染、分镜改一次后检查作废回到 `pending`、渲染完成后从校验继续；手动字幕改时间后成片上的显示时刻立刻改变且仍能定位到所属场景；缺失素材的两条修复路径都走一遍——登记过但文件丢了的素材报 `missing_file`（`fix: upload_asset`，`replace + scenes` 就地换字节并把原记录归档），引用了却没登记的素材报 `missing_image`（`fix: open_assets`，补齐上传后把场景指向新素材），两条都修好后导出检查不再出现任何缺图条目、只剩待配音；批量精修先 `batchImpact` 预览（只列选中场景、字幕样式单列为项目级、语速变化标出要重配音）再 `applyBatch` 落盘，落盘后只改选中场景的版式/语速/间隔，字幕样式对全项目生效，被改场景的旧配音、旧词时间与旧手动字幕时间一并作废，未选中的场景音频与字幕时间原样保留，旁白与时长不受影响；素材上传后分清未使用与重复、`replace + scenes` 只改勾选场景并跳过无图场景、仍被引用时拒绝归档、归档保留字节、恢复回两份目录、`purge` 缺确认返回 400 且仍被引用返回 409；制作方案能保存、应用、再次应用时报“没有变化”、只换声音时不清语音、重命名/复制/默认/删除；成片接口的 206 / 416 与 HEAD 200，以及未渲染时的 404。
+
+2026-10-21 验收记录：`pnpm typecheck` 五个工作区通过；`pnpm test:v15` 38 项全部通过；`pnpm test:v15:integration` 通过并打印一行 `PASS:` 摘要；`pnpm test:v11` / `test:v12` / `test:v13` / `test:v14` 及其集成测试作为回归一并通过。人工验收清单见 `doc/V1.5_manual_acceptance.md`。
+
+2026-10-21 缺陷修复：`GET /api/projects/<id>/export-flow` 之前把 `projectExportFlow` 的结果整块塞进 `data.flow` 再返回，而前端按扁平字段读取，于是「导出步骤」一直拿不到 `steps`、只显示“无法读取导出步骤”。现在路由直接把 `flow` 的字段摊平到响应顶层，前端与集成测试都按扁平结构断言。
+
+2026-10-21 缺陷修复：`batch.ts` 的 `batchImpact` 用 `0` 作为 `sentencePause` 的默认比较值，而全仓（`voice/generate`、`voice/preview`、编辑器、制作方案）都用 `0.12`，结果“只改字幕样式”也会多出一行“句间停顿 0 秒 → 0.12 秒”的假改动。现在统一引用同一个 `0.12` 默认值，并补了断言防回归。
+
+2026-10-23 启动修复：此前用 `.\start.ps1` 打开应用时所有页面都是 500，脚本等不到可用的 Web 服务而超时，V1.5 的界面流程因此无法验收。根因是 `next dev` 额外创建的 edge 编译器会重新编译 `src/instrumentation.ts`，其 `node:` 内置模块在该编译器下没有处理器（`UnhandledSchemeError`）；`next build` 不建这个入口，所以生产构建一直是绿的。`apps/web/next.config.ts` 为 edge 编译器打开 `externalsPresets.node` 后，`.\start.ps1` 能正常启动并打印服务地址。`start.ps1` 同时补了诊断：端口冲突会列出端口与占用进程，超时会区分“端口没起来”和“已监听但返回 HTTP 500”。随后又修了脚本自身的一个 bug：就绪探测原先用 `Invoke-WebRequest -SkipHttpErrorCheck`，该参数只在 PowerShell 6+ 存在，Windows PowerShell 5.1 每轮都抛“找不到与参数名称匹配的参数”，被 `catch` 吞掉后等满 90 秒再误报 Python 超时并杀掉健康服务；现改用 `System.Net.Http.HttpClient` 取状态码，两个版本行为一致，并已在 5.1 下实测正常启动、重跑提示“服务已运行”、`.\stop.ps1` 干净退出。
+
+2026-10-23 启动后的实测（不是人工验收结论）：`.\start.ps1` 启动后 `http://127.0.0.1:3000` 首页、`/settings`、`/project/<id>` 与 `http://127.0.0.1:8000/health` 均返回 200；V1.5 的五个页签（故事板 / 声音设置 / 渲染导出 / 成片精修 / 质检交付）与「批量精修」「预览影响范围」都出现在项目页；`preflight` 返回带 `sceneIndex`、`sceneId`、`fix` 的可定位问题；`export-flow` 在成片已渲染、交付包未生成时给出 `resumeFrom: 'package'` 与“不会重做已通过步骤”的说明；`assets/usage` 同时列出 `referenced` / `unused` / `duplicates`；`output` 的 `Range: bytes=0-1023` 返回 206 + `video/mp4` + `bytes 0-1023/1682834`，成片预览的拖动依赖这条。仍需按 `doc/V1.5_manual_acceptance.md` 由人工逐项操作确认。
+
+2026-10-23 试用反馈的四处修正：
+
+1. 导出前检查把“字幕过长/超时”也算进了「缺失文件」。字幕警告本来就要留在清单里（它带 `fix: 'open_captions'` 可以直接跳去改字幕），但它不是缺文件，所以 `packages/schema/src/preflight.ts` 新增 `preflightGapCounts()` 把清单拆成“文件类”和“字幕类”两路计数，面板顶部显示「缺失文件」与「字幕问题」两个数字，清单也分成「缺失语音、图片与素材文件」和「字幕时间轴问题」两组。没有缺失素材时「缺失文件」为 0。
+2. 故事板素材区里点选项目图片会新建一个场景。现在点选图片是“用作当前场景的画面”：当前场景是 `media` 时原地替换 `visual`（保留 fit/zoom 等其余字段），不新增场景；当前场景放不下图片（漫画/对比/图表/时间轴/公式）时才追加一个画面场景并在提示里说明原因。两个图片入口的标题也写明“点选后用作场景 N 的画面”，避免再被理解成追加。新增场景仍由「＋ 添加场景」负责。
+3. 缺失素材的「补充并关联」入口只有上传，浏览器里不好判断文件选择框是否可用。缺失行现在同时给两条路：`上传补齐`（已登记素材，只换字节）或 `上传并关联`（新文件登记后改引用），并列出一个「关联到已有素材」下拉，选中后点「关联」把引用从缺失路径改到已有素材，保留原素材条目与字节，提示里说明改了几处引用（含 BGM）。
+4. 刚渲染完进「质检交付」会先看到“还没有渲染完成的成片”，点「开始检查」后才认出最新成片。原因是成片列表只在挂载时读一次，而 `QualityDelivery` 只在切到该页签时才挂载；现在挂载读取失败会重试一次并给出错误提示（不再静默吞掉），只要有未结束的渲染任务就每 4 秒轮询一次 `exports`，`开始检查` 拿到质检结果后也会重新读一次成片列表。
+
+以上均为代码级修复与自动化验证（`pnpm typecheck`、`pnpm test:v15` 39 项、`pnpm test:v14` 45 项含质检面板渲染、`apps/web` 构建、V1.5 集成测试全部通过）；界面上的实际点击仍需按清单人工确认。
+
+2026-10-23 第五处修正：批量精修不会作废旧字幕时间。`saveStoryboard` 在一句旁白的语速/停顿/纠音变化时只清 `audioSrc`、`wordTimings` 等，没有清 `subtitleCues`；单场景编辑里 `updateScene` 自己补了这一步，因此从编辑器改语速没问题，而「批量精修」走的是 `applyBatch` → 保存，不经过那段前端逻辑。结果是语音被作废、重新配音后，旧的手动字幕时间仍然生效（`caption-editor` 只要 `subtitleCues` 非空就按手动时间走），成片里字幕会和新的配音错位。现在把清 `subtitleCues` 并入 `saveStoryboard` 的作废规则，所有保存路径行为一致；未改语速的场景（含批量里没选中的场景）字幕时间照旧保留。
+
+2026-10-23 交付包一致性实测：对现成项目 `POST /api/projects/<id>/delivery` 生成交付包，记录为 7 个文件、5,110,773 字节、`attempts: 1`，`?probe=1` 预检返回 200 且不给 `stale`；用 `System.IO.Compression.ZipFile` 解开后，包内 `-成片-20261023-2259.mp4`（1,682,834 字节）与该项目 `output/<job>.mp4` 的 SHA256 完全相同（`d9aaf87b56ca0e3a880ce1fd875ee199eaf116781664322cd37f500f60b70d8c`），包内同时有 SRT/VTT/ASS 字幕、封面、`.m2v` 项目备份与交付说明，即“交付包与最新成片一致”成立。之后改动项目会让旧记录变成 `project-changed` 并拒绝下载，重新生成即可（不重渲染，重新打包同一条最新成片）。
+
+2026-10-23 补的自动化断言：`test:v14:integration` 增加“解开 ZIP 后包内成片与渲染输出逐字节一致、同时带项目备份与交付说明”，以及“项目改动 → `project-changed` 拒绝下载 → 重新生成 → 版本号跟上、恢复可下载、包内仍是同一条最新成片”；`test:v15:integration` 增加缺失素材的两条修复路径（文件丢失走 `replace + scenes`、未登记走补齐上传再改引用，修好后导出检查不再拦缺图）与批量精修的应用落盘（只改选中场景、字幕样式对全项目生效、旧配音与旧字幕一并作废、未选中场景不受影响）。ZIP 目录解析抽到 `apps/web/test/zip-reader.ts`，与 `zip.test.ts` 共用。
+
+2026-10-23 本轮验证结果：`pnpm typecheck` 五个工作区通过；单元测试 `pnpm test:v11` 6 项、`pnpm test:v12` 47 项、`pnpm test:v13` 38 项、`pnpm test:v14` 45 项、`pnpm test:v15` 39 项全部通过；`pnpm test:v11:integration` / `test:v12:integration` / `test:v13:integration` / `test:v14:integration` / `test:v15:integration` 全部 PASS（各自打印一行 `PASS:` 摘要）。仍待人工点击确认的是：浏览器里真实的文件选择上传（`上传并关联` 的原生文件框）、在界面里点「应用」执行一次批量精修并复看成片、保存/复制/应用制作方案的界面效果。
+
 ## V1.4：稳定性与交付体验
 
 V1.4 不新增功能页，而是把 V1.3 已有的质检、校验、打包、备份、预设与任务中心补成“异常时有明确说法、不会留下误导性成功状态”的形态。因为项目没有 Prisma 迁移工具，新增的运行时状态全部用 JSON 记录，而不是改表结构：质检结论在 `data/projects/<id>/qc-report.json`，交付包记录在 `data/projects/<id>/delivery/<jobId>.json`，恢复中断标记在 `data/projects/.restore-<id>.json`。
@@ -387,7 +471,7 @@ pnpm test:v14:integration
 
 `packages/video/test/qc.test.ts` 同时属于 `test:v13` 与 `test:v14`，改质检引擎时两套都要跑。
 
-`pnpm test:v14` 覆盖质检四态推导与计数文案、质检引擎的新增边界（背景音乐四种状态、背景音乐缺失、场景过短不重复判停留、空字幕、渲染失败转阻断问题、空台词场景计入有意静音且不报缺失）、字幕时间轴校验（合法、重叠、超出显式时长、偏移按时间轴而非场景起点、三份导出共用同一 cue 列表）、交付包记录（`attempts` 累加、保留首次时间、`fileExists` 视图、不安全 ID 不越界、`revision`/`qc` 来源随记录写入、旧记录缺字段仍可读取、`deliveryStaleReason` 对阻断结论与版本变化的判定），以及「质检交付」面板与导出记录交付包五态（未生成 / 生成失败 / 已生成 / 文件已过期 / 包已过期）的服务端渲染文案，还覆盖任务恢复文案与重试路由（失败/取消/疑似中断三类任务的动作、每个动作都有对应接口、失败的分镜任务在项目未失败时只解释不提供按钮）。`pnpm test:v14:integration` 在临时数据库里跑全链路：四态在“未检查 → 阻断 → 修改后回到待检查”之间切换、渲染失败定位与恢复、最新失败不掩盖旧成功、交付包失败列出缺失步骤且重试累加、质检为阻断时拒绝打包（缺失步骤为 `qc` 并记 `failed`）、没写台词的场景按有意静音计为通过（不产生 `audio_missing`）、质检结论过期（分镜改动后）不拦截打包、真实 ZIP 再次下载（打包接口返回记录、ZIP 由下载接口提供并校验长度一致，`?probe=1` 预检返回与记录一致的文件名与体积、不搬运 ZIP）、ZIP 被清理后提示重新生成（预检同样 410）、质检重新变为阻断后旧包标为 `qc-blocking` 且拒绝下载（预检同样 409）、项目修改后旧包标为 `project-changed` 且拒绝下载、成片丢失时指出缺少视频文件、备份恢复重名自动加后缀与损坏/缺媒体/中断三种失败及原项目不变、恢复后仍可编辑，最后覆盖预设的重命名/复制/默认/应用前预览。缺少 FFmpeg 时媒体段跳过并打印 SKIP。
+`pnpm test:v14` 覆盖质检四态推导与计数文案、质检引擎的新增边界（背景音乐四种状态、背景音乐缺失、场景过短不重复判停留、空字幕、渲染失败转阻断问题、空台词场景计入有意静音且不报缺失）、字幕时间轴校验（合法、重叠、超出显式时长、偏移按时间轴而非场景起点、三份导出共用同一 cue 列表）、交付包记录（`attempts` 累加、保留首次时间、`fileExists` 视图、不安全 ID 不越界、`revision`/`qc` 来源随记录写入、旧记录缺字段仍可读取、`deliveryStaleReason` 对阻断结论与版本变化的判定），以及「质检交付」面板与导出记录交付包五态（未生成 / 生成失败 / 已生成 / 文件已过期 / 包已过期）的服务端渲染文案，还覆盖任务恢复文案与重试路由（失败/取消/疑似中断三类任务的动作、每个动作都有对应接口、失败的分镜任务在项目未失败时只解释不提供按钮）。`pnpm test:v14:integration` 在临时数据库里跑全链路：四态在“未检查 → 阻断 → 修改后回到待检查”之间切换、渲染失败定位与恢复、最新失败不掩盖旧成功、交付包失败列出缺失步骤且重试累加、质检为阻断时拒绝打包（缺失步骤为 `qc` 并记 `failed`）、没写台词的场景按有意静音计为通过（不产生 `audio_missing`）、质检结论过期（分镜改动后）不拦截打包、真实 ZIP 再次下载（打包接口返回记录、ZIP 由下载接口提供并校验长度一致，`?probe=1` 预检返回与记录一致的文件名与体积、不搬运 ZIP；解开 ZIP 后包内成片与渲染出来的 MP4 逐字节一致，且同时带项目备份与交付说明）、ZIP 被清理后提示重新生成（预检同样 410）、质检重新变为阻断后旧包标为 `qc-blocking` 且拒绝下载（预检同样 409）、项目修改后旧包标为 `project-changed` 且拒绝下载、改完后重新生成交付包又恢复可下载且包内仍是同一条最新成片、成片丢失时指出缺少视频文件、备份恢复重名自动加后缀与损坏/缺媒体/中断三种失败及原项目不变、恢复后仍可编辑，最后覆盖预设的重命名/复制/默认/应用前预览。缺少 FFmpeg 时媒体段跳过并打印 SKIP。
 
 2026-10-18 验收记录：V1.4 单元与渲染测试 44 项全部通过（`pnpm test:v14`），全链路集成测试通过（`pnpm test:v14:integration`）；`pnpm typecheck` 五个工作区通过；V1.3 的 37 项单元测试与渲染检查、V1.3 集成测试作为回归一并通过；V1.2 的 47 项单元测试与渲染检查作为回归一并通过。
 

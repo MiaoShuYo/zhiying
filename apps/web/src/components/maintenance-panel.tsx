@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 type StorageAsset = { path: string; name: string; displayName?: string; bytes: number; referenced: boolean };
 type StorageTotals = { assets: number; audio: number; output: number; pages: number; source: number; backups: number; total: number };
@@ -10,20 +10,20 @@ export const formatBytes = (value: number) => value >= 1024 * 1024 * 1024 ? `${(
 const usageLabels: Record<keyof Omit<StorageTotals, 'total'>, string> = { assets: '素材', audio: '语音', output: '导出成片', pages: '抽取页面', source: '源文件', backups: '快照备份' };
 
 /** Disk usage plus the "assets no scene points at" cleanup list. */
-export function StoragePanel({ id, disabled, reload }: { id: string; disabled: boolean; reload: () => Promise<void> }) {
+export function StoragePanel({ id, disabled, reload, refreshKey }: { id: string; disabled: boolean; reload: () => Promise<void>; refreshKey: string }) {
   const [report, setReport] = useState<StorageReport | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     const response = await fetch(`/api/projects/${id}/storage`, { cache: 'no-store' });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? '读取占用失败');
     setReport(result);
     setPicked(current => current.filter(path => result.unreferenced.includes(path)));
-  }
-  useEffect(() => { void load().catch(error => setMessage(String(error))); }, [id]);
+  }, [id]);
+  useEffect(() => { void load().catch(error => setMessage(String(error))); }, [load, refreshKey]);
 
   async function clean() {
     if (!picked.length) return;

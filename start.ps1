@@ -29,19 +29,82 @@ function Test-ManagedProcess($entry) {
   } catch { return $false }
 }
 
-function Wait-Service([string]$url, [int]$port, [int]$seconds, $process) {
-  $deadline = (Get-Date).AddSeconds($seconds)
-  while ((Get-Date) -lt $deadline) {
-    if ($process.HasExited) { throw "服务进程提前退出：$url" }
-    if (Test-Port $port) {
-      try {
-        $response = Invoke-WebRequest -Uri $url -TimeoutSec 8 -UseBasicParsing
-        if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) { return }
-      } catch { }
-    }
-    Start-Sleep -Milliseconds 800
+function Get-PortOwner([int]$port) {
+  try {
+    $connection = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $connection) { return '' }
+    $owner = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue
+    if (-not $owner) { return "PID $($connection.OwningProcess)" }
+    return "$($owner.ProcessName) (PID $($owner.Id))"
+  } catch { return '' }
+}
+
+function Assert-PortsFree {
+  $busy = @()
+  foreach ($port in 8000, 3000) {
+    if (-not (Test-Port $port)) { continue }
+    $owner = Get-PortOwner $port
+    $busy += $(if ([string]::IsNullOrWhiteSpace($owner)) { "$port" } else { "$port（占用进程：$owner）" })
   }
-  throw "等待服务启动超时：$url"
+  if ($busy.Count -gt 0) {
+    throw "端口已被其他进程占用：$($busy -join '；')。请先停止占用这些端口的进程，或执行 .\stop.ps1 后重试。"
+  }
+}
+
+function New-StatusClient {
+  Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
+  $instance = New-Object System.Net.Http.HttpClient
+  $instance.Timeout = [TimeSpan]::FromSeconds(8)
+  return $instance
+}
+
+# Invoke-WebRequest would work too, but -SkipHttpErrorCheck only exists in PowerShell 6+ and
+# Windows PowerShell 5.1 throws on any non-2xx response. HttpClient reports the status without
+# throwing, so the probe behaves the same on both versions.
+function Get-ServiceStatus($client, [string]$url) {
+  $status = 0
+  $message = ''
+  try {
+    $response = $client.GetAsync($url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+    try { $status = [int]$response.StatusCode } finally { $response.Dispose() }
+  } catch {
+    $message = $_.Exception.Message
+    $inner = $_.Exception
+    while ($inner.InnerException) { $inner = $inner.InnerException }
+    if (-not [string]::IsNullOrWhiteSpace($inner.Message)) { $message = $inner.Message }
+  }
+  return @{ Status = $status; Error = $message }
+}
+
+function Wait-Service([string]$url, [int]$port, [int]$seconds, $process, [string]$logPath) {
+  $deadline = (Get-Date).AddSeconds($seconds)
+  $lastStatus = 0
+  $lastError = ''
+  try { $client = New-StatusClient } catch {
+    throw "无法创建 HTTP 探测客户端（需要 .NET 4.5 及以上的 System.Net.Http）：$($_.Exception.Message)"
+  }
+  try {
+    while ((Get-Date) -lt $deadline) {
+      if ($process.HasExited) { throw "服务进程提前退出：$url。请查看 $logPath" }
+      if (Test-Port $port) {
+        $probe = Get-ServiceStatus $client $url
+        if ($probe.Status -ge 200 -and $probe.Status -lt 500) { return }
+        if ($probe.Status -gt 0) { $lastStatus = $probe.Status }
+        elseif (-not [string]::IsNullOrWhiteSpace($probe.Error)) { $lastError = $probe.Error }
+      }
+      Start-Sleep -Milliseconds 800
+    }
+  } finally { $client.Dispose() }
+  $detail = if ($lastStatus -ge 500) {
+    "服务已在端口 $port 上响应，但 $url 返回 HTTP $lastStatus（页面编译或渲染失败）。请查看 $logPath"
+  } elseif ($lastStatus -gt 0) {
+    "服务已在端口 $port 上响应，但 $url 返回 HTTP $lastStatus。请查看 $logPath"
+  } elseif (-not [string]::IsNullOrWhiteSpace($lastError)) {
+    "端口 $port 已监听，但请求 $url 失败：$lastError。请查看 $logPath"
+  } else {
+    "端口 $port 始终未监听。请查看 $logPath"
+  }
+  throw "等待服务启动超时：$url。$detail"
 }
 
 if (Test-Path -LiteralPath $statePath) {
@@ -53,12 +116,17 @@ if (Test-Path -LiteralPath $statePath) {
     Write-Host '停止命令：.\stop.ps1'
     exit 0
   }
-  if ($pythonAlive -or $webAlive) { throw '上次启动的服务仍有进程在运行。请先执行 .\stop.ps1，再重新启动。' }
+  if ($pythonAlive -or $webAlive) {
+    $alive = @()
+    if ($pythonAlive) { $alive += 'python' }
+    if ($webAlive) { $alive += 'web' }
+    throw "上次启动的服务仍有进程在运行（$($alive -join '、')）。请先执行 .\stop.ps1，再重新启动。"
+  }
   Remove-Item -LiteralPath $statePath -Force
 }
 
 if ((Test-Port 8000) -or (Test-Port 3000)) {
-  throw '端口 8000 或 3000 已被其他进程占用。请先停止旧服务后重试。'
+  Assert-PortsFree
 }
 if (-not (Test-Path -LiteralPath $pythonExe)) { throw '未找到 Python 虚拟环境。请先在 services\python 运行 uv sync --python 3.13 --extra tts。' }
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'node_modules'))) { throw '未找到 Node.js 依赖。请先在仓库根目录运行 pnpm install。' }
@@ -96,11 +164,11 @@ $web = $null
 try {
   $python = Start-Process -FilePath $pythonExe -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000') -WorkingDirectory $pythonRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $pythonOut -RedirectStandardError $pythonErr
   Write-Host '正在启动 Python 服务…'
-  Wait-Service 'http://127.0.0.1:8000/health' 8000 90 $python
+  Wait-Service 'http://127.0.0.1:8000/health' 8000 90 $python $pythonErr
 
   $web = Start-Process -FilePath $pnpm.Source -ArgumentList @('dev') -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput $webOut -RedirectStandardError $webErr
   Write-Host '正在启动 Web 和渲染 Worker…'
-  Wait-Service 'http://127.0.0.1:3000' 3000 120 $web
+  Wait-Service 'http://127.0.0.1:3000' 3000 120 $web $webErr
 
   $state = @{
     python = @{ id = $python.Id; startFileTime = $python.StartTime.ToFileTimeUtc() }

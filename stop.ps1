@@ -20,3 +20,13 @@ foreach ($name in @('web', 'python')) {
   } catch { Write-Host "$name 服务已经退出。" }
 }
 Remove-Item -LiteralPath $statePath -Force
+
+foreach ($port in 8000, 3000) {
+  try {
+    $connection = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $connection) { continue }
+    $owner = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue
+    $label = if ($owner) { "$($owner.ProcessName) (PID $($owner.Id))" } else { "PID $($connection.OwningProcess)" }
+    Write-Warning "端口 $port 仍被 $label 占用；它不是 start.ps1 启动的，请手动结束后再启动。"
+  } catch { }
+}
