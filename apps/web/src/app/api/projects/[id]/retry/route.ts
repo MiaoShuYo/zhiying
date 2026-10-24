@@ -2,6 +2,7 @@ import { after, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { processProject, type ProjectStage } from '@/lib/pipeline';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
+import { storyboardRetryAllowed } from '@/lib/task-actions';
 
 export const runtime = 'nodejs';
 
@@ -29,6 +30,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!failedJob) {
     const error = project.status === 'failed' ? '找不到可重试的失败任务' : '项目当前不在可重试状态';
     return NextResponse.json({ error }, { status: 409 });
+  }
+  // A failed repair can leave the previous, valid storyboard in place. Allow a
+  // deliberate retry from that state, but only for the latest storyboard step;
+  // the pipeline validates the checkpoint and commits replacement scenes only
+  // after the new storyboard is complete.
+  if (!storyboardRetryAllowed({
+    jobId: failedJob.id,
+    latestJobId: latestRun?.id,
+    jobStatus: failedJob.status,
+    projectStatus: project.status,
+    hasStoryboard: Boolean(project.storyboardJson),
+    failedStage: failedJob.stage,
+  })) {
+    return NextResponse.json({ error: '项目当前不在可重试状态' }, { status: 409 });
   }
   const stages: ProjectStage[] = ['extracting', 'analyzing', 'storyboarding'];
   const stage: ProjectStage = mode === 'restart' ? 'extracting' : stages.includes(failedJob.stage as ProjectStage) ? failedJob.stage as ProjectStage : 'analyzing';

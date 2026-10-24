@@ -47,9 +47,14 @@ model Job {
   stage String @default("created")
   sceneId String?
   attempt Int @default(0)
+  startedAt DateTime?
+  failedStage String?
+  failureCode String?
   error String?
   progress String?
   inputJson String?
+  renderPlanJson String?
+  logPath String?
   outputPath String?
   validationJson String?
   createdAt DateTime @default(now())

@@ -4,7 +4,7 @@ import { timelineFor } from './timeline';
 export type PreflightSeverity = 'error' | 'warning' | 'info';
 
 export type PreflightCode =
-  | 'missing_image' | 'missing_file' | 'missing_audio' | 'empty_narration'
+  | 'missing_image' | 'missing_file' | 'missing_audio' | 'empty_narration' | 'narration_too_long'
   | 'caption_overflow' | 'caption_overtime' | 'scene_too_short'
   | 'duration_target_miss' | 'missing_bgm' | 'subtitles_off';
 
@@ -44,6 +44,7 @@ export const preflightCodeLabels: Record<PreflightCode, string> = {
   missing_file: '素材文件缺失',
   missing_audio: '缺少语音',
   empty_narration: '旁白为空',
+  narration_too_long: '旁白过长',
   caption_overflow: '字幕过长',
   caption_overtime: '字幕超出时长',
   scene_too_short: '场景过短',
@@ -121,6 +122,14 @@ export function preflight(storyboard: Storyboard, assets: { path: string; kind?:
       if (credit && credit === narration) {
         issues.push({ code: 'empty_narration', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message: `${target}的旁白只是素材署名，需要补充真正的讲解。`, fix: 'rewrite_narration' });
       }
+      const narrationLength = [...narration].length;
+      const sceneDuration = Math.max(scene.duration ?? 0, scene.audioDuration ?? 0);
+      if (narrationLength > 600 || sceneDuration > 300) {
+        const message = narrationLength > 600
+          ? `${target}旁白有 ${narrationLength} 字，预计口播约 ${Math.ceil(narrationLength / 5)} 秒；请拆分场景或精简旁白，避免超长画面和字幕。`
+          : `${target}时长为 ${Math.round(sceneDuration)} 秒，过长的场景会拉长整条时间轴；请检查旁白和场景时长。`;
+        issues.push({ code: 'narration_too_long', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message, fix: 'rewrite_narration' });
+      }
       if (!scene.audioSrc && !(scene.audioDuration && scene.audioDuration > 0)) {
         issues.push({ code: 'missing_audio', severity: 'error', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, assetKind: 'audio', message: `${target}还没有生成语音。`, fix: 'generate_audio' });
       } else if (scene.audioSrc && stale(scene.audioSrc)) {
@@ -178,7 +187,7 @@ export function preflightCategoryOf(issue: PreflightIssue): PreflightCategory {
   if (issue.code === 'missing_file') return issue.assetKind === 'audio' ? 'voice' : 'asset';
   if (issue.code === 'missing_bgm') return 'asset';
   if (issue.code === 'caption_overflow' || issue.code === 'caption_overtime') return 'subtitle';
-  if (issue.code === 'empty_narration') return 'narration';
+  if (issue.code === 'empty_narration' || issue.code === 'narration_too_long') return 'narration';
   return 'render';
 }
 

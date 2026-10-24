@@ -554,7 +554,7 @@ function translateText(node: Node, language: Language) {
   if (next !== original) node.textContent = next;
 }
 
-function translateString(value: string, language: Language): string | undefined {
+export function translateString(value: string, language: Language): string | undefined {
   const fixed = translations[value]?.[language];
   if (fixed) return fixed;
   const part = (text: string) => translations[text]?.[language] ?? text;
@@ -570,7 +570,7 @@ function translateString(value: string, language: Language): string | undefined 
     [/^历史记录（视频不可用）：.*$/, () => language === 'en' ? 'History (video unavailable): Older V1.0 exports share one video file. This file was overwritten by a later export; export again to create a new video.' : '履歴（動画を利用できません）：旧V1.0の書き出しは同じ動画ファイルを共有しています。このファイルは後続の書き出しで上書きされました。新しい動画を書き出してください。'],
     [/^成片已渲染完成。?\s*（(.+)）$/, ([, time]) => language === 'en' ? `Video rendered successfully (${time})` : `動画のレンダリングが完了しました（${time}）`],
     [/^交付包已生成。?\s*（(.+)）$/, ([, time]) => language === 'en' ? `Delivery package created (${time})` : `納品パッケージを作成しました（${time}）`],
-    [/^(\d+)\s*错误\s*\/\s*(\d+)\s*警告$/, ([, errors, warnings]) => language === 'en' ? `${errors} errors / ${warnings} warnings` : `エラー${errors}件／警告${warnings}件`],
+    [/^(\d+)\s*错误\s*\/\s*(\d+)\s*警告$/, ([, errors, warnings]) => language === 'en' ? `${errors} errors / ${warnings} warnings` : language === 'ja' ? `エラー${errors}件／警告${warnings}件` : `${errors} 错误 / ${warnings} 警告`],
     [/^·\s*历史记录$/, () => language === 'en' ? '· History' : '・履歴'],
     [/^Will save: aspect ratio\s+(.+?)\s*·\s*captions\s+(.+?)\s*·\s*(.+?)\s*\/\s*(.+?)\s*·\s*transition\s+(.+)$/, ([, ratio, captions, intro, outro, transition]) => language === 'en' ? `Will save: aspect ratio ${ratio} · captions ${part(captions)} · ${part(intro)} / ${part(outro)} · transition ${part(transition)}` : `保存内容：画面比率${ratio}・字幕${part(captions)}・${part(intro)}／${part(outro)}・トランジション${part(transition)}`],
     [/^将保存：声音\s*(.+?)\s*·\s*语速\s*(.+?)×\s*·\s*画幅\s*(.+?)\s*·\s*导出画质\s*(.+?)\s*·\s*共\s*(\d+)\s*(?:scenes|シーン|个场景)$/, ([, voice, speed, ratio, quality, count]) => language === 'en' ? `Will save: voice ${part(voice)} · speed ${speed}× · aspect ratio ${ratio} · export quality ${part(quality)} · ${count} scenes` : `保存内容：音声${part(voice)}・速度${speed}×・画面比率${ratio}・書き出し画質${part(quality)}・全${count}シーン`],

@@ -75,7 +75,7 @@ export async function recoverStuckProjects(projectId?: string) {
 
 /** Single entry point for every interrupted long task: extraction, synthesis and rendering. */
 export async function recoverInterruptedJobs(projectId?: string) {
-  await recoverInterruptedRenderJobs(projectId);
+  const render = await recoverInterruptedRenderJobs(projectId);
   await recoverInterruptedAudioJobs(projectId);
-  return { restarted: await recoverInterruptedStoryboardJobs(projectId), released: await recoverStuckProjects(projectId) };
+  return { restarted: await recoverInterruptedStoryboardJobs(projectId), released: await recoverStuckProjects(projectId), render };
 }
