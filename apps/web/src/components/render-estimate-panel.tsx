@@ -31,10 +31,6 @@ export function RenderEstimateBody({ payload, preset }: { payload: RenderEstimat
   const hint = cacheHint(payload.cache, payload.plan);
   return (
     <div className={`render-estimate-body${danger ? ' render-estimate-danger' : ''}`}>
-      <div className="render-estimate-head">
-        <b>渲染前估算</b>
-        <span>{preset === 'draft' ? '540p 草稿' : '成片'}</span>
-      </div>
       <p className="render-estimate-summary">{estimateSummary(payload.estimate, payload.plan)}</p>
       <div className="render-estimate-stats">
         <span>预计耗时<b>{formatDuration(payload.estimate.totalDurationSeconds)}</b></span>

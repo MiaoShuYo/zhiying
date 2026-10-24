@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { sceneSeconds, type Scene, type SubtitleCue } from '@m2v/schema';
 import { captionDuration, resolveCaptionCues } from '@m2v/schema';
 
@@ -13,10 +13,11 @@ type Edge = 'start' | 'end';
  * the preview, the SRT/VTT/ASS export and the delivery check all read the same
  * numbers from `resolveCaptionCues`.
  */
-export function CaptionTimeline({ scene, portrait, disabled, onChange }: {
+export function CaptionTimeline({ scene, portrait, disabled, focusCueIndex, onChange }: {
   scene: Scene;
   portrait: boolean;
   disabled: boolean;
+  focusCueIndex?: number;
   onChange: (cues: SubtitleCue[] | undefined) => void;
 }) {
   const duration = captionDuration(scene);
@@ -24,7 +25,14 @@ export function CaptionTimeline({ scene, portrait, disabled, onChange }: {
   const manual = (scene.subtitleCues?.length ?? 0) > 0;
   const [selected, setSelected] = useState(0);
   const track = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
   const drag = useRef<{ index: number; edge: Edge; start: number; end: number; width: number; x: number } | null>(null);
+
+  useEffect(() => {
+    if (focusCueIndex === undefined || focusCueIndex < 0 || focusCueIndex >= cues.length) return;
+    setSelected(focusCueIndex);
+    requestAnimationFrame(() => rowRefs.current[focusCueIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  }, [focusCueIndex, cues.length]);
 
   const problems = cues.map((cue, index) => {
     const issues: string[] = [];
@@ -90,7 +98,7 @@ export function CaptionTimeline({ scene, portrait, disabled, onChange }: {
       {!cues.length && <p className="hint">当前场景没有旁白，暂无字幕。</p>}
     </div>
     <div className="caption-rows">
-      {cues.map((cue, index) => <div className={`caption-row${index === selected ? ' selected' : ''}`} key={index} onFocus={() => setSelected(index)}>
+      {cues.map((cue, index) => <div ref={element => { rowRefs.current[index] = element; }} className={`caption-row${index === selected ? ' selected' : ''}`} key={index} onFocus={() => setSelected(index)}>
         <span className="caption-index">{index + 1}</span>
         <label>开始<input className="input" type="number" step={.05} min={0} max={duration} disabled={disabled} value={round(cue.start)} onChange={event => update(index, { start: clamp(Number(event.target.value) || 0, 0, round(cue.end) - 0.05) })} /></label>
         <label>结束<input className="input" type="number" step={.05} min={0} max={duration} disabled={disabled} value={round(cue.end)} onChange={event => update(index, { end: clamp(Number(event.target.value) || 0, round(cue.start) + 0.05, duration) })} /></label>

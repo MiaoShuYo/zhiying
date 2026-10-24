@@ -123,6 +123,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try { voiceSettings = JSON.parse(await readFile(settingsPath, 'utf8')); } catch { /* First synthesis uses the selected speed. */ }
   const job = await db.job.create({ data: { projectId: id, kind: 'tts', status: 'running', stage: 'generating_audio' } });
   await db.project.update({ where: { id }, data: { status: 'generating_audio' } });
+  const batchSize = 3;
+  const batchCount = Math.ceil(targetScenes.length / batchSize);
+  let completedScenes = 0;
+  const reportProgress = async (batchIndex: number, currentScene?: string) => {
+    const message = currentScene
+      ? `第 ${batchIndex}/${batchCount} 批：正在生成「${currentScene}」(${completedScenes}/${targetScenes.length})`
+      : `第 ${batchIndex}/${batchCount} 批已完成 (${completedScenes}/${targetScenes.length} 个场景)`;
+    await db.job.update({ where: { id: job.id }, data: { progress: JSON.stringify({ message, batchIndex, batchCount, completedScenes, totalScenes: targetScenes.length, ...(currentScene ? { currentScene } : {}) }) } });
+  };
   // Windows Node may resolve localhost to ::1 while FastAPI listens on IPv4.
   const service = process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000';
   try {
@@ -131,37 +140,46 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const voiceHash = createHash('sha256');
     for (const name of (await readdir(voiceDir)).sort()) voiceHash.update(await readFile(join(voiceDir, name)));
     const referenceKey = voiceHash.digest('hex');
-    for (const scene of targetScenes) {
-      const effectiveSpeed = scene.speechSpeed ?? speed;
-      const scopes = [globalRules.filter(rule => scene.narration.includes(rule.text)), (storyboard.pronunciationRules ?? []).filter(rule => scene.narration.includes(rule.text)), scene.pronunciationOverrides ?? []];
-      const key = createHash('sha256').update(JSON.stringify({ text: scene.narration, voiceId, referenceKey, speed: effectiveSpeed, pause: scene.sentencePause ?? .12, scopes })).digest('hex');
-      const existing = scene.audioSrc ? resolve(process.cwd(), 'public', scene.audioSrc) : '';
-      if (existing && !forceRegenerate && scene.audioKey === key) {
-        try {
-          await access(existing);
-          if (!scene.wordTimings?.length || scene.wordTimings.some(word => /<\s*unk\s*>/i.test(word.text))) {
-            scene.wordTimings = undefined;
-            try { scene.wordTimings = await alignNarration(service, existing, scene.narration); }
-            catch (alignmentError) { console.warn(`[caption-align] ${scene.id}: ${alignmentError instanceof Error ? alignmentError.message : String(alignmentError)}`); }
-            await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, audio: { wordTimings: scene.wordTimings } }]]));
-          }
-          continue;
-        } catch { /* Regenerate missing audio assets. */ }
+    for (let batchStart = 0; batchStart < targetScenes.length; batchStart += batchSize) {
+      const batchIndex = Math.floor(batchStart / batchSize) + 1;
+      const batch = targetScenes.slice(batchStart, batchStart + batchSize);
+      for (const scene of batch) {
+        await reportProgress(batchIndex, scene.title ?? '未命名场景');
+        const effectiveSpeed = scene.speechSpeed ?? speed;
+        const scopes = [globalRules.filter(rule => scene.narration.includes(rule.text)), (storyboard.pronunciationRules ?? []).filter(rule => scene.narration.includes(rule.text)), scene.pronunciationOverrides ?? []];
+        const key = createHash('sha256').update(JSON.stringify({ text: scene.narration, voiceId, referenceKey, speed: effectiveSpeed, pause: scene.sentencePause ?? .12, scopes })).digest('hex');
+        const existing = scene.audioSrc ? resolve(process.cwd(), 'public', scene.audioSrc) : '';
+        if (existing && !forceRegenerate && scene.audioKey === key) {
+          try {
+            await access(existing);
+            if (!scene.wordTimings?.length || scene.wordTimings.some(word => /<\s*unk\s*>/i.test(word.text))) {
+              scene.wordTimings = undefined;
+              try { scene.wordTimings = await alignNarration(service, existing, scene.narration); }
+              catch (alignmentError) { console.warn(`[caption-align] ${scene.id}: ${alignmentError instanceof Error ? alignmentError.message : String(alignmentError)}`); }
+              await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, audio: { wordTimings: scene.wordTimings } }]]));
+            }
+            completedScenes += 1;
+            await reportProgress(batchIndex);
+            continue;
+          } catch { /* Regenerate missing audio assets. */ }
+        }
+        await db.job.update({ where: { id: job.id }, data: { sceneId: scene.id } });
+        const result = await requestSynthesis(service, scene.narration, voiceId, effectiveSpeed, scopes, scene.sentencePause ?? .12);
+        if (!result.ok || !result.audioPath) throw new Error(result.detail ?? result.error ?? `场景 ${scene.id} 语音生成失败`);
+        scene.pronunciationWarnings = result.warnings ?? [];
+        const filename = `${id}-${scene.id}-${Date.now()}.wav`; const publicPath = join(publicAudio, filename); await copyFile(result.audioPath, publicPath);
+        scene.audioSrc = `audio/${filename}`; scene.audioKey = key; if (result.duration && result.duration > 0) { scene.audioDuration = result.duration; scene.duration = Math.max(3, result.duration + 0.5); }
+        try { scene.wordTimings = await alignNarration(service, publicPath, scene.narration); }
+        catch (alignmentError) { scene.wordTimings = undefined; console.warn(`[caption-align] ${scene.id}: ${alignmentError instanceof Error ? alignmentError.message : String(alignmentError)}`); }
+        await db.scene.update({ where: { id: scene.id }, data: { audioPath: `audio/${filename}`, duration: scene.duration } });
+        await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, resetCaptions: true, audio: { audioSrc: scene.audioSrc, audioKey: scene.audioKey, audioDuration: scene.audioDuration, duration: scene.duration, wordTimings: scene.wordTimings, pronunciationWarnings: scene.pronunciationWarnings } }]]));
+        completedScenes += 1;
+        await reportProgress(batchIndex);
       }
-      await db.job.update({ where: { id: job.id }, data: { sceneId: scene.id } });
-      const result = await requestSynthesis(service, scene.narration, voiceId, effectiveSpeed, scopes, scene.sentencePause ?? .12);
-      if (!result.ok || !result.audioPath) throw new Error(result.detail ?? result.error ?? `场景 ${scene.id} 语音生成失败`);
-      scene.pronunciationWarnings = result.warnings ?? [];
-      const filename = `${id}-${scene.id}-${Date.now()}.wav`; const publicPath = join(publicAudio, filename); await copyFile(result.audioPath, publicPath);
-      scene.audioSrc = `audio/${filename}`; scene.audioKey = key; if (result.duration && result.duration > 0) { scene.audioDuration = result.duration; scene.duration = Math.max(3, result.duration + 0.5); }
-      try { scene.wordTimings = await alignNarration(service, publicPath, scene.narration); }
-      catch (alignmentError) { scene.wordTimings = undefined; console.warn(`[caption-align] ${scene.id}: ${alignmentError instanceof Error ? alignmentError.message : String(alignmentError)}`); }
-      await db.scene.update({ where: { id: scene.id }, data: { audioPath: `audio/${filename}`, duration: scene.duration } });
-      await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, resetCaptions: true, audio: { audioSrc: scene.audioSrc, audioKey: scene.audioKey, audioDuration: scene.audioDuration, duration: scene.duration, wordTimings: scene.wordTimings, pronunciationWarnings: scene.pronunciationWarnings } }]]));
     }
     await writeFile(settingsPath, JSON.stringify(sceneId ? { ...voiceSettings, speed } : { ...voiceSettings, speed, generatedSpeed: speed }), 'utf8');
     const persisted = await mergeSceneAudio(id, new Map(), { status: 'awaiting_review' });
-    await db.job.update({ where: { id: job.id }, data: { status: 'completed', stage: 'awaiting_review', sceneId: null } });
+    await db.job.update({ where: { id: job.id }, data: { status: 'completed', stage: 'awaiting_review', sceneId: null, progress: JSON.stringify({ message: `${batchCount} 批语音已生成 (${targetScenes.length}/${targetScenes.length} 个场景)`, batchIndex: batchCount, batchCount, completedScenes: targetScenes.length, totalScenes: targetScenes.length, percent: 100 }) } });
     const generatedScene = sceneId ? targetScenes[0] : null;
     const unaligned = targetScenes.filter(scene => !scene.wordTimings?.length).length;
     const alignmentNote = unaligned ? `；${unaligned} 个场景未能完成逐词对齐，仍可使用逐句字幕（请检查本地模型是否已下载）` : '';

@@ -25,7 +25,7 @@ const clock = (seconds: number) => {
 const order: PreflightSeverity[] = ['error', 'warning', 'info'];
 
 /** Enough of an issue to jump to the place that fixes it. */
-export type PreflightTarget = { fix: PreflightFix; sceneIndex?: number };
+export type PreflightTarget = { fix: PreflightFix; sceneIndex?: number; cueIndex?: number };
 
 type Props = {
   data: PreflightResult | null;
@@ -99,14 +99,14 @@ export function PreflightPanel({ data, previous, loading, error, allowIssues, on
                       <div className="preflight-scenes">
                         {gap.scenes.length
                           ? gap.scenes.map(scene => (
-                            <button className="text-button" key={scene.sceneIndex} onClick={() => onLocateScene(scene.sceneIndex)}>
-                              场景 {scene.sceneIndex + 1}{scene.sceneTitle ? ` · ${scene.sceneTitle}` : ''}
+                            <button className="text-button" key={`${scene.sceneIndex}-${scene.cueIndex ?? ''}`} onClick={() => gap.kind === 'subtitle' ? onFix({ fix: gap.fix, sceneIndex: scene.sceneIndex, cueIndex: scene.cueIndex }) : onLocateScene(scene.sceneIndex)}>
+                              场景 {scene.sceneIndex + 1}{scene.sceneTitle ? ` · ${scene.sceneTitle}` : ''}{scene.cueIndex !== undefined ? ` · 第 ${scene.cueIndex + 1} 行` : ''}
                             </button>
                           ))
                           : <span className="hint">项目级</span>}
                       </div>
                     </div>
-                    <button className="text-button" onClick={() => onFix({ fix: gap.fix, sceneIndex: gap.scenes[0]?.sceneIndex })}>
+                    <button className="text-button" onClick={() => onFix({ fix: gap.fix, sceneIndex: gap.scenes[0]?.sceneIndex, cueIndex: gap.cueIndex })}>
                       {preflightFixLabels[gap.fix]}
                     </button>
                   </li>
@@ -137,8 +137,8 @@ export function PreflightPanel({ data, previous, loading, error, allowIssues, on
                       </b>
                       <span>{issue.message}</span>
                     </div>
-                    <button className="text-button" onClick={() => onFix({ fix: issue.fix, sceneIndex: issue.sceneIndex })}>
-                      {issue.sceneIndex === undefined ? preflightFixLabels[issue.fix] : '定位场景'}
+                    <button className="text-button" onClick={() => onFix({ fix: issue.fix, sceneIndex: issue.sceneIndex, cueIndex: issue.cueIndex })}>
+                      {issue.cueIndex !== undefined ? `定位第 ${issue.cueIndex + 1} 行` : issue.sceneIndex === undefined ? preflightFixLabels[issue.fix] : '定位场景'}
                     </button>
                   </li>
                 ))}
