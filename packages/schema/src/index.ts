@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } from './delivery';
 
-export const SceneTypeSchema = z.enum(['title', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'media']);
+export const SceneTypeSchema = z.enum(['title', 'text', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'table', 'media']);
 export const StyleIdSchema = z.enum(['minimal-tech', 'clean-light', 'academic', 'social-short', 'whiteboard']);
 
 export const PronunciationRuleSchema = z.object({
@@ -46,21 +46,35 @@ const BaseSceneSchema = z.object({
 export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
   if (scene.type === 'bullets') {
     const items = scene.visual.items;
-    if (!Array.isArray(items) || items.length < 1 || items.length > 5 || !items.every((x) => typeof x === 'string')) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'bullets 场景需要 1 到 5 条字符串 items' });
+    const validItem = (item: unknown): boolean => {
+      if (typeof item === 'string') return true;
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const point = item as { text?: unknown; children?: unknown };
+      return typeof point.text === 'string' && (point.children === undefined || (
+        Array.isArray(point.children) && point.children.length <= 4 && point.children.every(child => typeof child === 'string')
+      ));
+    };
+    if (!Array.isArray(items) || items.length < 1 || items.length > 5 || !items.every(validItem)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'bullets 场景需要 1 到 5 条要点；每条可为字符串或包含 text 与 children 的两层要点' });
     }
   }
   if (scene.type === 'comparison' && (!Array.isArray(scene.visual.columns) || scene.visual.columns.length !== 2)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'columns'], message: 'comparison 场景需要两列 columns' });
   }
-  if (scene.type === 'chart' && (!Array.isArray(scene.visual.data) || scene.visual.data.length < 1)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'data'], message: 'chart 场景需要非空 data' });
+  if (scene.type === 'chart' && (!Array.isArray(scene.visual.data) || scene.visual.data.length < 1) && (!Array.isArray(scene.visual.nodes) || scene.visual.nodes.length < 2)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual'], message: '图表/图示场景需要 data 或至少两个 nodes' });
   }
   if (scene.type === 'timeline' && (!Array.isArray(scene.visual.items) || scene.visual.items.length < 2)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'timeline 场景至少需要两个时间节点' });
   }
+  if (scene.type === 'table' && (!Array.isArray(scene.visual.headers) || scene.visual.headers.length < 1 || !Array.isArray(scene.visual.rows) || scene.visual.rows.length < 1 || !scene.visual.rows.every(row => Array.isArray(row) && row.length === scene.visual.headers.length && row.every(cell => typeof cell === 'string')))) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual'], message: 'table 场景需要 headers 和列数一致的非空 rows' });
+  }
   if (scene.type === 'math' && typeof scene.visual.formula !== 'string') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'formula'], message: 'math 场景需要公式文本' });
+  }
+  if (scene.type === 'text' && (typeof scene.visual.text !== 'string' || !scene.visual.text.trim())) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'text'], message: 'text 场景需要非空文本' });
   }
   if (scene.type === 'media' && (typeof scene.visual.src !== 'string' || !/^(projects\/[A-Za-z0-9_-]+\/assets\/[^/]+)$/.test(scene.visual.src))) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'src'], message: 'media 场景需要本地素材路径' });
