@@ -555,6 +555,9 @@ function translateText(node: Node, language: Language) {
 }
 
 export function translateString(value: string, language: Language): string | undefined {
+  // The source UI copy is Chinese. Dynamic translation rules use Japanese as
+  // their secondary branch, so Chinese must preserve the original string.
+  if (language === 'zh') return value;
   const fixed = translations[value]?.[language];
   if (fixed) return fixed;
   const part = (text: string) => translations[text]?.[language] ?? text;
@@ -596,8 +599,8 @@ export function translateString(value: string, language: Language): string | und
     [/^已选\s*(\d+)\s*项$/, ([, count]) => language === 'en' ? `${count} selected` : `${count} 項目を選択`],
     [/^共\s*(\d+)\s*个场景$/, ([, count]) => language === 'en' ? `${count} scenes` : `全${count}シーン`],
     [/^(\d+)\s*条字幕$/, ([, count]) => language === 'en' ? `${count} captions` : `字幕${count}件`],
-    [/^(\d+)\s*个场景\s*·\s*(.+?)\s*·\s*(\d+:\d+)$/, ([, count, style, ratio]) => language === 'en' ? `${count} scenes · ${style} · ${ratio}` : `${count}シーン · ${style} · ${ratio}`],
-    [/^(\d+)\s*个场景$/, ([, count]) => language === 'en' ? `${count} scenes` : `${count}シーン`],
+    [/^(\d+)\s*个场景\s*·\s*(.+?)\s*·\s*(\d+:\d+)$/, ([, count, style, ratio]) => language === 'en' ? `${count} scenes · ${style} · ${ratio}` : language === 'ja' ? `${count}シーン · ${style} · ${ratio}` : `${count} 个场景 · ${style} · ${ratio}`],
+    [/^(\d+)\s*个场景$/, ([, count]) => language === 'en' ? `${count} scenes` : language === 'ja' ? `${count}シーン` : `${count} 个场景`],
     [/^(\d+)\s*个项目$/, ([, count]) => language === 'en' ? `${count} projects` : `${count}件のプロジェクト`],
     [/^第\s*(\d+)\s*次$/, ([, count]) => language === 'en' ? `Attempt ${count}` : `${count}回目`],
     [/^第\s*(\d+)\s*页$/, ([, count]) => language === 'en' ? `Page ${count}` : `${count}ページ目`],
