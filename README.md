@@ -4,6 +4,8 @@
 
 # 知影：本地 AI 知识视频生成器
 
+语言版本：[简体中文](README.md) · [English](README.en.md) · [日本語](README.ja.md)
+
 知影（Local Studio）是一个运行在 Windows 本机的 PDF、PPTX、Markdown、公开网页和文本讲解视频工作台。它使用 Ollama 整理内容和生成分镜，用 F5-TTS 根据用户提供的声音参考生成旁白，最后由 Remotion 和 FFmpeg 导出横屏或竖屏 1080p H.264 MP4。导出后还能检查字幕与语音问题、校验成片文件，并把 MP4、字幕、封面和项目备份打包成交付 ZIP。项目源文件、声音参考、图片素材、生成音频和视频默认保存在本地；网页抽取和 Wikimedia Commons 搜索/下载仅在用户主动操作时访问互联网。
 
 ## 功能
