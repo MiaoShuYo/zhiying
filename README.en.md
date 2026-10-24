@@ -13,19 +13,22 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 ### Import and storyboard creation
 
 - Import PDF, PPTX, Markdown (`.md` / `.markdown`), pasted text, and public webpages that do not require sign-in. Review, preview, and edit extracted text before generating a storyboard.
+- Markdown tables are passed to storyboard generation as structured table data. Code examples are explained rather than rendered as raw source in the video.
 - Extract text from PDFs, with optional local Tesseract OCR for scanned pages. PPTX files can be rebuilt from extracted content or preserve original slide images; the latter requires PowerPoint or LibreOffice. Speaker notes can be prioritized for narration.
 - Web extraction targets public articles, blocks localhost and private-network addresses, and reports errors. Pasting text is available as a fallback.
 - Ollama runs locally to analyze sources and generate scripts and storyboards. Long documents are processed in batches with checkpoints and can resume when the input and settings have not changed.
 
 ### Storyboard and visuals
 
-- Create title, bullet, diagram, comparison, chart, code, timeline, formula, and image scenes. Add, copy, delete, reorder, and edit narration, duration, and visual JSON; regenerate narration per scene.
+- Create title, text, two-level bullet, table, comparison, code, timeline, formula, and image scenes, plus one combined chart/diagram type. It renders numeric charts, node flows, or matrix data according to the visual data. Add, copy, delete, reorder, and edit narration, duration, and visual JSON; regenerate narration per scene.
 - Preview storyboards live. Choose Minimal Tech, Clean Light, Academic, Social Short, or Whiteboard styles. Insert built-in or custom scene templates and save scenes as reusable templates.
+- Selecting a storyboard scene seeks the preview to that scene's start. Edit narration and visual JSON in a popup, and undo storyboard changes.
 - Use automatic, vertical, side-by-side, or compact layouts. Select multiple scenes to adjust duration or style, and get navigable layout warnings for dense content and portrait scenes.
 
 ### Narration, pacing, and subtitles
 
 - Create a project voice profile with a reference recording and transcript. Local F5-TTS generates voice-matched narration; a general voice is available when no project voice is configured.
+- Full-project narration is generated sequentially in batches of up to three scenes, with the current batch, completed count, overall progress, and current scene shown in the UI.
 - Adjust project-wide or per-scene speed, sentence pauses, and gaps between scenes. Only affected scenes need to be regenerated. Preview a scene or a sentence/clip.
 - Generate word-level subtitle timing with a local alignment model. Choose simple, background-panel, or emphasized styles; configure visibility, position, size, colors, and opacity. Export SRT, VTT, or ASS. If alignment data is unavailable, timing is estimated from scene duration.
 - Define pronunciation corrections at scene, project, or global Chinese levels. A changed rule invalidates narration for affected scenes so it can be regenerated.
@@ -49,12 +52,14 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 - The home-page environment check diagnoses Python, Ollama and required models, FFmpeg/ffprobe, F5-TTS dependencies, OCR, and the render Worker. It provides guidance but does not automatically download models or install system dependencies.
 - Long-form generation and render tasks retain status, progress, errors, and checkpoints. Suitable tasks can be resumed or retried from the project list or project page.
 
-### V1.2–V1.5 highlights
+### V1.2–V1.6.1 highlights
 
 - **V1.2 — Recovery and control:** edit subtitle text/timing on a shared timeline; review extraction page by page; locate storyboard scenes by source page; retry tasks with actionable failure states; run export preflight and navigate to affected scenes; inspect unused assets and validate snapshots.
 - **V1.3 — Quality and delivery:** run subtitle and voice QC, validate rendered MP4 resolution/duration/tracks, create ZIP delivery packages containing MP4, SRT/VTT/ASS, cover, `.m2v` backup, and notes; save reusable export presets.
 - **V1.4 — Reliability:** track QC status against project revisions; distinguish intentional silence from missing narration; identify stale, missing, or failed outputs and packages; report recovery and delivery failures with actionable reasons.
 - **V1.5 — Production efficiency and final-cut refinement:** group preflight issues and navigate to affected scenes; resume from the first failed export step; refine subtitles against a real MP4; preview batch-edit impact before applying; identify referenced, unused, missing, duplicate, and archived assets; replace selected scene assets while retaining the original; save reusable production plans for voice, pacing, aspect ratio, subtitles, transitions, music volume, and export quality.
+- **V1.6 — Long-render reliability and recovery:** estimate render time and disk usage before queueing; reuse unchanged scene segments; resume interrupted renders; inspect stage and per-segment task logs.
+- **V1.6.1 — Storyboard and voice workflow:** parse Markdown tables into structured visuals; avoid placing raw code examples in scenes; add text scenes and two-level bullets; combine charts and diagrams into one visual type; seek the preview to a selected scene; edit narration and visual JSON in popups and undo storyboard changes; show batch-by-batch voice generation progress. Preflight findings can navigate to the affected scene and subtitle line.
 
 Browser acceptance on 2026-10-23 covered subtitle seeking/playback and timing, native file-picker upload and missing-asset repair, caption text edits, scene-duration adjustment, a new render, QC, MP4 validation, and delivery-package consistency. On 2026-10-24, browser testing also applied a batch layout change to two scenes, verified the before/after impact preview and undo, then saved and copied a production plan. Applying it in another project previewed only the aspect-ratio change (16:9 → 9:16); the original 16:9 export preset restored that project afterward. The source project passed QC again (0 errors, 0 warnings) and its seven-file delivery package was regenerated. With user confirmation, the temporary production plan and its copy were deleted from the global plan library; existing export presets were retained. See [the V1.5 manual acceptance checklist](doc/V1.5_manual_acceptance.md) for detailed scenarios and scope.
 
