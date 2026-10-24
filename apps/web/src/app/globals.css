@@ -533,3 +533,5 @@
 .template-badge { font-size: 11px; padding: 1px 5px; border-radius: 6px; background: var(--line, #dbe2ec); color: var(--ink, #1f2937); }
 .template-badge.scene { background: #e0e7ff; color: #3730a3; }
 .template-list small { display: block; opacity: .75; }
+
+.language-switcher{position:fixed;right:18px;bottom:18px;z-index:30;display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--line);border-radius:9px;background:#fff;box-shadow:0 4px 16px #26324b14;color:#687487;font-size:11px}.language-switcher select{border:0;background:transparent;color:#39424f;font-size:11px;outline:none;cursor:pointer}.language-switcher span{font-weight:700;color:var(--accent)}
