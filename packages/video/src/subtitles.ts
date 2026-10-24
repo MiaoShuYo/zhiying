@@ -1,4 +1,4 @@
-import { SubtitleSchema, timelineFor, type Storyboard } from '@m2v/schema';
+import { SubtitleSchema, subtitleCues as storyboardCues, timelineFor, type Storyboard } from '@m2v/schema';
 import { captionDuration, resolveCaptionCues } from './captions';
 
 const clock = (seconds: number, ass = false) => {
@@ -7,11 +7,7 @@ const clock = (seconds: number, ass = false) => {
   return `${String(Math.floor(ticks / (3600 * unit))).padStart(ass ? 1 : 2, '0')}:${String(Math.floor(ticks / (60 * unit)) % 60).padStart(2, '0')}:${String(Math.floor(ticks / unit) % 60).padStart(2, '0')}.${String(ticks % unit).padStart(ass ? 2 : 3, '0')}`;
 };
 export function subtitleCues(storyboard: Storyboard) {
-  const timeline = timelineFor(storyboard);
-  return storyboard.scenes.flatMap((scene, index) => {
-    const offset = timeline.scenes[index].start;
-    return resolveCaptionCues(scene, captionDuration(scene), storyboard.aspectRatio === '9:16').map(cue => ({ ...cue, start: cue.start + offset, end: cue.end + offset }));
-  });
+  return storyboardCues(storyboard).map(cue => ({ text: cue.text, start: cue.start, end: cue.end }));
 }
 
 export type SubtitleTimelineIssue = {

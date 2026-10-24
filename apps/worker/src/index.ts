@@ -33,7 +33,7 @@ async function encode(raw: string, final: string, signal: AbortSignal, progress:
 }
 
 async function syncPublicAssets(projectId: string, assetsJson: string) {
-  const assets = JSON.parse(assetsJson || '[]') as { name: string; path: string }[];
+  const assets = (JSON.parse(assetsJson || '[]') as { name: string; path: string; archived?: boolean }[]).filter(asset => !asset.archived);
   const assetDir = join(outputRoot, projectId, 'assets');
   const publicAssetDir = join(repo, 'apps/web/public/projects', projectId, 'assets');
   await mkdir(publicAssetDir, { recursive: true });
@@ -56,7 +56,7 @@ async function bundleHasAssets(storyboard: { scenes: { audioSrc?: string; visual
     visit(scene.visual);
     return result;
   });
-  for (const asset of JSON.parse(assetsJson || '[]') as { name: string }[]) paths.push(`projects/${projectId}/assets/${asset.name}`);
+  for (const asset of (JSON.parse(assetsJson || '[]') as { name: string; archived?: boolean }[]).filter(item => !item.archived)) paths.push(`projects/${projectId}/assets/${asset.name}`);
   for (const path of paths) {
     if (!/^(?:audio|projects\/[a-zA-Z0-9_-]+\/assets)\/[a-zA-Z0-9_.-]+$/.test(path)) throw new Error(`渲染素材路径无效：${path}`);
     try { await access(join(bundleLocation, 'public', path)); } catch { return false; }

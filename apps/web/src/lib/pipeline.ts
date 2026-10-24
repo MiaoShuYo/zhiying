@@ -423,11 +423,13 @@ export async function saveStoryboard(projectId: string, storyboard: unknown, exp
     const old = previous?.scenes.find(item => item.id === scene.id);
     const textChanged = old && old.narration !== scene.narration;
     if (textChanged) scene.pronunciationOverrides = scene.pronunciationOverrides?.filter(rule => rule.occurrence === undefined);
-    if (textChanged || (old && (old.speechSpeed !== scene.speechSpeed || old.sentencePause !== scene.sentencePause)) || (old && JSON.stringify(old.pronunciationOverrides ?? []) !== JSON.stringify(scene.pronunciationOverrides ?? [])) || changedPhrases.some(text => scene.narration.includes(text))) {
+    if (textChanged || (old && ((old.speechSpeed ?? 1) !== (scene.speechSpeed ?? 1) || (old.sentencePause ?? 0.12) !== (scene.sentencePause ?? 0.12))) || (old && JSON.stringify(old.pronunciationOverrides ?? []) !== JSON.stringify(scene.pronunciationOverrides ?? [])) || changedPhrases.some(text => scene.narration.includes(text))) {
       scene.audioSrc = undefined;
       scene.audioDuration = undefined; scene.audioKey = undefined;
       scene.wordTimings = undefined;
       scene.pronunciationWarnings = undefined;
+      // 手动字幕时间是按旧配音对出来的，配音作废后同样不能再沿用。
+      scene.subtitleCues = undefined;
     }
   }
   if (new Set(parsed.scenes.map(scene => scene.id)).size !== parsed.scenes.length) throw new Error('场景 ID 重复');

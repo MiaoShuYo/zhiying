@@ -4,6 +4,7 @@ import { access, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/p
 import { dirname, join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { readZip } from './zip-reader';
 
 /** Reads the manifest and payloads of an M2VBK001 archive so tests can tamper with them. */
 function unpack(archive: Buffer) {
@@ -273,6 +274,14 @@ async function main() {
         assert.equal(regenRow.delivery.attempts, 2);
         assert.equal(regenRow.delivery.fileExists, true);
 
+        // 包里的成片必须就是这次渲染的那一份，而不是任何别的视频。
+        const packaged = readZip(await readFile(join(sandbox, 'data/projects', filmProject.id, 'delivery', regenRow.delivery.file)));
+        const packagedMovie = packaged.find(entry => /-成片-.*\.mp4$/.test(entry.name));
+        assert.ok(packagedMovie, '交付包里要有成片文件');
+        assert.deepEqual(packagedMovie!.data, await readFile(video), '包内成片与最新渲染的 MP4 逐字节一致');
+        assert.ok(packaged.some(entry => /项目备份.*\.m2v$/.test(entry.name)), '交付包要带项目备份');
+        assert.ok(packaged.some(entry => /交付说明\.txt$/.test(entry.name)), '交付包要带交付说明');
+
         // ── 质检阻断时不能打包：失败环节要指向质检，记录不能显示成功 ────
         const filmQc = await body(await qcCheck(new Request(url(`/api/projects/${filmProject.id}/qc?refresh=1`)), params(filmProject.id)));
         assert.equal(filmQc.status, 'blocking', '没有语音的项目质检为阻断');
@@ -319,6 +328,19 @@ async function main() {
         assert.equal(refusedStaleRevision.status, 409, '落后于项目的包不能再下载');
         assert.match((await body(refusedStaleRevision)).error, /项目在这个交付包生成之后又有修改|已过期/);
 
+        // 重新生成之后包又可用，并且仍然打包同一条最新成片。
+        const reblessed = await buildDeliveryRoute(post({ jobId: filmJob.id }), params(filmProject.id));
+        assert.equal(reblessed.status, 200, '项目改过之后可以重新生成交付包');
+        const reblessedRevision = (await db.project.findUniqueOrThrow({ where: { id: filmProject.id } })).revision;
+        const reblessedRow = ((await body(await readExports(new Request(url('/')), params(filmProject.id)))) as any[]).find(item => item.id === filmJob.id);
+        assert.equal(reblessedRow.delivery.stale, null, '重新生成后不再过期');
+        assert.equal(reblessedRow.delivery.revision, reblessedRevision, '新包要记录改动后的项目版本');
+        const redownloaded = await readDelivery(new Request(url('/')), jobParams(filmProject.id, filmJob.id));
+        assert.equal(redownloaded.status, 200, '重新生成后又能下载');
+        const resealedMovie = readZip(Buffer.from(await redownloaded.arrayBuffer())).find(entry => /-成片-.*\.mp4$/.test(entry.name));
+        assert.ok(resealedMovie, '重新生成的包里同样要有成片');
+        assert.deepEqual(resealedMovie!.data, await readFile(video), '重新生成的包仍然是最新成片');
+
         // 校验通过后视频消失：交付包要指出缺的是成片文件，而不是笼统失败。
         await rm(video, { force: true });
         const goneDelivery = await buildDeliveryRoute(post({ jobId: filmJob.id }), params(filmProject.id));
@@ -327,7 +349,7 @@ async function main() {
         assert.equal(goneBody.missing[0].step, 'video', '要指出缺少成片文件');
         assert.match(goneBody.error, /成片文件不存在或为空/);
         assert.equal(goneBody.record.status, 'failed');
-        assert.equal(goneBody.record.attempts, 5);
+        assert.equal(goneBody.record.attempts, 6);
         const brokenRow = ((await body(await readExports(new Request(url('/')), params(filmProject.id)))) as any[]).find(item => item.id === filmJob.id);
         assert.equal(brokenRow.delivery.status, 'failed', '导出记录不能留下误导性的成功状态');
         assert.equal(brokenRow.delivery.fileExists, false);
@@ -495,7 +517,7 @@ async function main() {
     }, created, created.renderPreset);
     assert.equal(changedPresetCount(identical), 0, '设置一致时预览不报修改');
 
-    console.log('PASS: 质检四态在未检查、已检查、修改后回退之间切换，渲染失败定位到渲染页，没写台词的场景按有意静音计为通过；最新的导出失败不会被旧成功掩盖，交付包失败列出缺失环节且重试累加次数，真实的包可以再次下载、清理后提示重新生成、视频丢失时指出缺少成片，质检阻断或项目改过之后旧包标为过期且拒绝下载；备份恢复重名自动加后缀、损坏/缺媒体/中断都明确报错且不动原项目；预设支持重命名、复制、默认与应用前预览。');
+    console.log('PASS: 质检四态在未检查、已检查、修改后回退之间切换，渲染失败定位到渲染页，没写台词的场景按有意静音计为通过；最新的导出失败不会被旧成功掩盖，交付包失败列出缺失环节且重试累加次数，真实的包可以再次下载、清理后提示重新生成、视频丢失时指出缺少成片，包内 MP4 与最新成片逐字节一致，质检阻断或项目改过之后旧包标为过期且拒绝下载、重新生成后又带回最新成片；备份恢复重名自动加后缀、损坏/缺媒体/中断都明确报错且不动原项目；预设支持重命名、复制、默认与应用前预览。');
   } finally {
     await db.$disconnect();
     process.chdir(repo);
