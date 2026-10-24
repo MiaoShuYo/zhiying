@@ -95,6 +95,18 @@
 
 应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
 
+### V1.6 长项目渲染可靠性与恢复
+
+- 「渲染前估算」在开始前给出预计耗时、画面渲染时间、需要空间与可用空间，标出能复用几个片段，并注明估算可信度（高/中/低）与当前编码器。没有历史样本时明确说“按默认速度估算”，不假装精确。
+- 磁盘不够或预计超过 45 分钟时会拦下导出并列出原因，确认后才会入队；Worker 没运行时只提示“任务会停在队列里”而不拦——队列是持久的，Worker 回来就会继续。
+- 渲染拆成五个阶段：准备渲染资源 → 渲染画面 → 拼接片段 → 视频编码 → 校验成片。任一阶段失败都会记下失败阶段与原因码，任务卡片直接显示“视频渲染失败 · 渲染画面”并给出可续跑的建议。
+- 每个场景单独渲染成一个片段并按指纹缓存；中断后「从已完成片段继续」会跳过已完成的部分，只补没渲染完的片段。「忽略缓存重新渲染」才重做全部画面，两种情况在入队时就区分开。
+- 只改一个场景的文案或语音，就只重渲染那一个片段；改回去（撤销修改）缓存会重新命中，不需要再渲染。改字幕样式、转场、BGM 或画质属于全局改动，会重渲染全部片段，面板会说明原因。
+- 任务中心按整体进度显示长任务（不会在进入下一阶段时掉回 0%），每个任务都能展开「任务日志」看阶段的推进与逐片段的“待渲染 / 复用 / 完成”决策，日志只读尾部，长日志也不拖垮页面。
+- 中断留下的未完成视频不会被当成成片，重新渲染成功后会一并清理；失败的任务不会进入交付记录。
+
+应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
+
 ## 基本使用流程
 
 1. 新建项目，导入资料或粘贴文本，检查并编辑抽取结果；选择画幅、视觉风格及 PPTX 处理方式。
@@ -328,9 +340,14 @@ pnpm test:v14     # V1.4 稳定性测试（四态质检、交付包记录、导�
 pnpm test:v14:integration  # V1.4 全链路集成测试（含真实 MP4 与 ZIP，需 FFmpeg）
 pnpm test:v15     # V1.5 制作效率与成片精修测试（导出检查归并、导出流程、批量、制作方案、Range 解析）
 pnpm test:v15:integration  # V1.5 集成测试（真实路由与数据库，无需 FFmpeg）
+pnpm test:v16     # V1.6 长项目渲染测试（片段指纹与计划、估算、任务中心、作业日志）
+pnpm test:v16:integration  # V1.6 集成测试（估算门禁、增量渲染、续跑重试、日志接口）
+pnpm db:migrate:v16  # 只补 V1.6 新增的可空列，旧库可平滑升级
 pnpm db:generate  # 生成 Prisma Client
 pnpm db:push      # 同步 SQLite 数据库结构
 ```
+
+> 改过 schema 或跑过迁移后**必须重启 web 与 worker**（`.\stop.ps1` → `.\start.ps1`）。运行中的进程持有旧 Prisma Client，热重载不会重新加载 `node_modules`；此时访问新列的接口会 500 且响应体为空，浏览器显示 `Unexpected end of JSON input`。
 
 ## 本地数据与 Git
 
@@ -378,6 +395,49 @@ pnpm db:generate
 上一条报错会连带表现为 `.\start.ps1` 卡住：脚本等的是 `http://127.0.0.1:3000` 返回 2xx–4xx，500 会让它一直等到 120 秒超时。现在超时信息会说明是「已监听但返回 HTTP 500」，并指出该看哪个日志文件，而不再只报“等待服务启动超时”。真正的端口冲突也会直接列出端口和占用进程，例如 `端口已被其他进程占用：3000（占用进程：node (PID 1234)）`；`.\stop.ps1` 结束后若仍有非脚本启动的监听者，也会给出同样的提示。就绪探测用 `System.Net.Http.HttpClient` 取状态码，而不是 `Invoke-WebRequest`：`-SkipHttpErrorCheck` 只有 PowerShell 6+ 才有，Windows PowerShell 5.1 遇到非 2xx 会直接抛异常，于是健康检查会被误判成超时。`start.ps1` 与 `stop.ps1` 在 5.1 和 7 上都能运行。
 
 `next dev` 运行时不要执行 `pnpm build`（或 `apps/web` 的 `pnpm build`）：两者共用 `apps/web/.next`，生产构建会覆盖开发服务器正在使用的 server chunk，之后项目页会返回 500 并报 `Cannot find module './vendor-chunks/zod@<version>.js'`。遇到该报错先 `.\stop.ps1` 停掉服务，删除 `apps/web/.next`，再用 `.\start.ps1` 启动即可；需要生产构建时先停服务、构建完再重启开发服务。
+
+## V1.6：长项目渲染可靠性与恢复
+
+V1.6 的目标不是加新页面，而是让长项目“渲染前知道要花多久、中断后知道停在哪、改一处就只重渲一处、全程能在一个地方看清”。渲染入口仍在「渲染导出」，长任务的集中视图仍是任务中心；片段缓存放在项目输出目录里，不进 Git。
+
+**分段渲染**由 `packages/schema/src/render-plan.ts` 支撑。每个片段（片头 / 每个场景 / 片尾）有一条指纹 `fingerprintOf(global:content:audio)`：`content` 是该场景的完整 JSON，`audio` 是音频的 `src`、时长、缓存键与文件签名（字节数 + mtime），`global` 覆盖渲染版本、画质、帧率、样式、画幅、字幕设置、转场与 BGM 参数。`segmentPlan` 把分镜与时间轴换算成片段列表（含 `frames`、`startFrame`、`fingerprint`、`reuse`），`planReasons` 按 `内容有改动 / 语音有改动 / 字幕/样式/BGM/画质有改动 / 新增片段` 归类，`planCoversTimeline` 断言片段连续铺满时间轴且无空洞。缓存路径为 `data/projects/<id>/output/segments/<full|draft>/<片段键>-<指纹>.mp4`，同名 `.json` 记录字节数、帧数与预设；两种预设各存一份，草稿片段不会被当成成片片段复用。
+
+**Worker** 只在计划里 `reuse` 为假时才调用 Remotion 渲染该片段，其余直接读缓存文件；全部片段就绪后用 `-f concat -safe 0 -c copy -movflags +faststart` 拼接，再用与 V1.5 相同的编码器输出成片（QSV 失败自动回落到 `libx264`）。`noCache`（重启）与缓存齐全时都会生成与实际执行一致的 `RenderPlan` 并存进 `Job.renderPlanJson`，所以任务卡片上“复用几个 / 渲染几个”不是估的。渲染成功后按“当前计划的指纹 + 最近 2 次已完成任务的计划”保留片段，2 GB 上限按 LRU 清理，失败或取消的渲染从不删片段。
+
+**估算**在 `packages/schema/src/estimate.ts`：`totalDurationSeconds = renderedSeconds × realtimeFactor + totalSeconds × encodeFactor + (20 + 片段数 × 1.5)`，`realtimeFactor` / `encodeFactor` 取本机同预设历史渲染的中位数，样本不足时用 QSV 0.55 / x264 0.95 与 0.22 / 0.65 兜底；`diskNeedBytes` 按“片段 + 成片”的放大系数计算。`findings` 分三档：`danger` 的磁盘不足与超长任务（>45 分钟）必须确认，`warning` 的磁盘接近、20–45 分钟任务、片段过多、Worker 忙碌只提示，`info` 的队列长度与缺历史样本不阻断。`blockingFindings` 故意排除 `worker_offline`——队列是持久的，Worker 回来任务就会继续。估算接口 `GET /api/projects/<id>/render-estimate?preset=full|draft` 返回 `{ plan, estimate, reasons, worker, cache, samples }`，渲染接口在发现阻断项时返回 422（`code: 'render_estimate'`）并带上 `findings`，前端据此弹出“确认风险并继续渲染”，只有 `confirmRisks: true` 才会入队。
+
+**阶段与失败**：`Job` 新增 `startedAt`、`failedStage`、`failureCode`、`renderPlanJson`、`logPath`（全部可空，`pnpm db:push` 与 `pnpm db:migrate:v16` 都能升级旧库）。Worker 每个阶段开始时更新 `stage` 并写一行“阶段：X”到日志，同时每 15 秒刷新一次 `updatedAt` 心跳（中断判定阈值为 5 分钟），失败时抛出的 `RenderFailure` 带上阶段与原因码（`render_failed` / `concat_failed` / `encode_failed` / `validate_failed` / `asset_missing`）。`render-recovery.ts` 判定中断时保留当时的阶段，写入 `failureCode: 'worker_lost'` 与“阶段 X：渲染进程已中断…然后从已完成片段继续”的错误文案，因此续跑提示能说清停在哪一步而不是笼统的“渲染失败”。重试走 `POST /api/jobs/<id>` 的 `mode: 'resume' | 'restart'`：`resume` 复用缓存，`restart` 额外写 `noCache: true` 强制全量；两者都会重新过一遍估算门禁。`attempt` 只在任务创建时写一次（首次渲染为 1，重试为上一个任务 +1），Worker 认领时不再自增，所以一次重试只算一次尝试。
+
+**任务中心**的 `GET /api/tasks` 增加 `stage`、`stageLabel`、`failedStageLabel`、`failureCode`、`failureCodeHint`、`overallPercent`、`logUrl`、`plan`、`cachedSegments`、`recovery`、`orphanOutput`、`failure`。阶段内百分比（`bundling` / `rendering` / `concatenating` / `encoding` / `validating`）由 `renderPercent` 映射成整体进度，长任务不会在切换阶段时倒退。`GET /api/tasks` 会先跑一次渲染中断收尾（`recoverInterruptedRenderJobs`），所以被杀掉的渲染在超过 5 分钟阈值后直接以「失败 · 所在阶段」出现，不需要先点按钮。日志由 Worker 写进 `data/projects/<id>/output/<jobId>.log`（2 MB 上限，超限后记一行“日志已达到大小上限”后停止写入，渲染不受影响），接口 `GET /api/jobs/<id>/logs?tail=N` 只读文件末尾 512 KB、默认 200 行、上限 1000 行，返回 `{ jobId, status, stage, failedStage, failureCode, file, exists, bytes, windowed, lines }`。
+
+**集中恢复**：`POST /api/tasks/recover` 返回 `{ resumed, released, projects, pending }`。被收尾的渲染任务计入 `resumed`（收尾前这里会漏掉渲染任务，导致明明处理了中断却报“已恢复 0 个任务”）；`pending` 是仍在 5 分钟宽限期内、有心跳的渲染任务数，任务中心用它把“0 个”解释成“另有 N 个渲染任务最近 5 分钟内仍有心跳，暂不判定为中断”，而不是给一个没有说明的 0；三者都为 0 时提示“没有发现需要恢复的任务”。
+
+### V1.6 验证命令
+
+~~~powershell
+pnpm typecheck
+pnpm db:migrate:v16
+pnpm test:v16
+pnpm test:v16:integration
+pnpm test:v11
+pnpm test:v12
+pnpm test:v13
+pnpm test:v13:integration
+pnpm test:v14
+pnpm test:v14:integration
+pnpm test:v15
+pnpm test:v15:integration
+~~~
+
+`pnpm test:v16` 是 V1.6 的单元与渲染测试（48 项）：`render-plan` 覆盖指纹稳定性（字段顺序无关、内容/语音/全局三类改动各自改指纹）、片段帧区间与 `frames` 汇总、时间轴铺满校验、复用判定与原因归因、`segmentLabel`；`estimate` 覆盖新旧样本对 `confidence` 的影响、草稿与成片的耗时差、磁盘不足与接近的分档、超长任务与片段过多、Worker 离线不阻断、`estimateSummary` 的两种文案、`hasDanger` 与 `blockingFindings`；`render-estimate` 覆盖面板文案与原因列表、`render-estimate-render.tsx` 把面板整块渲染出来断言统计项与风险样式；`job-logs` 覆盖 ID 形状校验、路径逃逸拒绝、尾部截取与半行丢弃；`task-center-v16` 覆盖阶段标签、`overallPercent`、继续方式与失败标题。
+
+`pnpm test:v16:integration` 在临时数据库里跑通八个环节：估算给出复用数与可信度 → 磁盘不足时渲染被 422 拦下、确认后才能入队 → 改一个场景只重渲染一个片段、改回去复用恢复、旁白改动连带作废该场景配音 → `resume` 复用片段而 `restart` 全部重渲染 → 任务中心把阶段、复用、继续方式与失败标题集中呈现 → 日志接口只回尾部并带阶段与原因码 → 估算接口的预设与 400 分支 → 集中恢复只收尾超过 5 分钟的渲染任务、把它计入 `resumed`、把宽限期内的任务只计入 `pending` 且不会被误杀、重复调用不重复计数。
+
+2026-10-24 自动化验证结果：`pnpm typecheck` 五个工作区通过；`pnpm test:v16` 48 项全部通过；`pnpm test:v16:integration` 输出一行“V1.6 集成测试通过”；`pnpm test:v11` / `test:v12` / `test:v13` / `test:v14` / `test:v15` 及其集成测试作为回归一并通过。人工验收清单见 `doc/V1.6_manual_acceptance.md`，界面上的实际点击仍需人工逐项确认。
+
+2026-10-24 中断与恢复实测（项目 `复验-竖屏-20261013`，3 个场景 17.2 秒）：先在草稿预设下真实渲染，等日志出现“片段完成：场景 1”后杀掉 Worker。宽限期内 `POST /api/tasks/recover` 返回 `{"resumed":0,"pending":1}`（不再是一个没有说明的 0，任务仍是 `running`，没有被误判）；超过 5 分钟后同接口返回 `{"resumed":1,"released":0,"projects":1,"pending":0}`，任务中心随即显示 `failed` / `failedStage=rendering` / 「视频渲染失败 · 渲染画面」/ `recovery.kind=resume`（「从已完成片段继续」）/ `overallPercent=56` / `cachedSegments=1`，且不需要先点“检查中断任务”就已可见。以 `{"mode":"resume"}` 重试返回 202 且 `attempt=2`（一次重试只加一次），渲染计划为 `reused:1 / rendered:2`，日志依次出现“待渲染：场景 2”“待渲染：场景 3”“复用 1 个已缓存片段”，1 秒内拼接三片段并完成校验（issues 0），证明只重渲染未完成的片段而不是整片重来。同一项目的估算、任务中心与日志接口均返回 200 与完整 JSON（`render-estimate` 1759 字节、`/api/tasks` 27 KB / 30 条、`/api/jobs/<id>/logs` 按 tail 返回）。
+
+V1.6 的三条取舍：BGM 在 Remotion 合成内出声，改 BGM/音量/淡入淡出会改变所有片段的字节，因此全量重渲染（面板文案已说明）；片段以 `crf 16` 生成中间文件、成片再编码一次，与 V1.5 的双编成本一致；增量粒度是片段，场景内部的帧区间不做增量，也不做多 Worker 并行。
 
 ## V1.5：制作效率与成片精修
 

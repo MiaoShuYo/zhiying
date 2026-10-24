@@ -54,6 +54,17 @@ test('narration without generated voice blocks the export', () => {
   assert.equal(result.issues[0].fix, 'generate_audio');
 });
 
+test('very long narration gets a rewrite warning and belongs to the narration checklist', async () => {
+  const { preflightCategoryOf } = await import('../src/index');
+  const result = preflight(board([scene({ narration: '长旁白。'.repeat(180), duration: 360, audioSrc: 'audio/a.wav', audioDuration: 360 })]), []);
+  const issue = result.issues.find(item => item.code === 'narration_too_long');
+  assert.ok(issue);
+  assert.equal(issue.severity, 'warning');
+  assert.equal(issue.fix, 'rewrite_narration');
+  assert.equal(preflightCategoryOf(issue), 'narration');
+  assert.match(issue.message, /拆分场景或精简旁白/);
+});
+
 test('manual cues that overflow or overrun the scene are warned with a scene pointer', () => {
   const long = preflight(board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: [{ text: '字幕'.repeat(20), start: 0, end: 2 }] })]), []);
   assert.equal(long.issues[0].code, 'caption_overflow');

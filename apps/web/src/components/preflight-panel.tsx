@@ -13,7 +13,15 @@ import {
   preflightSeverityLabels,
 } from '@m2v/schema';
 
-const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
+/** `m:ss` for short videos; long projects get `h:mm:ss` so a 12-hour render cannot read as `756:12`. */
+const clock = (seconds: number) => {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return hours ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${Math.floor(total / 60)}:${pad(rest)}`;
+};
 const order: PreflightSeverity[] = ['error', 'warning', 'info'];
 
 /** Enough of an issue to jump to the place that fixes it. */

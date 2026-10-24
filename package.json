@@ -10,6 +10,7 @@
     "db:generate": "pnpm --filter @m2v/web db:generate",
     "db:push": "pnpm --filter @m2v/web db:push",
     "db:migrate:v11": "node scripts/migrate-v11.cjs",
+    "db:migrate:v16": "node scripts/migrate-v16.cjs",
     "test:v11": "tsx --test packages/video/test/v11.test.ts",
     "test:v12": "tsx --test packages/video/test/v12.test.ts packages/schema/test/preflight.test.ts packages/schema/test/timeline.test.ts apps/web/test/extraction.test.ts apps/web/test/structure.test.ts apps/web/test/task-center.test.ts && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/structure-render.tsx && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/source-peek-render.tsx",
     "test:v11:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v11-integration.ts",
@@ -20,6 +21,8 @@
     "test:v14:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v14-integration.ts",
   "test:v15": "tsx --test packages/schema/test/preflight-gaps.test.ts packages/schema/test/export-flow.test.ts packages/schema/test/batch.test.ts packages/schema/test/production-template.test.ts apps/web/test/video-range.test.ts && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/preflight-panel-render.tsx",
   "test:v15:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v15-integration.ts",
+  "test:v16": "tsx --test packages/schema/test/render-plan.test.ts packages/schema/test/estimate.test.ts packages/schema/test/preflight.test.ts apps/web/test/fallback-chapter.test.ts apps/web/test/render-estimate.test.ts apps/web/test/job-logs.test.ts apps/web/test/task-center-v16.test.ts && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/render-estimate-render.tsx",
+  "test:v16:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v16-integration.ts",
     "test:v11:render": "tsx apps/worker/test/render-v11.ts"
   },
   "devDependencies": {

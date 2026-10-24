@@ -25,7 +25,7 @@ test('a failed storyboard job keeps the recorded reason and needs a failed proje
   // Without a failed project there is no safe action, so the card explains instead of offering a button.
   const blocked = failureInfo({ kind: 'storyboard', status: 'failed' }, 'awaiting_review');
   assert.deepEqual(blocked?.actions, []);
-  assert.match(blocked!.hint, /打开项目查看状态/);
+  assert.match(blocked!.hint, /最新失败任务/);
 });
 
 test('stale progress is reported as a suspected interruption', () => {

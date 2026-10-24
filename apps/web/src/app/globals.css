@@ -289,6 +289,8 @@
 .task-status-completed { background: #e8f7f1; color: #26876c; }
 .task-status-failed { background: #fff0ef; color: #b14c4c; }
 .task-status-cancelled, .task-status-cancelling { background: #f6f1e5; color: #8a6a34; }
+.task-status-group { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.task-stage { padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: #6f7c8e; font-size: 10px; }
 .task-card-body { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
 .task-message { margin: 0; font-size: 11px; line-height: 1.65; color: #556172; }
 .task-card-failed .task-message { color: #a94a44; }
@@ -297,6 +299,40 @@
 .task-progress { height: 5px; border-radius: 999px; background: #eef1f6; overflow: hidden; }
 .task-progress span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #5269ef, #60d8bd); transition: width .4s ease; }
 .task-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: #98a2b1; font-size: 10px; }
+.task-reuse { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 7px 10px; border: 1px dashed #dfe4ec; border-radius: 8px; background: #fbfcfe; color: #66727f; font-size: 10px; }
+.task-logs { margin-top: 10px; border: 1px solid var(--line); border-radius: 9px; background: #fbfcfe; overflow: hidden; }
+.task-logs-head { display: flex; align-items: center; gap: 10px; padding: 8px 11px; border-bottom: 1px solid #eef1f6; }
+.task-logs-head b { font-size: 11px; color: #556172; }
+.task-logs-head span { margin-right: auto; color: #98a2b1; font-size: 10px; }
+.task-logs-body { margin: 0; padding: 10px 12px; max-height: 260px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; line-height: 1.6; color: #4a5563; white-space: pre-wrap; word-break: break-word; }
+.render-estimate { display: flex; flex-direction: column; gap: 10px; margin: 0 0 14px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfe; }
+.render-estimate-body { display: flex; flex-direction: column; gap: 10px; }
+.render-estimate-body.render-estimate-danger { padding: 10px; border-radius: 9px; background: #fffafa; box-shadow: inset 0 0 0 1px #f1d6d4; }
+.render-estimate-head { display: flex; align-items: center; gap: 10px; }
+.render-estimate-head b { font-size: 12px; color: #2f3947; }
+.render-estimate-head span { padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: #8f99a8; font-size: 9px; }
+.render-estimate-head .text-button { margin-left: auto; font-size: 10px; }
+.render-estimate-summary { margin: 0; font-size: 11px; line-height: 1.7; color: #556172; }
+.render-estimate-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 6px 12px; padding: 9px 11px; border: 1px solid #eef1f6; border-radius: 9px; background: #fff; }
+.render-estimate-stats span { display: flex; flex-direction: column; gap: 2px; font-size: 9px; color: #98a2b1; }
+.render-estimate-stats b { font-size: 11px; color: #39424f; }
+.render-estimate-reasons { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.render-estimate-reasons li { display: flex; flex-direction: column; gap: 2px; padding: 7px 10px; border-left: 2px solid #d8dee8; background: #fff; border-radius: 0 7px 7px 0; }
+.render-estimate-reasons li.new { border-left-color: #d3716c; }
+.render-estimate-reasons li.changed { border-left-color: #5269ef; }
+.render-estimate-reasons b { font-size: 10px; color: #4a5563; }
+.render-estimate-reasons span { font-size: 9px; color: #8f99a8; }
+.render-estimate-findings { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.render-estimate-findings li { display: flex; gap: 8px; padding: 7px 10px; border-radius: 8px; font-size: 10px; line-height: 1.6; }
+.render-estimate-findings li b { flex: 0 0 auto; }
+.render-estimate-findings li span { display: flex; flex-direction: column; gap: 2px; }
+.render-estimate-findings li em { font-style: normal; color: #8a6a34; }
+.render-estimate-findings .finding-danger { background: #fff0ef; color: #a94a44; }
+.render-estimate-findings .finding-warning { background: #fdf6e8; color: #8a6a34; }
+.render-estimate-findings .finding-info { background: #f1f3f7; color: #6f7c8e; }
+.render-risk-card { margin: 0 0 12px; }
+.render-risk-card ul { margin: 6px 0 10px; padding-left: 18px; display: grid; gap: 4px; }
+.render-risk-card li { font-size: 11px; line-height: 1.5; }
 .task-chapters { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 2px 10px; margin: 2px 0 0; padding: 8px 10px; list-style: none; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); max-height: 168px; overflow: auto; }
 .task-chapters li { display: flex; align-items: center; gap: 7px; padding: 4px 2px; font-size: 10px; color: #7c8798; }
 .task-chapters li i { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 50%; background: #e9edf4; color: #8b96a6; font-size: 9px; font-style: normal; }
