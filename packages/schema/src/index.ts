@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } from './delivery';
 
-export const SceneTypeSchema = z.enum(['title', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'media']);
+export const SceneTypeSchema = z.enum(['title', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'table', 'media']);
 export const StyleIdSchema = z.enum(['minimal-tech', 'clean-light', 'academic', 'social-short', 'whiteboard']);
 
 export const PronunciationRuleSchema = z.object({
@@ -58,6 +58,9 @@ export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
   }
   if (scene.type === 'timeline' && (!Array.isArray(scene.visual.items) || scene.visual.items.length < 2)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'timeline 场景至少需要两个时间节点' });
+  }
+  if (scene.type === 'table' && (!Array.isArray(scene.visual.headers) || scene.visual.headers.length < 1 || !Array.isArray(scene.visual.rows) || scene.visual.rows.length < 1 || !scene.visual.rows.every(row => Array.isArray(row) && row.length === scene.visual.headers.length && row.every(cell => typeof cell === 'string')))) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual'], message: 'table 场景需要 headers 和列数一致的非空 rows' });
   }
   if (scene.type === 'math' && typeof scene.visual.formula !== 'string') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'formula'], message: 'math 场景需要公式文本' });
