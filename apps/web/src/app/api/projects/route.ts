@@ -26,7 +26,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
-    const input = { name: String(form.get('name') ?? ''), text: String(form.get('text') ?? ''), styleId: String(form.get('styleId') ?? 'minimal-tech'), aspectRatio: String(form.get('aspectRatio') ?? '16:9'), importMode: String(form.get('importMode') ?? 'rebuild'), file: form.get('file') instanceof File ? form.get('file') as File : null, preferLocalAI: form.get('preferLocalAI') === 'true' };
+    const input = { name: String(form.get('name') ?? ''), text: String(form.get('text') ?? ''), styleId: String(form.get('styleId') ?? 'minimal-tech'), aspectRatio: String(form.get('aspectRatio') ?? '16:9'), importMode: String(form.get('importMode') ?? 'rebuild'), generationMode: String(form.get('generationMode') ?? 'standard'), file: form.get('file') instanceof File ? form.get('file') as File : null, preferLocalAI: form.get('preferLocalAI') === 'true' };
     const project = await createProject(input);
     after(async () => processProject(project.id, 'extracting', input.preferLocalAI));
     return NextResponse.json({ id: project.id, status: project.status }, { status: 202 });
