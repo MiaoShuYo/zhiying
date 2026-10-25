@@ -103,7 +103,7 @@ export function sanitizeSceneHtml(input: string): string {
     if (className && /^[\w\s-]{1,120}$/.test(className)) attrs.push(`class="${className}"`);
     const style = /\bstyle\s*=\s*(["'])(.*?)\1/i.exec(rawAttrs)?.[2];
     if (style) {
-      const allowed = new Set(['color', 'background', 'background-color', 'font-size', 'font-weight', 'text-align', 'line-height', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin', 'border', 'border-radius', 'display', 'flex', 'flex-direction', 'gap', 'align-items', 'justify-content', 'width', 'max-width', 'height', 'grid-template-columns', 'box-shadow']);
+      const allowed = new Set(['color', 'background', 'background-color', 'font-size', 'font-weight', 'text-align', 'line-height', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin', 'border', 'border-top', 'border-radius', 'display', 'flex', 'flex-direction', 'flex-wrap', 'gap', 'align-items', 'justify-content', 'width', 'min-width', 'max-width', 'height', 'grid-template-columns', 'box-shadow', 'box-sizing', 'border-collapse']);
       const declarations = style.split(';').flatMap(rule => {
         const colon = rule.indexOf(':');
         if (colon < 1) return [];
