@@ -66,7 +66,7 @@ test('very long narration gets a rewrite warning and belongs to the narration ch
 });
 
 test('manual cues that overflow or overrun the scene are warned with a scene pointer', () => {
-  const long = preflight(board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: [{ text: '字幕'.repeat(20), start: 0, end: 2 }] })]), []);
+  const long = preflight(board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: [{ text: '字幕'.repeat(60), start: 0, end: 2 }] })]), []);
   assert.equal(long.issues[0].code, 'caption_overflow');
   assert.equal(long.issues[0].severity, 'warning');
   assert.equal(long.blocking, 0);
@@ -77,7 +77,7 @@ test('manual cues that overflow or overrun the scene are warned with a scene poi
 });
 
 test('portrait output uses the narrower caption limit', () => {
-  const text = '一'.repeat(30);
+  const text = '一'.repeat(70);
   const cues = [{ text, start: 0, end: 2 }];
   const wide = preflight(board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: cues })]), []);
   const tall = preflight(board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: cues })], { aspectRatio: '9:16' }), []);
@@ -86,7 +86,7 @@ test('portrait output uses the narrower caption limit', () => {
 });
 
 test('narration with an unbreakable run warns about automatic captions', () => {
-  const result = preflight(board([scene({ narration: '一'.repeat(50), audioSrc: 'audio/a.wav', audioDuration: 6 })]), []);
+  const result = preflight(board([scene({ narration: 'W'.repeat(220), audioSrc: 'audio/a.wav', audioDuration: 6 })]), []);
   assert.equal(result.issues[0].code, 'caption_overflow');
   assert.equal(result.issues[0].sceneIndex, 0);
 });
