@@ -4,6 +4,12 @@ import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } 
 export const SceneTypeSchema = z.enum(['title', 'text', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'table', 'media', 'html']);
 export const StyleIdSchema = z.enum(['minimal-tech', 'clean-light', 'academic', 'social-short', 'whiteboard']);
 
+export const SceneSourceRefSchema = z.object({
+  chapterIndex: z.number().int().nonnegative(),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  page: z.number().int().min(1).optional(),
+});
+
 export const PronunciationRuleSchema = z.object({
   text: z.string().regex(/^[\u3400-\u9fff]{1,80}$/, '纠音词组需为 1 到 80 个汉字'),
   pinyin: z.array(z.string().regex(/^[a-züv]+[1-5]$/, '请填写带声调数字的拼音，如 hang2')).min(1).max(80),
@@ -38,6 +44,7 @@ const BaseSceneSchema = z.object({
   wordTimings: z.array(z.object({ text: z.string(), start: z.number().nonnegative(), end: z.number().positive() })).optional(),
   subtitleCues: z.array(SubtitleCueSchema).max(60).optional(),
   sourcePage: z.number().int().min(1).optional(),
+  sourceRef: SceneSourceRefSchema.optional(),
   visual: z.record(z.unknown()).default({}),
   animation: z.string().optional(),
   styleOverride: z.record(z.unknown()).optional(),
