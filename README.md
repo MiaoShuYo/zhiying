@@ -131,6 +131,14 @@
 - Markdown 表格的完整数据由本地解析并写入画面，模型只生成旁白；旁白会校验来源数值，避免模型改写表格数据或引入无依据的数字。
 - Ollama 请求记录首 token 延迟、提示词及缓存 token 数、生成 token 数、加载和推理耗时、吞吐率，以及逐章重试和回退场景数，便于诊断长文生成表现。
 
+### V1.6.4 本地 CPU 推理与 PPT 保留画面
+
+- PPTX 选择“保留原页画面”时，无论使用普通还是 HTML 生成方式，模型都只生成每页旁白；演讲者备注优先作为旁白依据，画面由系统本地沿用对应幻灯片图片。旁白无效时只回退该页，任务续跑会复用已完成页。
+- Web 与 Python 服务共用本地 Ollama 配置和跨进程推理并发槽位。可设置 `OLLAMA_KEEP_ALIVE`、`OLLAMA_NUM_CTX`、`OLLAMA_STREAM` 和 `LLM_MAX_CONCURRENCY`；默认值分别为 `30m`、`4096`、`true` 和 `1`，并发可设为 1–4。配置会校验并在无效时回退默认值，避免多个请求同时争抢 CPU 推理资源。
+- 多音字预测使用每批 32 个目标、`num_predict=384` 的实测配置；保留结构化读音校验、词典和人工纠音优先级。单批模型请求失败时该批使用词典读音，并继续处理后续批次。
+- HTML 画面保留正文中的手动换行；新生成的 HTML 文本将换行显式渲染，已保存的 HTML 场景也会保留换行。
+- 完成 `qwen3:4b` 与 `qwen3:4b-instruct-2507-q4_K_M` 的本机 CPU 对比。当前默认继续使用 `qwen3:4b`，Instruct 可通过 `OLLAMA_MODEL` 选用；单机测试结果和质量限制见 [Qwen3 4B CPU 基准](docs/benchmarks/qwen3-4b-cpu.md)。
+
 应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
 
 ## 基本使用流程
@@ -336,7 +344,17 @@ Web 配置位于 `apps/web/.env`；可复制 `apps/web/.env.example` 后修改�
 | `DATABASE_URL` | `file:../../../data/m2v.db` | Prisma SQLite 数据库地址 |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 本地 API |
 | `OLLAMA_MODEL` | `qwen3:4b` | 资料分析和分镜模型 |
+| `OLLAMA_KEEP_ALIVE` | `30m` | 模型在请求后保留时间；设为 `0` 可关闭保活 |
+| `OLLAMA_NUM_CTX` | `4096` | 每次本地推理的上下文上限（允许 512–32768） |
+| `OLLAMA_STREAM` | `true` | Ollama 是否以流式响应；应用会完整读取后再校验 JSON |
+| `LLM_MAX_CONCURRENCY` | `1` | Web 和 Python 共享的本机 Ollama generation 槽位数（允许 1–4） |
 | `PYTHON_SERVICE_URL` | `http://127.0.0.1:8000` | PDF 解析和 TTS 服务 |
+
+### 纯 CPU 推理建议
+
+Qwen3 4B 的 Q4_K_M 量化适合本地 CPU 使用；32 GB 内存通常能为模型及项目本身留出合理空间。普通分镜建议从 `OLLAMA_NUM_CTX=4096` 开始，不要默认开超长上下文。保持 `LLM_MAX_CONCURRENCY=1`，避免多次 generation 同时争抢 CPU 缓存和内存带宽；文件读写、数据库和 FFmpeg 工作仍可并行。`OLLAMA_KEEP_ALIVE=30m` 可减少连续任务间的重复加载，内存较紧时可缩短或设为 `0`。流式与非流式均可配置，应在目标机器上用应用日志中的 load、prompt、decode 与 wall-time 指标进行对比，不假设 stream 会提升 tok/s。Windows 笔记本进行基准测量时建议接入电源并使用合适的性能模式；实际速度取决于设备和系统负载，不设单一 CPU 的速度门槛。
+
+如需在本机试用 Instruct 版本，可先运行 `ollama pull qwen3:4b-instruct-2507-q4_K_M`，再将 `apps/web/.env` 中的 `OLLAMA_MODEL` 改为 `qwen3:4b-instruct-2507-q4_K_M`。当前默认仍为 `qwen3:4b`。在单台 Intel Core Ultra 5 125H CPU、Ollama 0.40.13 的 A/B 基准中，Instruct 的普通分镜、HTML、重生成和 PPT Preserve warm wall P50 分别快 13.2%、22.3%、29.5% 和 27.7%；HTML 结构 fallback 为 0/60（原模型 7/60）。多音字正确率为 79.69%（原模型 80.73%），warm wall P50 为 241.9 秒（原模型 159.9 秒），所以此结果支持将其作为可选项，不足以替换默认模型。详细条件、模型 digest、质量复核和原始数据见 [Qwen3 4B CPU 基准](docs/benchmarks/qwen3-4b-cpu.md)。
 
 Python 服务可使用 Windows 用户环境变量：
 
