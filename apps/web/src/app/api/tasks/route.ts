@@ -81,7 +81,7 @@ export async function GET(request: Request) {
       kind: job.kind,
       status: job.status,
       stage: job.stage,
-      stageLabel: renderStageLabel(job.stage),
+      stageLabel: job.kind === 'tts' && job.stage === 'aligning_captions' ? '补齐逐词字幕' : renderStageLabel(job.stage),
       failedStage: job.failedStage,
       failedStageLabel: renderStageLabel(job.failedStage),
       failureCode: job.failureCode,

@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { readPronunciationRules } from '@/lib/pronunciation';
 import { readLocalLlmConfig } from '@/lib/local-llm-config';
 export const runtime = 'nodejs';
+const PYTHON_SYNTHESIS_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params, body = await request.json();
@@ -19,7 +20,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     form.set('pronunciation_scopes', JSON.stringify([await readPronunciationRules(), board.pronunciationRules ?? [], (scene.pronunciationOverrides ?? []).filter(rule => !rule.occurrence)]));
     const llm = readLocalLlmConfig();
     form.set('pronunciation_base', llm.baseUrl); form.set('pronunciation_model', llm.model); form.set('pronunciation_keep_alive', llm.keepAlive); form.set('pronunciation_num_ctx', String(llm.numCtx)); form.set('pronunciation_stream', String(llm.stream)); form.set('pronunciation_concurrency', String(llm.maxConcurrency)); form.set('pronunciation_lock_dir', llm.lockDir);
-    const response = await fetch(`${process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000'}/synthesize`, { method: 'POST', body: form, signal: AbortSignal.timeout(1_800_000) });
+    const response = await fetch(`${process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000'}/synthesize`, { method: 'POST', body: form, signal: AbortSignal.timeout(PYTHON_SYNTHESIS_TIMEOUT_MS) });
     const result = await response.json(); if (!response.ok || !result.audioPath) throw new Error(result.detail ?? '试听生成失败');
     const audioRoot = resolve(process.cwd(), 'public/audio'); await mkdir(audioRoot, { recursive: true });
     const filename = `${id}-preview-${randomUUID()}.wav`; await copyFile(result.audioPath, join(audioRoot, filename));
