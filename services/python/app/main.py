@@ -25,6 +25,7 @@ import xml.etree.ElementTree as ET
 
 import pymupdf
 from app.presentation import converters, presentation_capabilities, MISSING_RENDERER
+from app.local_llm_config import local_llm_config
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
@@ -174,7 +175,7 @@ class TTSProvider(Protocol):
     def synthesize(self, *, ref_file: Path, ref_text: str, text: str, output: Path, speed: float) -> None: ...
 
 class F5TTSProvider:
-    def synthesize(self, *, ref_file: Path, ref_text: str, text: str, output: Path, speed: float, sentence_pause: float = 0.12, pronunciation_scopes=None, pronunciation_base=None, pronunciation_model=None) -> list[str]:
+    def synthesize(self, *, ref_file: Path, ref_text: str, text: str, output: Path, speed: float, sentence_pause: float = 0.12, pronunciation_scopes=None, pronunciation_base=None, pronunciation_model=None, pronunciation_runtime=None) -> list[str]:
         missing_tools = [tool for tool in ("ffmpeg", "ffprobe") if shutil.which(tool) is None]
         if missing_tools:
             missing = "、".join(f"{tool}.exe" for tool in missing_tools)
@@ -209,8 +210,9 @@ class F5TTSProvider:
         normalized = ' '.join(segments)
         readings, pronunciation_warnings = resolve_pronunciation(
             normalized, pronunciation_scopes or [],
-            pronunciation_base or os.environ.get('OLLAMA_BASE_URL', 'http://127.0.0.1:11434'),
-            pronunciation_model or os.environ.get('OLLAMA_MODEL', 'qwen3:4b'),
+            pronunciation_base or local_llm_config()['base_url'],
+            pronunciation_model or local_llm_config()['model'],
+            pronunciation_runtime,
         )
         with tempfile.TemporaryDirectory(dir=AUDIO_DIR) as temp_dir:
             prompt_path = Path(temp_dir) / "reference.wav"
@@ -761,7 +763,7 @@ async def create_voice(audio: UploadFile | None = File(None), transcript: str = 
     return {"id": safe_id, "audioPath": str(target), "transcript": transcript, "provider": "f5-tts"}
 
 @app.post("/synthesize")
-async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: float = Form(1.0), sentence_pause: float = Form(0.12), pronunciation_scopes: str = Form('[]'), pronunciation_base: str = Form('http://127.0.0.1:11434'), pronunciation_model: str = Form('qwen3:4b')):
+async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: float = Form(1.0), sentence_pause: float = Form(0.12), pronunciation_scopes: str = Form('[]'), pronunciation_base: str | None = Form(None), pronunciation_model: str | None = Form(None), pronunciation_keep_alive: str | None = Form(None), pronunciation_num_ctx: int | None = Form(None), pronunciation_stream: bool | None = Form(None), pronunciation_concurrency: int | None = Form(None), pronunciation_lock_dir: str | None = Form(None)):
     if not 0.5 <= speed <= 3 or not 0 <= sentence_pause <= 3:
         raise HTTPException(400, "语速或停顿超出范围")
     if not await run_in_threadpool(_tts_available):
@@ -795,6 +797,11 @@ async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: fl
                 pronunciation_scopes=scopes,
                 pronunciation_base=pronunciation_base,
                 pronunciation_model=pronunciation_model,
+                pronunciation_runtime={
+                    'keep_alive': pronunciation_keep_alive, 'num_ctx': pronunciation_num_ctx,
+                    'stream': pronunciation_stream, 'max_concurrency': pronunciation_concurrency,
+                    'lock_dir': pronunciation_lock_dir,
+                },
             )
     except Exception as exc:
         raise HTTPException(500, f"F5-TTS 生成失败：{exc}") from exc

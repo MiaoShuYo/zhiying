@@ -8,13 +8,15 @@ import { db } from '@/lib/db';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 import { StoryboardSchema } from '@m2v/schema';
 import { readPronunciationRules } from '@/lib/pronunciation';
+import { readLocalLlmConfig } from '@/lib/local-llm-config';
 export const runtime = 'nodejs';
 
 type SynthesisResult = { ok: boolean; audioPath?: string; duration?: number; error?: string; detail?: string; warnings?: string[] };
 
 function requestSynthesis(service: string, text: string, voiceId: string, speed: number, scopes: unknown[], pause: number): Promise<SynthesisResult> {
   const endpoint = new URL(`${service.replace(/\/$/, '')}/synthesize`);
-  const payload = new URLSearchParams({ text, voice_id: voiceId, speed: String(speed), sentence_pause: String(pause), pronunciation_scopes: JSON.stringify(scopes), pronunciation_base: process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434', pronunciation_model: process.env.OLLAMA_MODEL ?? 'qwen3:4b' }).toString();
+  const llm = readLocalLlmConfig();
+  const payload = new URLSearchParams({ text, voice_id: voiceId, speed: String(speed), sentence_pause: String(pause), pronunciation_scopes: JSON.stringify(scopes), pronunciation_base: llm.baseUrl, pronunciation_model: llm.model, pronunciation_keep_alive: llm.keepAlive, pronunciation_num_ctx: String(llm.numCtx), pronunciation_stream: String(llm.stream), pronunciation_concurrency: String(llm.maxConcurrency), pronunciation_lock_dir: llm.lockDir }).toString();
   const transport = endpoint.protocol === 'https:' ? httpsRequest : httpRequest;
   return new Promise((resolveRequest, rejectRequest) => {
     const request = transport(endpoint, {

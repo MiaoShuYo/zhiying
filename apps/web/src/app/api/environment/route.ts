@@ -5,6 +5,7 @@ import { createConnection } from 'node:net';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { db } from '@/lib/db';
+import { readLocalLlmConfig } from '@/lib/local-llm-config';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const exec = promisify(execFile);
@@ -28,9 +29,15 @@ function processAlive(pid: number) {
 }
 export async function GET() {
   const checks: Raw[] = [];
+  const localLlm = readLocalLlmConfig();
+  checks.push({
+    name: '本地推理配置', ok: localLlm.warnings.length === 0, warn: localLlm.warnings.length > 0,
+    detail: `模型：${localLlm.model} · Thinking：关闭 · Context：${localLlm.numCtx} · 并发：${localLlm.maxConcurrency} · Keep alive：${localLlm.keepAlive} · Stream：${localLlm.stream ? '开启' : '关闭'}${localLlm.warnings.length ? `；配置回退：${localLlm.warnings.join('；')}` : ''}`,
+    fix: '检查 apps/web/.env.example 中 OLLAMA_KEEP_ALIVE、OLLAMA_NUM_CTX、OLLAMA_STREAM 和 LLM_MAX_CONCURRENCY 的取值',
+  });
   const tasks = await Promise.allSettled([
     fetch(`${process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000'}/health`, { signal: AbortSignal.timeout(20_000), cache: 'no-store' }).then(async response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }),
-    fetch(`${process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434'}/api/tags`, { signal: AbortSignal.timeout(5000), cache: 'no-store' }).then(async response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }),
+    fetch(`${localLlm.baseUrl}/api/tags`, { signal: AbortSignal.timeout(5000), cache: 'no-store' }).then(async response => { if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }),
     exec('ffmpeg', ['-version'], { windowsHide: true, timeout: 5000 }),
     exec('ffprobe', ['-version'], { windowsHide: true, timeout: 5000 }),
     readFile(resolve(process.cwd(), '../../data/worker-heartbeat.json'), 'utf8').then(raw => JSON.parse(raw) as { time: number; pid: number }),
@@ -41,7 +48,7 @@ export async function GET() {
     ['tts', 'F5-TTS 依赖', '在 services/python 执行 uv sync --extra tts'], ['ttsModels', 'TTS 模型文件', '检查 data/models/f5-tts 内模型和声码器文件是否完整'],
     ['torchcodec', 'TorchCodec', '检查 FFmpeg 8 full-shared、PyTorch 与 TorchCodec 兼容性后重启 Python 服务'], ['ffmpegCompatible', 'Python FFmpeg 兼容性', '将 FFmpeg 8 full-shared/bin 加入 Python 服务的 PATH 并重启'], ['ocr', '扫描 PDF OCR', '安装 Tesseract 及 chi_sim、eng 语言包；标准安装路径会自动识别，其他安装路径可设置 TESSDATA_PREFIX 后重启 Python 服务'],
   ]) checks.push({ name, ok: python.value[key] === true, detail: python.value[key] === true ? '可用' : key === 'torchcodec' ? String(python.value.torchcodecError ?? '不可用') : '缺失或不可用', fix });
-  const ollama = tasks[1], model = process.env.OLLAMA_MODEL ?? 'qwen3:4b';
+  const ollama = tasks[1], model = localLlm.model;
   checks.push({ name: 'Ollama 服务', ok: ollama.status === 'fulfilled', detail: ollama.status === 'fulfilled' ? '已连接' : String(ollama.reason), fix: '启动 Ollama，并检查 OLLAMA_BASE_URL' });
   checks.push({ name: `分镜模型 ${model}`, ok: ollama.status === 'fulfilled' && ollama.value.models?.some((item: { name: string }) => item.name === model || item.name === `${model}:latest`), detail: ollama.status === 'fulfilled' ? ollama.value.models?.map((item: { name: string }) => item.name).join('、') || '未安装模型' : '服务不可用，无法检测', fix: `执行 ollama pull ${model}` });
   for (const [index, name] of [[2, 'FFmpeg'], [3, 'ffprobe']] as const) { const result = tasks[index]; checks.push({ name, ok: result.status === 'fulfilled', detail: result.status === 'fulfilled' ? result.value.stdout.split('\n')[0] : String(result.reason), fix: '将 FFmpeg 8 full-shared/bin 加入 Web/Worker 进程 PATH 后重启' }); }
@@ -73,7 +80,7 @@ export async function GET() {
   } catch (error) { diskDetail = `无法读取磁盘信息：${String(error)}`; }
   checks.push({ name: '磁盘空间', ok: diskOk, warn: diskWarn, detail: diskDetail, fix: '清理 data/projects 下不再需要的项目与导出文件后重新检查（渲染和语音合成都需要数 GB 临时空间）' });
   const pythonPort = Number(new URL(process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000').port || 8000);
-  const ollamaPort = Number(new URL(process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434').port || 11434);
+  const ollamaPort = Number(new URL(localLlm.baseUrl).port || 11434);
   const webPort = Number(process.env.PORT ?? 3000);
   const [webUp, pythonUp, ollamaUp] = await Promise.all([portOpen(webPort), portOpen(pythonPort), portOpen(ollamaPort)]);
   const portRows = [{ port: webPort, name: 'Web', up: webUp }, { port: pythonPort, name: 'Python', up: pythonUp }, { port: ollamaPort, name: 'Ollama', up: ollamaUp }];

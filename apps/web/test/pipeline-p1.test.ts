@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildModelStoryboardScene,
+  buildPreserveNarrationPrompt,
+  buildPreserveNarrationRequestPayload,
+  buildPreservedSlideScene,
   buildStoryboardSceneOrFallback,
   buildRegenerateScenePrompt,
   buildStoryboardPrompt,
@@ -15,6 +18,7 @@ import {
   OllamaStoryboardOutputError,
   readOllamaChatResponse,
   recoverStoryboardBatch,
+  reusableStoryboardCheckpointScenes,
   regenerateOutputSchema,
   storyboardNumPredict,
   storyboardOutputSchema,
@@ -78,6 +82,75 @@ test('scene generation preserves common text, bullets, chart, timeline, math and
 test('output token budget scales with scene count and contract size', () => {
   assert.deepEqual([1, 2, 3].map(count => storyboardNumPredict(count)), [1536, 2304, 3072]);
   assert.deepEqual([1, 2, 3].map(count => storyboardNumPredict(count, true)), [1024, 1536, 2048]);
+});
+
+test('storyboard requests apply the explicit local Ollama runtime profile', () => {
+  const names = ['OLLAMA_KEEP_ALIVE', 'OLLAMA_NUM_CTX', 'OLLAMA_STREAM', 'LLM_MAX_CONCURRENCY'] as const;
+  const previous = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    for (const name of names) delete process.env[name];
+    const payload = buildStoryboardRequestPayload('主题', [{ title: '一章', text: '这是用于检验本地模型请求配置的章节资料。' }]);
+    assert.equal(payload.stream, true);
+    assert.equal(payload.keep_alive, '30m');
+    assert.equal(payload.options.num_ctx, 4096);
+  } finally {
+    for (const name of names) {
+      const value = previous[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
+test('PPT preserve requests only per-slide narration and prioritize speaker notes', () => {
+  const chapters = [
+    { title: '第 1 页：标题', text: '页面正文：页面正文内容。\n演讲者备注（优先作为旁白依据）：备注里的重点。', page: 1 },
+    { title: '第 2 页：数据', text: '页面正文：第二页正文。', page: 2 },
+  ];
+  const payload = buildPreserveNarrationRequestPayload('演示主题', chapters, 'qwen3:4b-test');
+  const prompt = buildPreserveNarrationPrompt('演示主题', chapters);
+  const format = payload.format as { properties: { scenes: { items: { properties: Record<string, unknown>; additionalProperties?: boolean } } } };
+  assert.deepEqual(format.properties.scenes.items.properties, { narration: { type: 'string' } });
+  assert.match(prompt, /按输入顺序每页生成且仅生成一段旁白/);
+  assert.match(prompt, /优先遵循演讲者备注/);
+  assert.match(prompt, /不要输出 type、visual、id、title、duration/);
+  assert.match(prompt, /备注里的重点/);
+  assert.equal(payload.model, 'qwen3:4b-test');
+  assert.equal(payload.options.num_predict, 1536);
+});
+
+test('PPT preserve locally assembles media scene and falls back only for invalid narration', () => {
+  const chapter = { title: '幻灯片标题', text: '本页讲解输入、处理步骤和结果。', page: 3 };
+  const generated = buildPreservedSlideScene(chapter, { narration: '旁白说明本页的核心内容。', visual: { text: '模型生成的视觉内容应被忽略。' }, type: 'text' }, 'projects/demo/assets/slide-3.png');
+  assert.equal(generated.fallbackUsed, false);
+  assert.equal(generated.scene.type, 'media');
+  assert.equal(generated.scene.title, '幻灯片标题');
+  assert.equal(generated.scene.narration, '旁白说明本页的核心内容。');
+  assert.deepEqual(generated.scene.visual, { src: 'projects/demo/assets/slide-3.png', fullBleed: true });
+  assert.equal(generated.scene.sourcePage, 3);
+  assert.equal(generated.scene.duration, Math.max(12, [...generated.scene.narration].length / 5));
+
+  for (const invalid of [undefined, null, {}, { narration: '   ' }, { narration: 42 }]) {
+    const fallback = buildPreservedSlideScene(chapter, invalid, 'projects/demo/assets/slide-3.png');
+    assert.equal(fallback.fallbackUsed, true);
+    assert.equal(fallback.scene.type, 'media');
+    assert.equal(fallback.scene.visual.src, 'projects/demo/assets/slide-3.png');
+    assert.ok(fallback.scene.narration.length > 0);
+  }
+});
+
+test('PPT preserve checkpoints reuse complete media pages and reject stale or old-shape scenes', () => {
+  const chapters = [
+    { title: '第 1 页', text: '第一页内容。', page: 1 },
+    { title: '第 2 页', text: '第二页内容。', page: 2 },
+  ];
+  const cachedScenes = chapters.map((chapter, index) => buildPreservedSlideScene(chapter, { narration: `第 ${index + 1} 页旁白。` }, `projects/demo/assets/slide-${index + 1}.png`).scene);
+  const cached = { key: 'preserve-key', completedChapters: 2, scenes: cachedScenes };
+  const reused = reusableStoryboardCheckpointScenes(cached, 'preserve-key', [2, 4], 'html', true);
+  assert.deepEqual(reused.map(scene => scene.visual.src), ['projects/demo/assets/slide-1.png', 'projects/demo/assets/slide-2.png']);
+  assert.equal(reusableStoryboardCheckpointScenes(cached, 'changed-key', [2, 4], 'html', true).length, 0);
+  assert.equal(reusableStoryboardCheckpointScenes({ ...cached, scenes: [cachedScenes[0], { ...cachedScenes[1], type: 'text', visual: { text: '旧的完整场景缓存' } }] }, 'preserve-key', [2, 4], 'html', true).length, 0);
+  assert.equal(reusableStoryboardCheckpointScenes({ ...cached, completedChapters: 1 }, 'preserve-key', [2, 4], 'html', true).length, 0);
 });
 
 test('table chapters are grouped separately for the narration-only contract', () => {
@@ -225,6 +298,11 @@ test('stream reader collects final-chunk metrics and supports older responses wi
   assert.deepEqual(older.metrics, {});
   assert.equal(older.message?.content, 'ok');
   assert.ok(older.first_token_ms !== undefined);
+
+  const nonStreaming = await readOllamaChatResponse(new Response(JSON.stringify({ message: { content: '{"scenes":[]}' }, done: true, done_reason: 'stop', total_duration: 12_000_000, prompt_eval_count: 4, eval_count: 3, eval_duration: 5_000_000 })));
+  assert.equal(nonStreaming.message?.content, '{"scenes":[]}');
+  assert.equal(nonStreaming.done_reason, 'stop');
+  assert.deepEqual(nonStreaming.metrics, { total_duration: 12_000_000, prompt_eval_count: 4, eval_count: 3, eval_duration: 5_000_000 });
 });
 
 test('metrics convert ns to ms and tok/s, and zero durations never produce non-finite rates', () => {
