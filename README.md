@@ -49,6 +49,19 @@
 - 首页环境自检检查 Python 服务、Ollama 服务及所需模型、FFmpeg/ffprobe、F5-TTS 模型与依赖、OCR 和渲染 Worker，并给出诊断及修复提示；不会自动下载模型或安装系统依赖。
 - 长文生成和渲染任务会保留状态、进度、错误或检查点；可在项目列表或项目页面查看并继续/重试适用的任务。
 
+### 品牌套件与项目快照
+
+- Brand Kit 通过本地 JSON 存储和 settings API 管理，支持创建、更新、重命名、复制、设为默认和删除，最多保存 30 个；Logo 上传支持 PNG、JPG/JPEG 和 WebP（最大 5 MiB），会校验实际图片格式与尺寸。
+- 故事板保存 `brandKitId` 来源记录和独立的 Brand Snapshot。渲染只使用项目快照中的基础风格、品牌颜色、字体和 Logo，不依赖当前品牌库内容。
+- 受管理的 Logo 会复制到项目自己的素材目录；项目快照与 `.m2v` 项目包携带被引用的 Logo，恢复后重映射到项目副本。因此品牌套件被修改或删除后，已保存项目仍可复现。
+- 当前提供存储、API、快照和渲染支持，尚未提供选择或应用 Brand Kit 的界面。
+
+### V1.2–V1.6.5 版本摘要
+
+- **V1.2–V1.5：** 可控性、恢复、质检交付、稳定性、制作效率与成片精修，详见下方各版本记录。
+- **V1.6 — 长项目渲染可靠性：** 增加渲染前估算、片段缓存与增量渲染、阶段日志、中断恢复和任务中心集中查看。
+- **V1.6.5 — 品牌套件与可复现快照：** 增加 Brand Kit Schema、本地存储和 CRUD/Logo API；故事板保存品牌快照，项目渲染与备份恢复使用项目自己的 Logo 副本。
+
 ### V1.2 可控性与恢复
 
 - 字幕时间轴上可直接编辑每条字幕的文本与起止时间，修改后立即在预览生效；SRT、VTT、ASS 导出与画面字幕共用同一份时间轴。旁白、语速或停顿变化后手动时间轴自动失效，回到自动切分。
@@ -340,8 +353,9 @@ pnpm test:v14     # V1.4 稳定性测试（四态质检、交付包记录、导�
 pnpm test:v14:integration  # V1.4 全链路集成测试（含真实 MP4 与 ZIP，需 FFmpeg）
 pnpm test:v15     # V1.5 制作效率与成片精修测试（导出检查归并、导出流程、批量、制作方案、Range 解析）
 pnpm test:v15:integration  # V1.5 集成测试（真实路由与数据库，无需 FFmpeg）
-pnpm test:v16     # V1.6 长项目渲染测试（片段指纹与计划、估算、任务中心、作业日志）
-pnpm test:v16:integration  # V1.6 集成测试（估算门禁、增量渲染、续跑重试、日志接口）
+pnpm test:v16     # V1.6/V1.6.5 单元、API 与面板测试
+pnpm test:v16:integration  # V1.6/V1.6.5 集成测试（含品牌套件 API、项目快照及备份恢复）
+pnpm test:v16:render  # V1.6.5 Remotion 实际渲染验证（品牌快照样式与 Logo）
 pnpm db:migrate:v16  # 只补 V1.6 新增的可空列，旧库可平滑升级
 pnpm db:generate  # 生成 Prisma Client
 pnpm db:push      # 同步 SQLite 数据库结构
@@ -355,7 +369,7 @@ pnpm db:push      # 同步 SQLite 数据库结构
 
 ## 支持范围与限制
 
-当前支持 PDF/PPTX/Markdown/公开文章 URL/粘贴文本输入，16:9 与 9:16 输出，title/bullets/diagram/comparison/chart/code/timeline/math/media 场景，Minimal Tech、Clean Light、Academic、Social Short 和 Whiteboard 五种风格，PPTX 双模式，场景编辑与重试，声音克隆、逐词字幕与字幕时间轴精修、Commons 图片、本地 BGM、实时预览、导出前检查、片头片尾与转场、任务中心恢复入口、素材占用与快照校验、项目搜索筛选排序、成片质检（字幕与语音）、成片文件校验、交付包 ZIP、导出预设和 MP4 导出。旧项目默认保持 16:9。品牌套件和云端模型 Provider 暂不支持。
+当前支持 PDF/PPTX/Markdown/公开文章 URL/粘贴文本输入，16:9 与 9:16 输出，title/bullets/diagram/comparison/chart/code/timeline/math/media 场景，Minimal Tech、Clean Light、Academic、Social Short 和 Whiteboard 五种风格，PPTX 双模式，场景编辑与重试，声音克隆、逐词字幕与字幕时间轴精修、Commons 图片、本地 BGM、实时预览、导出前检查、片头片尾与转场、任务中心恢复入口、素材占用与快照校验、项目搜索筛选排序、成片质检（字幕与语音）、成片文件校验、交付包 ZIP、导出预设、MP4 导出，以及 Brand Kit 本地 API 和项目级品牌快照。旧项目默认保持 16:9。Brand Kit 暂无选择/应用界面；云端模型 Provider 暂不支持。
 
 - **PDF**：优先读取可选择的文本；扫描页使用本地 Tesseract OCR，需要 chi_sim 与 eng 语言包及 TESSDATA_PREFIX。环境自检会显示缺失项；也可粘贴已识别的文字。
 - **网页**：仅支持无需登录的公开文章；本机、内网或非公开网络地址会被拒绝。页面抽取失败时可粘贴正文。
@@ -395,6 +409,16 @@ pnpm db:generate
 上一条报错会连带表现为 `.\start.ps1` 卡住：脚本等的是 `http://127.0.0.1:3000` 返回 2xx–4xx，500 会让它一直等到 120 秒超时。现在超时信息会说明是「已监听但返回 HTTP 500」，并指出该看哪个日志文件，而不再只报“等待服务启动超时”。真正的端口冲突也会直接列出端口和占用进程，例如 `端口已被其他进程占用：3000（占用进程：node (PID 1234)）`；`.\stop.ps1` 结束后若仍有非脚本启动的监听者，也会给出同样的提示。就绪探测用 `System.Net.Http.HttpClient` 取状态码，而不是 `Invoke-WebRequest`：`-SkipHttpErrorCheck` 只有 PowerShell 6+ 才有，Windows PowerShell 5.1 遇到非 2xx 会直接抛异常，于是健康检查会被误判成超时。`start.ps1` 与 `stop.ps1` 在 5.1 和 7 上都能运行。
 
 `next dev` 运行时不要执行 `pnpm build`（或 `apps/web` 的 `pnpm build`）：两者共用 `apps/web/.next`，生产构建会覆盖开发服务器正在使用的 server chunk，之后项目页会返回 500 并报 `Cannot find module './vendor-chunks/zod@<version>.js'`。遇到该报错先 `.\stop.ps1` 停掉服务，删除 `apps/web/.next`，再用 `.\start.ps1` 启动即可；需要生产构建时先停服务、构建完再重启开发服务。
+
+## V1.6.5：Brand Kit 与项目品牌快照
+
+`@m2v/schema` 定义并导出 Brand Kit 与 Brand Snapshot Schema；基础 `StyleIdSchema` 保持兼容。Brand Kit 存储在 `data/settings/brand-kits.json`，上限 30 个，并通过 `/api/settings/brand-kits` 提供 CRUD、复制与默认项管理。Logo 上传接口支持 PNG、JPG/JPEG、WebP，限制为 5 MiB 和 40 MP，拒绝 SVG、损坏图片及格式不匹配文件。
+
+故事板可保存可选的 `brandKitId` 和独立品牌快照。渲染按场景/故事板风格解析品牌主题，只从快照读取颜色、字体和 Logo；品牌库后续修改或删除不会影响既有项目。保存时受管理的 Logo 会复制并内容寻址到项目素材目录；快照和被引用 Logo 随项目快照及 `.m2v` 备份恢复，恢复不会覆盖全局 Brand Kit。`brandKitId` 仅保留来源信息，不参与渲染缓存指纹。未带品牌字段的旧 Storyboard 和旧格式项目包继续兼容。当前没有选择/应用 Brand Kit 的 UI。
+
+### V1.6.5 验证记录
+
+2026-11-06 自动化验收通过：`pnpm typecheck`、`pnpm test:v16`、`pnpm test:v16:integration` 和 `pnpm test:v16:render`。验证覆盖品牌 Schema、文件存储和 CRUD/Logo API、Logo 安全校验与清理、快照及备份路径重映射，并通过 Remotion 实际渲染确认品牌快照样式和 Logo 可用。
 
 ## V1.6：长项目渲染可靠性与恢复
 

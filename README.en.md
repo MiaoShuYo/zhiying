@@ -49,12 +49,21 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 - The home-page environment check diagnoses Python, Ollama and required models, FFmpeg/ffprobe, F5-TTS dependencies, OCR, and the render Worker. It provides guidance but does not automatically download models or install system dependencies.
 - Long-form generation and render tasks retain status, progress, errors, and checkpoints. Suitable tasks can be resumed or retried from the project list or project page.
 
-### V1.2–V1.5 highlights
+### Brand kits and project snapshots
+
+- Brand Kits use local JSON storage and a settings API for create, update, rename, duplicate, default selection, and deletion, with a limit of 30 kits.
+- Logo upload accepts PNG, JPG/JPEG, and WebP up to 5 MiB, and validates the decoded image format and dimensions (up to 40 megapixels).
+- Storyboards can save a source `brandKitId` and an independent Brand Snapshot. Rendering reads the snapshot's base style, colors, fonts, and Logo, so later Brand Kit edits or deletion do not change saved projects.
+- Managed Logos are copied into project assets and included in snapshots and `.m2v` backups. Restoring a project remaps the Logo to its project copy without changing the global Brand Kit. The API and snapshot rendering are available; a UI for selecting or applying Brand Kits is not yet provided.
+
+### V1.2–V1.6.5 highlights
 
 - **V1.2 — Recovery and control:** edit subtitle text/timing on a shared timeline; review extraction page by page; locate storyboard scenes by source page; retry tasks with actionable failure states; run export preflight and navigate to affected scenes; inspect unused assets and validate snapshots.
 - **V1.3 — Quality and delivery:** run subtitle and voice QC, validate rendered MP4 resolution/duration/tracks, create ZIP delivery packages containing MP4, SRT/VTT/ASS, cover, `.m2v` backup, and notes; save reusable export presets.
 - **V1.4 — Reliability:** track QC status against project revisions; distinguish intentional silence from missing narration; identify stale, missing, or failed outputs and packages; report recovery and delivery failures with actionable reasons.
 - **V1.5 — Production efficiency and final-cut refinement:** group preflight issues and navigate to affected scenes; resume from the first failed export step; refine subtitles against a real MP4; preview batch-edit impact before applying; identify referenced, unused, missing, duplicate, and archived assets; replace selected scene assets while retaining the original; save reusable production plans for voice, pacing, aspect ratio, subtitles, transitions, music volume, and export quality.
+- **V1.6 — Reliable long renders:** estimate render time and disk use, reuse cached scene segments, resume interrupted jobs, and inspect stage progress and logs in the task center.
+- **V1.6.5 — Brand Kits and reproducible snapshots:** add Brand Kit schemas, local CRUD and Logo APIs, plus storyboard brand snapshots whose project-owned Logos travel with snapshots and `.m2v` backups.
 
 Browser acceptance on 2026-10-23 covered subtitle seeking/playback and timing, native file-picker upload and missing-asset repair, caption text edits, scene-duration adjustment, a new render, QC, MP4 validation, and delivery-package consistency. On 2026-10-24, browser testing also applied a batch layout change to two scenes, verified the before/after impact preview and undo, then saved and copied a production plan. Applying it in another project previewed only the aspect-ratio change (16:9 → 9:16); the original 16:9 export preset restored that project afterward. The source project passed QC again (0 errors, 0 warnings) and its seven-file delivery package was regenerated. With user confirmation, the temporary production plan and its copy were deleted from the global plan library; existing export presets were retained. See [the V1.5 manual acceptance checklist](doc/V1.5_manual_acceptance.md) for detailed scenarios and scope.
 
@@ -181,9 +190,14 @@ pnpm typecheck
 pnpm test
 pnpm test:v15
 pnpm test:v15:integration
+pnpm test:v16
+pnpm test:v16:integration
+pnpm test:v16:render
 ```
 
 The V1.5 validation record reports TypeScript checks and V1.1–V1.5 unit/integration suites passing on 2026-10-23. Integration tests use temporary data where documented; some V1.3/V1.4 media-package integration paths require FFmpeg.
+
+V1.6.5 validation on 2026-11-06 passed `pnpm typecheck`, `pnpm test:v16`, `pnpm test:v16:integration`, and `pnpm test:v16:render`. The checks cover Brand Kit schemas and APIs, Logo validation and cleanup, project snapshot/backup path remapping, and an actual Remotion render using snapshot styling and Logo.
 
 ## Data and limitations
 
