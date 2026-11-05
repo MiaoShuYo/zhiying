@@ -5,7 +5,13 @@ import { StyleIdSchema } from './style-id';
 
 export { StyleIdSchema } from './style-id';
 
-export const SceneTypeSchema = z.enum(['title', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'media']);
+export const SceneTypeSchema = z.enum(['title', 'text', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'table', 'media', 'html']);
+
+export const SceneSourceRefSchema = z.object({
+  chapterIndex: z.number().int().nonnegative(),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  page: z.number().int().min(1).optional(),
+});
 
 export const PronunciationRuleSchema = z.object({
   text: z.string().regex(/^[\u3400-\u9fff]{1,80}$/, '纠音词组需为 1 到 80 个汉字'),
@@ -41,34 +47,86 @@ const BaseSceneSchema = z.object({
   wordTimings: z.array(z.object({ text: z.string(), start: z.number().nonnegative(), end: z.number().positive() })).optional(),
   subtitleCues: z.array(SubtitleCueSchema).max(60).optional(),
   sourcePage: z.number().int().min(1).optional(),
+  sourceRef: SceneSourceRefSchema.optional(),
   visual: z.record(z.unknown()).default({}),
   animation: z.string().optional(),
   styleOverride: z.record(z.unknown()).optional(),
 });
 
 export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
+  if (scene.type === 'html' && (typeof scene.visual.html !== 'string' || !scene.visual.html.trim() || scene.visual.html.length > 20000)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'html'], message: 'html 场景需要不超过 20000 个字符的 HTML 片段' });
+  }
   if (scene.type === 'bullets') {
     const items = scene.visual.items;
-    if (!Array.isArray(items) || items.length < 1 || items.length > 5 || !items.every((x) => typeof x === 'string')) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'bullets 场景需要 1 到 5 条字符串 items' });
+    const validItem = (item: unknown): boolean => {
+      if (typeof item === 'string') return true;
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const point = item as { text?: unknown; children?: unknown };
+      return typeof point.text === 'string' && (point.children === undefined || (
+        Array.isArray(point.children) && point.children.length <= 4 && point.children.every(child => typeof child === 'string')
+      ));
+    };
+    if (!Array.isArray(items) || items.length < 1 || items.length > 5 || !items.every(validItem)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'bullets 场景需要 1 到 5 条要点；每条可为字符串或包含 text 与 children 的两层要点' });
     }
   }
   if (scene.type === 'comparison' && (!Array.isArray(scene.visual.columns) || scene.visual.columns.length !== 2)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'columns'], message: 'comparison 场景需要两列 columns' });
   }
-  if (scene.type === 'chart' && (!Array.isArray(scene.visual.data) || scene.visual.data.length < 1)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'data'], message: 'chart 场景需要非空 data' });
+  if (scene.type === 'chart' && (!Array.isArray(scene.visual.data) || scene.visual.data.length < 1) && (!Array.isArray(scene.visual.nodes) || scene.visual.nodes.length < 2)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual'], message: '图表/图示场景需要 data 或至少两个 nodes' });
   }
   if (scene.type === 'timeline' && (!Array.isArray(scene.visual.items) || scene.visual.items.length < 2)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'timeline 场景至少需要两个时间节点' });
   }
+  if (scene.type === 'table') {
+    const headers = scene.visual.headers;
+    const rows = scene.visual.rows;
+    if (!Array.isArray(headers) || headers.length < 1 || !Array.isArray(rows) || rows.length < 1 || !rows.every(row => Array.isArray(row) && row.length === headers.length && row.every(cell => typeof cell === 'string'))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual'], message: 'table 场景需要 headers 和列数一致的非空 rows' });
+    }
+  }
   if (scene.type === 'math' && typeof scene.visual.formula !== 'string') {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'formula'], message: 'math 场景需要公式文本' });
+  }
+  if (scene.type === 'text' && (typeof scene.visual.text !== 'string' || !scene.visual.text.trim())) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'text'], message: 'text 场景需要非空文本' });
   }
   if (scene.type === 'media' && (typeof scene.visual.src !== 'string' || !/^(projects\/[A-Za-z0-9_-]+\/assets\/[^/]+)$/.test(scene.visual.src))) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'src'], message: 'media 场景需要本地素材路径' });
   }
 });
+
+/** Restrict generated scene markup to inert presentation HTML and inline styles. */
+export function sanitizeSceneHtml(input: string): string {
+  let html = input.slice(0, 20000)
+    .replace(/<(script|style|iframe|object|embed|form|video|audio|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<(script|style|iframe|object|embed|form|video|audio|svg|math)\b[^>]*\/?>/gi, '');
+  const tags = new Set(['div', 'span', 'p', 'h1', 'h2', 'h3', 'strong', 'b', 'em', 'i', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'br', 'hr']);
+  html = html.replace(/<\/?([a-z][a-z0-9-]*)\b([^>]*)>/gi, (whole, rawName: string, rawAttrs: string) => {
+    const name = rawName.toLowerCase();
+    if (!tags.has(name)) return '';
+    if (whole.startsWith('</')) return `</${name}>`;
+    const attrs: string[] = [];
+    const className = /\bclass\s*=\s*(["'])(.*?)\1/i.exec(rawAttrs)?.[2];
+    if (className && /^[\w\s-]{1,120}$/.test(className)) attrs.push(`class="${className}"`);
+    const style = /\bstyle\s*=\s*(["'])(.*?)\1/i.exec(rawAttrs)?.[2];
+    if (style) {
+      const allowed = new Set(['color', 'background', 'background-color', 'font-size', 'font-weight', 'text-align', 'line-height', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin', 'border', 'border-top', 'border-radius', 'display', 'flex', 'flex-direction', 'flex-wrap', 'gap', 'align-items', 'justify-content', 'width', 'min-width', 'max-width', 'height', 'grid-template-columns', 'box-shadow', 'box-sizing', 'border-collapse']);
+      const declarations = style.split(';').flatMap(rule => {
+        const colon = rule.indexOf(':');
+        if (colon < 1) return [];
+        const property = rule.slice(0, colon).trim().toLowerCase();
+        const value = rule.slice(colon + 1).trim();
+        return allowed.has(property) && value.length <= 100 && /^[\w\s#(),.%/-]+$/.test(value) ? [`${property}:${value}`] : [];
+      });
+      if (declarations.length) attrs.push(`style="${declarations.join(';')}"`);
+    }
+    return `<${name}${attrs.length ? ` ${attrs.join(' ')}` : ''}>`;
+  });
+  return html;
+}
 
 /** Basic delivery frame: a title card before the first scene or after the last one. */
 export type FrameCard = z.infer<typeof FrameCardSchema>;

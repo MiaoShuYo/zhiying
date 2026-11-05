@@ -57,7 +57,7 @@ test('未登记的图片给出打开素材的修复入口', () => {
 test('清单按严重程度和场景顺序排列，警告排在错误之后', () => {
   const result = preflight(board([
     scene({ id: 'a', type: 'media', visual: { src: image }, audioSrc: 'audio/a.wav', audioDuration: 6 }),
-    scene({ id: 'b', audioSrc: 'audio/b.wav', audioDuration: 6, subtitleCues: [{ text: '很'.repeat(40), start: 0, end: 2 }] }),
+    scene({ id: 'b', audioSrc: 'audio/b.wav', audioDuration: 6, subtitleCues: [{ text: '很'.repeat(120), start: 0, end: 2 }] }),
   ]), [{ path: image, kind: 'image' }], { exists: gone });
   const gaps = preflightGaps(result);
   assert.equal(gaps[0].kind, 'image');
@@ -81,13 +81,13 @@ test('重复引用只保留一次场景、且不会因同一条问题多出两�
 
 test('「缺失文件」计数不含字幕时间轴警告', () => {
   const longOnly = board([
-    scene({ id: 'a', audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: [{ text: '很'.repeat(40), start: 0, end: 2 }] }),
+    scene({ id: 'a', audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: [{ text: '很'.repeat(120), start: 0, end: 2 }] }),
   ]);
   const onlyCaptions = preflightGaps(preflight(longOnly, [], { exists: () => true }));
   assert.equal(onlyCaptions.length, 1, '唯一的清单行是字幕问题');
   assert.deepEqual(preflightGapCounts(onlyCaptions), { files: 0, subtitles: 1 }, '字幕过长不算缺失文件');
   const withImage = board([
-    scene({ id: 'a', type: 'media', visual: { src: image }, audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: [{ text: '很'.repeat(40), start: 0, end: 2 }] }),
+    scene({ id: 'a', type: 'media', visual: { src: image }, audioSrc: 'audio/a.wav', audioDuration: 6, subtitleCues: [{ text: '很'.repeat(120), start: 0, end: 2 }] }),
   ]);
   const mixed = preflightGaps(preflight(withImage, [{ path: image, kind: 'image' }], { exists: path => path !== image }));
   assert.deepEqual(preflightGapCounts(mixed), { files: 1, subtitles: 1 }, '缺图与字幕问题各自计数');

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import platform
 import posixpath
@@ -12,11 +14,13 @@ import socket
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import wave
 import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
@@ -25,6 +29,7 @@ import xml.etree.ElementTree as ET
 
 import pymupdf
 from app.presentation import converters, presentation_capabilities, MISSING_RENDERER
+from app.local_llm_config import local_llm_config
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
@@ -36,6 +41,9 @@ F5TTS_MODEL_DIR = Path(os.environ.get("F5TTS_MODEL_DIR", DATA / "models" / "f5-t
 F5TTS_VOCODER_DIR = Path(os.environ.get("F5TTS_VOCODER_DIR", DATA / "models" / "f5-tts" / "vocos-mel-24khz")).resolve()
 _DLL_DIRECTORY_HANDLES: dict[str, object] = {}
 _TTS_LOCK = asyncio.Lock()
+_F5_ENGINE: Any | None = None
+_F5_ENGINE_KEY: tuple[str, tuple[tuple[str, str], ...]] | None = None
+_F5_ENGINE_LOCK = threading.Lock()
 _ALIGN_LOCK = asyncio.Lock()
 _ALIGN_MODELS: dict[str, tuple[object, object]] = {}
 VOICE_DIR.mkdir(parents=True, exist_ok=True)
@@ -173,8 +181,33 @@ def _narration_segments(text: str) -> list[str]:
 class TTSProvider(Protocol):
     def synthesize(self, *, ref_file: Path, ref_text: str, text: str, output: Path, speed: float) -> None: ...
 
+def _get_f5_engine(f5_api, torch, device: str, model_options: dict[str, str]) -> Any:
+    global _F5_ENGINE, _F5_ENGINE_KEY
+    cache_key = (device, tuple(sorted(model_options.items())))
+    with _F5_ENGINE_LOCK:
+        if _F5_ENGINE is not None and _F5_ENGINE_KEY == cache_key:
+            logging.getLogger(__name__).info("F5-TTS engine reused device=%s", device)
+            return _F5_ENGINE
+
+        if _F5_ENGINE is not None:
+            previous_device = _F5_ENGINE_KEY[0] if _F5_ENGINE_KEY else None
+            _F5_ENGINE = None
+            _F5_ENGINE_KEY = None
+            gc.collect()
+            if previous_device == "xpu" and hasattr(torch, "xpu"):
+                torch.xpu.empty_cache()
+
+        started = time.perf_counter()
+        engine = f5_api.F5TTS(device=device, **model_options)
+        _F5_ENGINE = engine
+        _F5_ENGINE_KEY = cache_key
+        logging.getLogger(__name__).info(
+            "F5-TTS engine loaded device=%s load_ms=%.1f", device, (time.perf_counter() - started) * 1000
+        )
+        return engine
+
 class F5TTSProvider:
-    def synthesize(self, *, ref_file: Path, ref_text: str, text: str, output: Path, speed: float, sentence_pause: float = 0.12, pronunciation_scopes=None, pronunciation_base=None, pronunciation_model=None) -> list[str]:
+    def synthesize(self, *, ref_file: Path, ref_text: str, text: str, output: Path, speed: float, sentence_pause: float = 0.12, pronunciation_scopes=None, pronunciation_base=None, pronunciation_model=None, pronunciation_runtime=None) -> list[str]:
         missing_tools = [tool for tool in ("ffmpeg", "ffprobe") if shutil.which(tool) is None]
         if missing_tools:
             missing = "、".join(f"{tool}.exe" for tool in missing_tools)
@@ -209,13 +242,14 @@ class F5TTSProvider:
         normalized = ' '.join(segments)
         readings, pronunciation_warnings = resolve_pronunciation(
             normalized, pronunciation_scopes or [],
-            pronunciation_base or os.environ.get('OLLAMA_BASE_URL', 'http://127.0.0.1:11434'),
-            pronunciation_model or os.environ.get('OLLAMA_MODEL', 'qwen3:4b'),
+            pronunciation_base or local_llm_config()['base_url'],
+            pronunciation_model or local_llm_config()['model'],
+            pronunciation_runtime,
         )
         with tempfile.TemporaryDirectory(dir=AUDIO_DIR) as temp_dir:
             prompt_path = Path(temp_dir) / "reference.wav"
             prompt_audio.export(prompt_path, format="wav")
-            engine = f5_api.F5TTS(device=device, **model_options)
+            engine = _get_f5_engine(f5_api, torch, device, model_options)
             combined = None
             offset = 0
             for index, segment in enumerate(segments):
@@ -761,7 +795,7 @@ async def create_voice(audio: UploadFile | None = File(None), transcript: str = 
     return {"id": safe_id, "audioPath": str(target), "transcript": transcript, "provider": "f5-tts"}
 
 @app.post("/synthesize")
-async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: float = Form(1.0), sentence_pause: float = Form(0.12), pronunciation_scopes: str = Form('[]'), pronunciation_base: str = Form('http://127.0.0.1:11434'), pronunciation_model: str = Form('qwen3:4b')):
+async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: float = Form(1.0), sentence_pause: float = Form(0.12), pronunciation_scopes: str = Form('[]'), pronunciation_base: str | None = Form(None), pronunciation_model: str | None = Form(None), pronunciation_keep_alive: str | None = Form(None), pronunciation_num_ctx: int | None = Form(None), pronunciation_stream: bool | None = Form(None), pronunciation_concurrency: int | None = Form(None), pronunciation_lock_dir: str | None = Form(None)):
     if not 0.5 <= speed <= 3 or not 0 <= sentence_pause <= 3:
         raise HTTPException(400, "语速或停顿超出范围")
     if not await run_in_threadpool(_tts_available):
@@ -795,6 +829,11 @@ async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: fl
                 pronunciation_scopes=scopes,
                 pronunciation_base=pronunciation_base,
                 pronunciation_model=pronunciation_model,
+                pronunciation_runtime={
+                    'keep_alive': pronunciation_keep_alive, 'num_ctx': pronunciation_num_ctx,
+                    'stream': pronunciation_stream, 'max_concurrency': pronunciation_concurrency,
+                    'lock_dir': pronunciation_lock_dir,
+                },
             )
     except Exception as exc:
         raise HTTPException(500, f"F5-TTS 生成失败：{exc}") from exc

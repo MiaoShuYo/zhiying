@@ -1,5 +1,6 @@
 import type { Scene, Storyboard } from './index';
 import { timelineFor } from './timeline';
+import { captionDuration, resolveCaptionCues } from './captions';
 
 export type PreflightSeverity = 'error' | 'warning' | 'info';
 
@@ -17,6 +18,8 @@ export type PreflightIssue = {
   sceneIndex?: number;
   sceneId?: string;
   sceneTitle?: string;
+  /** Zero-based row in the scene's resolved caption timeline. */
+  cueIndex?: number;
   /** The exact file the issue is about, so repeated references collapse into one checklist row. */
   assetPath?: string;
   assetKind?: 'image' | 'audio' | 'bgm';
@@ -65,30 +68,30 @@ const sceneLabel = (scene: Scene, index: number) => `场景 ${index + 1}${scene.
 const sceneAssetPath = /^projects\/[A-Za-z0-9_-]+\/assets\/[^/]+$/;
 /** Shared with the V1.3 subtitle QC so the panel and the render check never disagree. */
 export const captionDisplayWidth = (text: string) => (text.match(/[A-Za-z0-9]/g)?.length ?? 0) * 0.55 + [...text.replace(/[A-Za-z0-9]/g, '')].length;
-export const captionCharLimit = (portrait: boolean) => (portrait ? 24 : 38);
+export const captionCharLimit = (portrait: boolean, fontSize = 30) => {
+  const width = portrait ? 1080 : 1920;
+  return Math.max(1, Math.floor((width * 0.9 - 36) / fontSize));
+};
 
-/** Longest run the automatic splitter cannot break: sentence enders and commas are its only stops. */
-function longestUnbreakableRun(narration: string): number {
-  return Math.max(0, ...narration.split(/[。！？!?；;\n]+/).flatMap(part => part.split(/[，,：:]/)).map(part => part.trim()).map(part => [...part].length));
+function captionLineCount(text: string, lineWidth: number) {
+  return text.split('\n').reduce((total, line) => total + Math.max(1, Math.ceil(captionDisplayWidth(line) / lineWidth)), 0);
 }
 
-function cueIssues(scene: Scene, index: number, portrait: boolean): PreflightIssue[] {
+function cueIssues(scene: Scene, index: number, portrait: boolean, fontSize: number): PreflightIssue[] {
   const issues: PreflightIssue[] = [];
-  const limit = captionCharLimit(portrait);
+  const limit = captionCharLimit(portrait, fontSize);
   const target = sceneLabel(scene, index);
-  const cues = scene.subtitleCues ?? [];
-  if (cues.length) {
-    const overflow = cues.filter(cue => captionDisplayWidth(cue.text) > limit || cue.text.split('\n').length > 2);
-    if (overflow.length) {
-      issues.push({ code: 'caption_overflow', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message: `${target}有 ${overflow.length} 条手动字幕超过 ${limit} 字或两行，导出后会被裁切。`, fix: 'open_captions' });
-    }
-    const window = scene.audioDuration ?? Math.max(3, scene.duration ?? 6);
-    const late = cues.find(cue => cue.end > window + 0.01);
-    if (late) {
-      issues.push({ code: 'caption_overtime', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message: `${target}的手动字幕结束于 ${late.end.toFixed(2)} 秒，超出场景音频的 ${window.toFixed(2)} 秒。`, fix: 'open_captions' });
-    }
-  } else if (longestUnbreakableRun(scene.narration) > limit) {
-    issues.push({ code: 'caption_overflow', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message: `${target}的旁白有一段连续 ${longestUnbreakableRun(scene.narration)} 字没有标点，自动字幕会挤在一屏。`, fix: 'open_captions' });
+  const cues = resolveCaptionCues(scene, captionDuration(scene), portrait);
+  const overflowIndexes = cues.flatMap((cue, cueIndex) => captionLineCount(cue.text, limit) > 2 ? [cueIndex] : []);
+  for (const cueIndex of overflowIndexes) {
+    issues.push({ code: 'caption_overflow', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, cueIndex, message: `${target}第 ${cueIndex + 1} 条字幕按当前字号预计超过两行，可能挤占画面。`, fix: 'open_captions' });
+  }
+  const window = scene.audioDuration ?? Math.max(3, scene.duration ?? 6);
+  const lateCue = scene.subtitleCues?.find(cue => cue.end > window + 0.01);
+  if (lateCue) {
+    const orderedManualCues = (scene.subtitleCues ?? []).filter(cue => cue.text.trim() && Number.isFinite(cue.start) && Number.isFinite(cue.end) && cue.end > cue.start).sort((a, b) => a.start - b.start);
+    const lateIndex = orderedManualCues.indexOf(lateCue);
+    issues.push({ code: 'caption_overtime', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, ...(lateIndex >= 0 ? { cueIndex: lateIndex } : {}), message: `${target}第 ${Math.max(0, lateIndex) + 1} 条手动字幕超出场景音频的 ${window.toFixed(2)} 秒。`, fix: 'open_captions' });
   }
   return issues;
 }
@@ -140,7 +143,7 @@ export function preflight(storyboard: Storyboard, assets: { path: string; kind?:
     if (Math.max(scene.audioDuration ?? 0, scene.duration ?? 0) > 0 && Math.max(scene.audioDuration ?? 0, scene.duration ?? 0) < 3) {
       issues.push({ code: 'scene_too_short', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message: `${target}只有 ${Math.max(scene.audioDuration ?? 0, scene.duration ?? 0).toFixed(1)} 秒，画面会一闪而过。`, fix: 'open_captions' });
     }
-    issues.push(...cueIssues(scene, index, portrait));
+    issues.push(...cueIssues(scene, index, portrait, storyboard.subtitles?.fontSize ?? 30));
   });
 
   const estimatedSeconds = timelineFor(storyboard).totalSeconds;
@@ -219,7 +222,8 @@ export type PreflightGap = {
   message: string;
   severity: PreflightSeverity;
   fix: PreflightFix;
-  scenes: { sceneIndex: number; sceneId?: string; sceneTitle?: string }[];
+  cueIndex?: number;
+  scenes: { sceneIndex: number; sceneId?: string; sceneTitle?: string; cueIndex?: number }[];
 };
 
 function gapKindOf(issue: PreflightIssue): PreflightGapKind | null {
@@ -239,7 +243,7 @@ export function preflightGaps(result: PreflightResult): PreflightGap[] {
   for (const issue of result.issues) {
     const kind = gapKindOf(issue);
     if (!kind) continue;
-    const key = issue.assetPath ? `path:${issue.assetPath}` : `${kind}:${issue.sceneId ?? issue.code}`;
+    const key = issue.assetPath ? `path:${issue.assetPath}` : `${kind}:${issue.sceneId ?? issue.code}${issue.cueIndex === undefined ? '' : `:cue:${issue.cueIndex}`}`;
     let gap = gaps.get(key);
     if (!gap) {
       gap = {
@@ -250,14 +254,15 @@ export function preflightGaps(result: PreflightResult): PreflightGap[] {
         message: issue.message,
         severity: issue.severity,
         fix: issue.fix,
+        ...(issue.cueIndex === undefined ? {} : { cueIndex: issue.cueIndex }),
         scenes: [],
       };
       gaps.set(key, gap);
     } else if (severityRank[issue.severity] < severityRank[gap.severity]) {
       gap.severity = issue.severity;
     }
-    if (issue.sceneIndex !== undefined && !gap.scenes.some(scene => scene.sceneIndex === issue.sceneIndex)) {
-      gap.scenes.push({ sceneIndex: issue.sceneIndex, sceneId: issue.sceneId, sceneTitle: issue.sceneTitle });
+    if (issue.sceneIndex !== undefined && !gap.scenes.some(scene => scene.sceneIndex === issue.sceneIndex && scene.cueIndex === issue.cueIndex)) {
+      gap.scenes.push({ sceneIndex: issue.sceneIndex, sceneId: issue.sceneId, sceneTitle: issue.sceneTitle, ...(issue.cueIndex === undefined ? {} : { cueIndex: issue.cueIndex }) });
     }
   }
   return [...gaps.values()].sort((a, b) =>
@@ -276,7 +281,7 @@ export function preflightGapCounts(gaps: PreflightGap[]): { files: number; subti
 
 export type PreflightDelta = { fixed: number; added: number; remaining: number };
 
-const issueKey = (issue: PreflightIssue) => `${issue.code}|${issue.sceneId ?? '-'}|${issue.assetPath ?? '-'}`;
+const issueKey = (issue: PreflightIssue) => `${issue.code}|${issue.sceneId ?? '-'}|${issue.assetPath ?? '-'}|${issue.cueIndex ?? '-'}`;
 
 /** Compares two checks so the panel can say what the last fix actually resolved. */
 export function preflightDelta(previous: PreflightResult | null, current: PreflightResult): PreflightDelta {

@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useLayoutEffect, useRef, useState } from '
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { AbsoluteFill, Audio, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig, delayRender, continueRender } from 'remotion';
-import { SubtitleSchema, SceneSchema, layoutMetrics, timelineFrames, type Scene, type Storyboard, type StyleId, type FrameCard } from '@m2v/schema';
+import { sanitizeSceneHtml, SubtitleSchema, SceneSchema, layoutMetrics, timelineFrames, type Scene, type Storyboard, type StyleId, type FrameCard } from '@m2v/schema';
 import { resolveSceneTheme } from './theme';
 import { captionDuration, captionAt, resolveCaptionCues } from './captions';
 
@@ -50,6 +50,7 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
     )
     : 1;
   const centered = style.layout.alignment === 'center';
+  const htmlVisual = sanitizeSceneHtml(String(scene.visual.html ?? '')).replace(/(<div\b[^>]*\bstyle="[^"]*)justify-content\s*:\s*center\b([^"]*")/i, '$1justify-content:flex-start$2');
   const mediaSrc = String(scene.visual.src ?? '');
   const credit = [scene.visual['attribution'], scene.visual['license']].map(value => typeof value === 'string' ? value.trim() : '').filter(Boolean).join(' · ');
   const creditUrl = [scene.visual['licenseUrl'], scene.visual['sourceUrl']].find((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value));
@@ -68,18 +69,77 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
   const box: React.CSSProperties = { borderRadius: style.layout.cardStyle === 'none' ? 0 : style.layout.borderRadius, padding: style.layout.cardStyle === 'none' ? '20px 0' : 32, background: style.layout.cardStyle === 'soft' ? colors.card : 'transparent', border: style.layout.cardStyle === 'soft' ? `1px solid ${colors.accent}55` : 'none', boxShadow: styleId === 'social-short' ? `10px 10px 0 ${colors.secondary}` : 'none' };
   const title = <h1 style={{ fontFamily: style.typography.headingFont, fontSize: 55 * scale * style.typography.titleScale * ((scene.title?.length ?? 0) > 24 ? .8 : 1), lineHeight: 1.08, margin: `0 0 ${24 * scale}px`, color: colors.fg, letterSpacing: styleId === 'social-short' ? -2 * scale : 0, textAlign: centered ? 'center' : 'left' }}>{scene.title ?? scene.type.toUpperCase()}</h1>;
   let content: React.ReactNode;
-  switch (scene.type) {
+  switch (typeof scene.visual.html === 'string' && scene.type !== 'media' ? 'html' : scene.type) {
     case 'title': content = <div style={{ textAlign: 'center' }}>{title}<p style={{ color: colors.muted, fontSize: 32 * scale * style.typography.bodyScale }}>{scene.narration}</p></div>; break;
-    case 'bullets': content = <div>{title}<ul style={{ color: colors.fg, fontSize: 34 * scale * style.typography.bodyScale, lineHeight: styleId === 'academic' ? 1.45 : 1.65, paddingLeft: centered ? 38 * scale : undefined }}>{(scene.visual.items as string[]).map((x, i) => <li key={i} style={{ padding: `${5 * scale}px 0` }}>{x}</li>)}</ul></div>; break;
+    case 'text': content = <div>{title}<p style={{ color: colors.fg, fontSize: 34 * scale * style.typography.bodyScale, lineHeight: 1.55, whiteSpace: 'pre-wrap', textAlign: centered ? 'center' : 'left' }}>{String(scene.visual.text ?? scene.narration)}</p></div>; break;
+    case 'bullets': { const items = (scene.visual.items as (string | { text: string; children?: string[] })[] | undefined) ?? []; content = <div>{title}<ul style={{ color: colors.fg, fontSize: 34 * scale * style.typography.bodyScale, lineHeight: styleId === 'academic' ? 1.45 : 1.65, paddingLeft: centered ? 38 * scale : undefined }}>{items.map((item, i) => { const text = typeof item === 'string' ? item : item.text; const children = typeof item === 'string' ? [] : item.children ?? []; return <li key={i} style={{ padding: `${5 * scale}px 0` }}>{text}{children.length > 0 && <ul style={{ fontSize: '0.78em', lineHeight: 1.45, paddingLeft: 30 * scale, marginTop: 4 * scale }}>{children.map((child, childIndex) => <li key={childIndex} style={{ padding: `${2 * scale}px 0` }}>{child}</li>)}</ul>}</li>; })}</ul></div>; break; }
     case 'comparison': content = <div>{title}<div style={{ display: 'flex', flexDirection: metrics.stacked ? 'column' : 'row', gap: 24 * scale }}>{(scene.visual.columns as { title?: string; items?: string[] }[]).map((col, i) => <div key={i} style={{ ...box, flex: 1, color: colors.fg }}><h2>{col.title ?? `选项 ${i + 1}`}</h2>{(col.items ?? []).map((x, j) => <p key={j} style={{ fontSize: 25 * scale * style.typography.bodyScale }}>{x}</p>)}</div>)}</div></div>; break;
-    case 'chart': { const data = scene.visual.data as { label: string; value: number }[]; const max = Math.max(...data.map(x => x.value), 1); content = <div>{title}<div style={{ display: 'flex', alignItems: 'end', gap: 22, height: 340 }}>{data.map((x, i) => <div key={i} style={{ flex: 1, textAlign: 'center', color: colors.muted }}><div style={{ height: `${Math.max(8, 280 * x.value / max)}px`, background: i % 2 ? colors.secondary : colors.accent, borderRadius: styleId === 'academic' ? 0 : '12px 12px 0 0' }} /><b style={{ color: colors.fg }}>{x.label}</b></div>)}</div></div>; break; }
-    case 'code': content = <div>{title}<pre style={{ ...box, whiteSpace: 'pre-wrap', fontSize: 26 * scale * style.typography.bodyScale, color: colors.accent }}>{String(scene.visual.code ?? scene.narration)}</pre></div>; break;
-    case 'diagram': { const nodes = (scene.visual.nodes as { id: string; label: string }[] | undefined) ?? []; content = <div>{title}<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, flexWrap: 'wrap' }}>{nodes.map((node, i) => <React.Fragment key={node.id}><div style={{ ...box, color: colors.fg, fontSize: 28 * scale * style.typography.bodyScale }}>{node.label}</div>{i < nodes.length - 1 && <span style={{ color: colors.accent, fontSize: 40 }}>→</span>}</React.Fragment>)}</div></div>; break; }
+    case 'chart': {
+      const rawData: unknown[] = Array.isArray(scene.visual.data) ? scene.visual.data : [];
+      const matrix = rawData.length > 0 && rawData.every(Array.isArray) ? rawData as unknown[][] : null;
+      const sourceNodes = scene.visual.nodes;
+      const rawNodes = Array.isArray(sourceNodes) ? sourceNodes : sourceNodes && typeof sourceNodes === 'object' ? Object.values(sourceNodes) : [];
+      const nodes = rawNodes.map((value, index) => {
+        if (typeof value === 'string') return { id: `node-${index}`, label: value.trim(), icon: '' };
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const node = value as Record<string, unknown>;
+        const data = node.data && typeof node.data === 'object' && !Array.isArray(node.data) ? node.data as Record<string, unknown> : {};
+        const label = [node.label, data.label, node.text, data.text, node.title, data.title, node.name, node.content, data.content, node.description, data.description, node.value, data.value].find(item => typeof item === 'string' && item.trim());
+        const icon = [node.icon, data.icon, node.emoji, data.emoji].find(item => typeof item === 'string' && item.trim());
+        return typeof label === 'string' || typeof icon === 'string'
+          ? { id: typeof node.id === 'string' && node.id ? node.id : `node-${index}`, label: typeof label === 'string' ? label.trim() : '', icon: typeof icon === 'string' ? icon.trim() : '' }
+          : null;
+      }).filter((node): node is { id: string; label: string; icon: string } => Boolean(node && (node.label || node.icon)));
+      if (nodes.length) {
+        content = <div>{title}<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, flexWrap: 'wrap' }}>{nodes.map((node, index) => <React.Fragment key={`${node.id}-${index}`}><div style={{ ...box, color: colors.fg, fontSize: 28 * scale * style.typography.bodyScale }}>{node.icon && <span style={{ display: 'block', fontSize: 38 * scale, marginBottom: 8 * scale }}>{node.icon}</span>}{node.label}</div>{index < nodes.length - 1 && <span style={{ color: colors.accent, fontSize: 40 }}>→</span>}</React.Fragment>)}</div></div>;
+      } else if (matrix) {
+        const width = Math.max(1, ...matrix.map(row => row.length));
+        const headers = Array.from({ length: width }, (_, index) => String(matrix[0]?.[index] ?? `列 ${index + 1}`));
+        const rows = matrix.slice(1).map(row => headers.map((_, index) => String(row[index] ?? '')));
+        content = <div>{title}<table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', color: colors.fg, fontSize: 24 * scale * style.typography.bodyScale, lineHeight: 1.35 }}><thead><tr>{headers.map((header, index) => <th key={index} style={{ padding: `${12 * scale}px`, border: `1px solid ${colors.accent}88`, background: `${colors.accent}22`, textAlign: 'left', overflowWrap: 'anywhere' }}>{header}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, index) => <td key={index} style={{ padding: `${12 * scale}px`, border: `1px solid ${colors.accent}55`, textAlign: 'left', verticalAlign: 'top', overflowWrap: 'anywhere' }}>{cell}</td>)}</tr>)}</tbody></table></div>;
+      } else {
+        const data = rawData.filter((item): item is { label: string; value: number } => Boolean(item && typeof item === 'object' && !Array.isArray(item) && typeof (item as Record<string, unknown>).label === 'string' && typeof (item as Record<string, unknown>).value === 'number' && Number.isFinite((item as Record<string, unknown>).value)));
+        if (data.length) {
+          const max = Math.max(...data.map(item => item.value), 1);
+          content = <div>{title}<div style={{ display: 'flex', alignItems: 'end', gap: 22, height: 340 }}>{data.map((item, index) => <div key={index} style={{ flex: 1, textAlign: 'center', color: colors.muted }}><div style={{ height: `${Math.max(8, 280 * item.value / max)}px`, background: index % 2 ? colors.secondary : colors.accent, borderRadius: styleId === 'academic' ? 0 : '12px 12px 0 0' }} /><b style={{ color: colors.fg }}>{item.label}</b></div>)}</div></div>;
+        } else content = <div>{title}<p style={{ color: colors.fg, fontSize: 30 * scale * style.typography.bodyScale, lineHeight: 1.5 }}>{scene.narration}</p></div>;
+      }
+      break;
+    }
+    case 'code': content = <div>{title}<div style={{ ...box, color: colors.fg, fontSize: 30 * scale * style.typography.bodyScale, lineHeight: 1.5 }}><p>{String(scene.visual.explanation ?? scene.narration)}</p>{Array.isArray(scene.visual.steps) && <ul>{(scene.visual.steps as unknown[]).filter((step): step is string => typeof step === 'string' && Boolean(step.trim())).slice(0, 5).map((step, index) => <li key={index}>{step}</li>)}</ul>}</div></div>; break;
+    case 'diagram': {
+      const sourceNodes = scene.visual.nodes;
+      const rawNodes = Array.isArray(sourceNodes) ? sourceNodes : sourceNodes && typeof sourceNodes === 'object' ? Object.values(sourceNodes) : [];
+      const nodes = rawNodes.map((value, index) => {
+        if (typeof value === 'string') return { id: `node-${index}`, label: value.trim(), icon: '' };
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const node = value as Record<string, unknown>;
+        const data = node.data && typeof node.data === 'object' && !Array.isArray(node.data) ? node.data as Record<string, unknown> : {};
+        const label = [node.label, data.label, node.text, data.text, node.title, data.title, node.name, node.content, data.content, node.description, data.description, node.value, data.value].find(item => typeof item === 'string' && item.trim());
+        const icon = [node.icon, data.icon, node.emoji, data.emoji].find(item => typeof item === 'string' && item.trim());
+        return typeof label === 'string' || typeof icon === 'string'
+          ? { id: typeof node.id === 'string' && node.id ? node.id : `node-${index}`, label: typeof label === 'string' ? label.trim() : '', icon: typeof icon === 'string' ? icon.trim() : '' }
+          : null;
+      }).filter((node): node is { id: string; label: string; icon: string } => Boolean(node && (node.label || node.icon)));
+      content = <div>{title}{nodes.length > 0
+        ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, flexWrap: 'wrap' }}>{nodes.map((node, i) => <React.Fragment key={`${node.id}-${i}`}><div style={{ ...box, color: colors.fg, fontSize: 28 * scale * style.typography.bodyScale }}>{node.icon && <span style={{ display: 'block', fontSize: 38 * scale, marginBottom: 8 * scale }}>{node.icon}</span>}{node.label}</div>{i < nodes.length - 1 && <span style={{ color: colors.accent, fontSize: 40 }}>→</span>}</React.Fragment>)}</div>
+        : <p style={{ color: colors.fg, fontSize: 30 * scale * style.typography.bodyScale, lineHeight: 1.5, textAlign: centered ? 'center' : 'left' }}>{nodes[0]?.label || scene.narration}</p>}</div>;
+      break;
+    }
     case 'timeline': { const items = (scene.visual.items as { date: string; label: string }[] | undefined) ?? []; content = <div>{title}<div style={{ display: 'flex', flexDirection: metrics.stacked ? 'column' : 'row', gap: 12 * scale, alignItems: 'stretch' }}>{items.map((item, i) => <div key={i} style={{ flex: 1, borderTop: `4px solid ${colors.accent}`, padding: 16, color: colors.fg, background: colors.card }}><b style={{ color: colors.accent }}>{item.date}</b><p>{item.label}</p></div>)}</div></div>; break; }
+    case 'table': { const headers = scene.visual.headers as string[]; const rows = scene.visual.rows as string[][]; content = <div>{title}<table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', color: colors.fg, fontSize: 24 * scale * style.typography.bodyScale, lineHeight: 1.3 }}><thead><tr>{headers.map((header, i) => <th key={i} style={{ padding: `${12 * scale}px`, border: `1px solid ${colors.accent}88`, background: `${colors.accent}22`, textAlign: 'left', overflowWrap: 'anywhere' }}>{header}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, i) => <td key={i} style={{ padding: `${12 * scale}px`, border: `1px solid ${colors.accent}55`, textAlign: 'left', verticalAlign: 'top', overflowWrap: 'anywhere' }}>{cell}</td>)}</tr>)}</tbody></table></div>; break; }
     case 'math': { const formula = katex.renderToString(String(scene.visual.formula ?? ''), { displayMode: true, throwOnError: false, trust: false, output: 'html' }); content = <div>{title}<div style={{ textAlign: 'center', fontSize: 52 * scale, padding: 36, color: colors.accent }} dangerouslySetInnerHTML={{ __html: formula }} /><p style={{ color: colors.fg }}>{String(scene.visual.explanation ?? scene.narration)}</p></div>; break; }
     case 'media': content = <div>{title}<div style={{ height: height * .56, overflow: 'hidden' }}><Img src={staticFile(String(scene.visual.src ?? ''))} style={imageStyle} /></div>    {creditText && <small style={{ display: 'block', textAlign: 'center', marginTop: 12, color: colors.muted, fontSize: 13 * scale }}>{creditText}</small>}</div>; break;
+    case 'html': content = <div style={{ width: '100%', height: height * .7, maxHeight: height * .78, overflow: 'hidden', display: 'flex', flexDirection: 'column', color: colors.fg, fontFamily: style.typography.bodyFont, fontSize: 30 * scale * style.typography.bodyScale, lineHeight: 1.45 }} dangerouslySetInnerHTML={{ __html: htmlVisual }} />; break;
   }
   const bg = styleId === 'minimal-tech' ? `linear-gradient(${brand ? `${colors.accent}0E` : 'rgba(80,227,194,.055)'} 1px, transparent 1px), linear-gradient(90deg, ${brand ? `${colors.accent}0E` : 'rgba(80,227,194,.055)'} 1px, transparent 1px), radial-gradient(ellipse at 85% 15%, ${brand ? colors.secondary : '#173553'} 0%, ${colors.bg} 56%)` : styleId === 'social-short' ? `radial-gradient(circle at 12% 85%, ${colors.secondary} 0%, transparent 34%), radial-gradient(circle at 88% 15%, ${brand ? colors.secondary : '#6346bd'} 0%, ${colors.bg} 50%)` : colors.bg;
+  if (typeof scene.visual.html === 'string' && scene.type !== 'media') {
+    return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, overflow: 'hidden' }}>
+      <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'grid', overflow: 'hidden', background: '#0b1020', whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: htmlVisual }} />
+      {caption && <div style={captionStyle}>{caption}</div>}
+      {scene.audioSrc && <Audio src={staticFile(scene.audioSrc)} />}
+    </AbsoluteFill>;
+  }
   const texture = styleId === 'academic' ? 'repeating-linear-gradient(0deg, transparent, transparent 43px, rgba(90,70,45,.08) 44px)' : styleId === 'clean-light' ? 'radial-gradient(#d8e0ef 1px, transparent 1px)' : 'none';
   return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, backgroundSize: styleId === 'minimal-tech' ? '42px 42px, 42px 42px, cover' : 'cover', color: colors.fg, padding: style.layout.padding, justifyContent: 'center', fontFamily: style.typography.bodyFont }}>
     {texture !== 'none' && <div style={{ position: 'absolute', inset: 0, background: texture, backgroundSize: styleId === 'academic' ? 'auto' : '20px 20px', pointerEvents: 'none' }} />}

@@ -16,6 +16,12 @@ test('accepts valid scenes and rejects missing narration', () => {
   assert.equal(SceneSchema.safeParse(scene).success, true);
   assert.equal(SceneSchema.safeParse({ ...scene, narration: undefined }).success, false);
 });
+test('source references are optional for legacy scenes and validate stable chapter identity', () => {
+  const scene = { id: 'source', type: 'title', narration: '来源测试' };
+  assert.equal(SceneSchema.safeParse(scene).success, true);
+  assert.equal(SceneSchema.safeParse({ ...scene, sourceRef: { chapterIndex: 2, contentHash: 'a'.repeat(64), page: 12 } }).success, true);
+  assert.equal(SceneSchema.safeParse({ ...scene, sourceRef: { chapterIndex: -1, contentHash: 'invalid' } }).success, false);
+});
 test('rejects invalid visual data', () => {
   const common = { id: 'bad', narration: '说明', visual: {} };
   for (const type of ['bullets', 'comparison', 'chart']) assert.equal(SceneSchema.safeParse({ ...common, type }).success, false);

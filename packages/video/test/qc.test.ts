@@ -24,7 +24,7 @@ test('disabled subtitles still count cues but skip the issue checks', () => {
 });
 
 test('overlong captions are reported with the scene and cue position', () => {
-  const result = checkSubtitles(board([scene({ subtitleCues: [{ text: '甲'.repeat(45), start: 0, end: 4 }] })]));
+  const result = checkSubtitles(board([scene({ subtitleCues: [{ text: '甲'.repeat(60), start: 0, end: 4 }] })]));
   const issue = result.issues.find(item => item.code === 'subtitle_too_long');
   assert.ok(issue);
   assert.equal(issue.sceneId, 'a');
@@ -47,7 +47,7 @@ test('cues running past the scene window are caught before clamping hides them',
 });
 
 test('portrait boards use the stricter caption width budget', () => {
-  const cues = [{ text: '甲'.repeat(30), start: 0, end: 4 }];
+  const cues = [{ text: '甲'.repeat(32), start: 0, end: 4 }];
   const landscape = checkSubtitles(board([scene({ subtitleCues: cues })], { aspectRatio: '16:9' }));
   const portrait = checkSubtitles(board([scene({ subtitleCues: cues })], { aspectRatio: '9:16' }));
   assert.equal(codes(landscape.issues).includes('subtitle_too_long'), false);

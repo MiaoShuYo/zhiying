@@ -2,7 +2,7 @@ import type { Storyboard } from './index';
 import { timelineFrames } from './timeline';
 
 /** Bump when the rendered pixels or the segment cache layout change. */
-export const RENDER_VERSION = 1;
+export const RENDER_VERSION = 2;
 export const RENDER_FPS = 30;
 
 export const RENDER_STAGES = ['bundling', 'rendering', 'concatenating', 'encoding', 'validating'] as const;
