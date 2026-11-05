@@ -156,6 +156,36 @@ test('global delivery settings re-render every segment as a global change', () =
   assert.equal(planReasons(plan)[0].label, '字幕/样式/BGM/画质有改动');
 });
 
+test('render plans carry brand snapshots and only snapshots affect cache fingerprints', () => {
+  const snapshot = {
+    name: '测试品牌',
+    baseStyleId: 'clean-light',
+    colors: { bg: '#f4f7fb', fg: '#192438', muted: '#68758a', accent: '#4169e1', card: '#ffffff', secondary: '#e7eefc' },
+    typography: { headingFont: 'Brand Display', bodyFont: 'Brand Sans' },
+  };
+  const legacy = fullRenderPlan(threeScenes());
+  assert.equal(legacy.brand, null);
+
+  const brandedBoard = StoryboardSchema.parse({ ...threeScenes(), brandKitId: 'deleted-kit', brand: snapshot });
+  const branded = fullRenderPlan(brandedBoard);
+  assert.deepEqual(branded.brand, snapshot);
+  assert.equal(branded.segments[0].reuse, false);
+
+  const sameSnapshotDifferentSource = StoryboardSchema.parse({ ...brandedBoard, brandKitId: 'another-kit' });
+  const provenanceOnlyChange = segmentPlan({ storyboard: sameSnapshotDifferentSource, cached: cacheOf(branded) });
+  assert.equal(provenanceOnlyChange.reusedCount, branded.segments.length);
+  assert.deepEqual(provenanceOnlyChange.brand, snapshot);
+
+  const changedSnapshot = StoryboardSchema.parse({
+    ...sameSnapshotDifferentSource,
+    brand: { ...snapshot, colors: { ...snapshot.colors, accent: '#ff5500' } },
+  });
+  const changedPlan = segmentPlan({ storyboard: changedSnapshot, cached: cacheOf(branded) });
+  assert.equal(changedPlan.renderedCount, branded.segments.length);
+  assert.notEqual(changedPlan.segments[0].parts.global, branded.segments[0].parts.global);
+  assert.deepEqual(changedPlan.brand, changedSnapshot.brand);
+});
+
 test('reordering scenes keeps every rendered segment', () => {
   const first = fullRenderPlan(threeScenes());
   const reordered = threeScenes();

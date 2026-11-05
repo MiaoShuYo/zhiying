@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } from './delivery';
+import { BrandSnapshotSchema } from './brand-kit';
+import { StyleIdSchema } from './style-id';
+
+export { StyleIdSchema } from './style-id';
 
 export const SceneTypeSchema = z.enum(['title', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'media']);
-export const StyleIdSchema = z.enum(['minimal-tech', 'clean-light', 'academic', 'social-short', 'whiteboard']);
 
 export const PronunciationRuleSchema = z.object({
   text: z.string().regex(/^[\u3400-\u9fff]{1,80}$/, '纠音词组需为 1 到 80 个汉字'),
@@ -74,6 +77,8 @@ export type Transition = z.infer<typeof TransitionSchema>;
 
 export const StoryboardSchema = z.object({
   title: z.string().min(1),
+  brandKitId: z.string().max(64).optional(),
+  brand: BrandSnapshotSchema.optional(),
   pronunciationRules: z.array(PronunciationRuleSchema.refine(rule => rule.occurrence === undefined, '项目规则不能指定出现位置')).max(200).optional(),
   aspectRatio: AspectRatioSchema.default('16:9'),
   styleId: StyleIdSchema,
@@ -111,6 +116,7 @@ export type Storyboard = z.infer<typeof StoryboardSchema>;
 export type StyleId = z.infer<typeof StyleIdSchema>;
 
 export * from "./batch";
+export * from "./brand-kit";
 export * from "./captions";
 export * from "./delivery";
 export * from "./editor";
