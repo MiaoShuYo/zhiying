@@ -152,6 +152,13 @@
 - HTML 画面保留正文中的手动换行；新生成的 HTML 文本将换行显式渲染，已保存的 HTML 场景也会保留换行。
 - 完成 `qwen3:4b` 与 `qwen3:4b-instruct-2507-q4_K_M` 的本机 CPU 对比。当前默认继续使用 `qwen3:4b`，Instruct 可通过 `OLLAMA_MODEL` 选用；单机测试结果和质量限制见 [Qwen3 4B CPU 基准](docs/benchmarks/qwen3-4b-cpu.md)。
 
+### V1.6.5 品牌套件与可复现项目快照
+
+- 新增 Brand Kit 与 Brand Snapshot Schema，并提供本地 JSON 存储和设置 API，支持创建、更新、重命名、复制、设为默认和删除，最多保存 30 个品牌套件。
+- 支持 PNG、JPG/JPEG 和 WebP Logo 上传，文件上限 5 MiB、图片上限 40 MP；上传时校验 MIME、扩展名与实际解码格式。
+- 故事板保存 brandKitId 来源记录和独立品牌快照。渲染从快照解析基础风格、颜色、字体和 Logo，品牌库后续变更不会影响已保存项目。
+- 受管理的 Logo 会复制到项目素材目录，并随项目快照和 .m2v 项目包备份；恢复时映射到项目自己的副本。旧故事板继续兼容；当前尚无选择或应用 Brand Kit 的界面。
+
 应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
 
 ## 基本使用流程
