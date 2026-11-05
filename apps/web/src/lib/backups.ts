@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { db } from './db';
 import { StoryboardSchema, type Storyboard } from '@m2v/schema';
+import { brandKitLogoSourcePath, managedBrandLogoReference } from './brand-kit-logo-files';
 
 const repo = resolve(process.cwd(), '../..');
 const root = join(repo, 'data/backups');
@@ -79,7 +80,17 @@ export async function listSnapshots(projectId: string) {
 /** Delivery packages and QC sidecars are derived data; they never belong in a backup. */
 const DERIVED_PROJECT_PATH = /^project\/(delivery\/|qc-report\.json$)/;
 /** Every file a project owns outside the database: its folder, audio and templates. */
-async function collectSources(projectId: string, storyboard: Storyboard | null, includeOutput: boolean) {
+function referencedBrandLogoSrc(rawStoryboard: unknown): string | null {
+  if (!rawStoryboard || typeof rawStoryboard !== 'object' || Array.isArray(rawStoryboard)) return null;
+  const brand = (rawStoryboard as { brand?: unknown }).brand;
+  if (!brand || typeof brand !== 'object' || Array.isArray(brand)) return null;
+  const logo = (brand as { logo?: unknown }).logo;
+  if (!logo || typeof logo !== 'object' || Array.isArray(logo)) return null;
+  const src = (logo as { src?: unknown }).src;
+  return typeof src === 'string' ? src : null;
+}
+
+async function collectSources(projectId: string, storyboard: Storyboard | null, includeOutput: boolean, brandLogoSrc?: string | null) {
   const sources = (await tree(join(repo, 'data/projects', projectId), 'project'))
     .filter(item => (includeOutput || !item.path.startsWith('project/output/')) && !DERIVED_PROJECT_PATH.test(item.path));
   const audioFiles = (await readdir(join(publicRoot, 'audio')).catch(() => [])).filter(name => name.startsWith(`${projectId}-`));
@@ -87,6 +98,12 @@ async function collectSources(projectId: string, storyboard: Storyboard | null, 
   for (const path of new Set(storyboard?.scenes.map(scene => scene.audioSrc).filter((path): path is string => Boolean(path)) ?? [])) {
     if (!/^audio\/[^/\\]+$/.test(path)) throw new Error('项目音频路径无效');
     if (!sources.some(item => item.path === `public/${path}`)) sources.push({ source: inside(publicRoot, path), path: `public/${path}` });
+  }
+  const brandLogo = brandLogoSrc ? managedBrandLogoReference(brandLogoSrc) : null;
+  if (brandLogo) {
+    const source = brandKitLogoSourcePath(brandLogo);
+    try { await stat(source); } catch { throw new Error('项目引用的 Brand Kit Logo 文件缺失，无法创建备份'); }
+    if (!sources.some(item => item.path === brandLogo.src)) sources.push({ source, path: brandLogo.src });
   }
   return sources;
 }
@@ -109,8 +126,9 @@ async function snapshot(projectId: string, automatic: boolean) {
   const id = randomUUID(), directory = join(root, projectId, `.${id}`), final = join(root, projectId, id);
   await mkdir(directory, { recursive: true });
   try {
-    const storyboard = project.storyboardJson ? StoryboardSchema.parse(JSON.parse(project.storyboardJson)) : null;
-    const sources = await collectSources(projectId, storyboard, true);
+    const rawStoryboard = project.storyboardJson ? JSON.parse(project.storyboardJson) as unknown : null;
+    const storyboard = rawStoryboard ? StoryboardSchema.parse(rawStoryboard) : null;
+    const sources = await collectSources(projectId, storyboard, true, referencedBrandLogoSrc(rawStoryboard));
     let voiceId = project.voiceId;
     if (!voiceId) { try { voiceId = JSON.parse(await readFile(join(repo, 'data/settings/general-voice.json'), 'utf8')).voiceId; } catch { /* No voice selected. */ } }
     if (voiceId) sources.push(...await tree(join(repo, 'data/voices', safeId(voiceId)), 'voice'));
@@ -185,7 +203,7 @@ export async function importBackup(request: Request) {
       if (manifest.version !== 1 || !Array.isArray(manifest.files) || manifest.files.length > 100_000) throw new RestoreError('validate', '不支持的备份格式');
       let offset = 12 + length; const names = new Set<string>();
       for (const file of manifest.files) {
-        if (typeof file.path !== 'string' || names.has(file.path.toLowerCase()) || !/^(project|public\/audio|voice|settings)\//.test(file.path) || !Number.isSafeInteger(file.size) || file.size < 0) throw new RestoreError('validate', '备份清单无效', [String(file.path ?? '')]);
+        if (typeof file.path !== 'string' || names.has(file.path.toLowerCase()) || !/^(project|public\/audio|voice|settings|brand-kits)\//.test(file.path) || !Number.isSafeInteger(file.size) || file.size < 0) throw new RestoreError('validate', '备份清单无效', [String(file.path ?? '')]);
         names.add(file.path.toLowerCase()); const target = inside(join(staging, 'files'), file.path); await mkdir(resolve(target, '..'), { recursive: true });
         if (file.size) await pipeline(createReadStream(archive, { start: offset, end: offset + file.size - 1 }), createWriteStream(target)); else await writeFile(target, '');
         if ((await stat(target)).size !== file.size || await digest(target) !== file.sha256) throw new RestoreError('files', `备份损坏：${file.path}`, [file.path]);
@@ -307,8 +325,14 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
       const name = file.path.split('/').at(-1)!;
       remap.set(`audio/${name}`, `audio/${newId}-${createHash('sha256').update(name).digest('hex').slice(0, 12)}${extname(name)}`);
     }
+    const rawStoryboard = manifest.project.storyboardJson ? JSON.parse(manifest.project.storyboardJson) as unknown : null;
+    const referencedLogo = rawStoryboard ? managedBrandLogoReference(referencedBrandLogoSrc(rawStoryboard) ?? '') : null;
+    if (referencedLogo && manifest.files.some(file => file.path === referencedLogo.src)) {
+      remap.set(referencedLogo.src, `projects/${newId}/assets/brand-logos/${referencedLogo.brandKitId}/logo.${referencedLogo.extension}`);
+    }
     const rewrite = (value: unknown): unknown => typeof value === 'string' ? remap.get(value) ?? value.replaceAll(`projects/${oldId}/`, `projects/${newId}/`) : Array.isArray(value) ? value.map(rewrite) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rewrite(v)])) : value;
-    const board = manifest.project.storyboardJson ? StoryboardSchema.parse(rewrite(JSON.parse(manifest.project.storyboardJson))) : null;
+    const rewrittenRawStoryboard = rawStoryboard ? rewrite(rawStoryboard) as Record<string, unknown> : null;
+    const board = rewrittenRawStoryboard ? StoryboardSchema.parse(rewrittenRawStoryboard) : null;
     const assets = JSON.parse(manifest.project.assetsJson) as { path: string; name: string }[];
     const audioTargets = new Set(remap.values());
     // Uploaded BGM is stored as a project asset (`projects/<id>/assets/...`),
@@ -351,6 +375,22 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
         if (file.path.endsWith('storyboard-checkpoint.json') || DERIVED_PROJECT_PATH.test(file.path)) continue;
         target = inside(projectRoot, file.path.slice(8));
       } else if (file.path.startsWith('public/audio/')) target = inside(publicRoot, remap.get(file.path.slice(7))!);
+      else if (file.path.startsWith('brand-kits/')) {
+        const reference = managedBrandLogoReference(file.path);
+        if (!reference) throw new RestoreError('validate', 'Brand Kit Logo 备份路径无效');
+        const projectRelative = `assets/brand-logos/${reference.brandKitId}/logo.${reference.extension}`;
+        target = inside(projectRoot, projectRelative);
+        const publicTarget = inside(publicRoot, `projects/${newId}/${projectRelative}`);
+        try {
+          await mkdir(resolve(target, '..'), { recursive: true });
+          await mkdir(resolve(publicTarget, '..'), { recursive: true });
+          await copyFile(source, target);
+          await copyFile(target, publicTarget);
+        } catch {
+          throw new RestoreError('files', `写入恢复文件失败：${file.path}`, [file.path]);
+        }
+        continue;
+      }
       else if (file.path.startsWith('voice/') && voiceId) target = inside(join(repo, 'data/voices', voiceId), file.path.slice(6));
       else continue;
       try {
@@ -416,8 +456,9 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
 export async function writeProjectArchive(projectId: string, target: string, options: { includeOutput?: boolean } = {}) {
   safeId(projectId);
   const project = await db.project.findUniqueOrThrow({ where: { id: projectId }, include: { jobs: true } });
-  const storyboard = project.storyboardJson ? StoryboardSchema.parse(JSON.parse(project.storyboardJson)) : null;
-  const sources = await collectSources(projectId, storyboard, options.includeOutput ?? false);
+  const rawStoryboard = project.storyboardJson ? JSON.parse(project.storyboardJson) as unknown : null;
+  const storyboard = rawStoryboard ? StoryboardSchema.parse(rawStoryboard) : null;
+  const sources = await collectSources(projectId, storyboard, options.includeOutput ?? false, referencedBrandLogoSrc(rawStoryboard));
   let voiceId = project.voiceId;
   if (!voiceId) { try { voiceId = JSON.parse(await readFile(join(repo, 'data/settings/general-voice.json'), 'utf8')).voiceId; } catch { /* No voice selected. */ } }
   if (voiceId) sources.push(...await tree(join(repo, 'data/voices', safeId(voiceId)), 'voice'));

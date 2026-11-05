@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } from './delivery';
+import { BrandSnapshotSchema } from './brand-kit';
+import { StyleIdSchema } from './style-id';
+
+export { StyleIdSchema } from './style-id';
 
 export const SceneTypeSchema = z.enum(['title', 'text', 'bullets', 'diagram', 'comparison', 'chart', 'code', 'timeline', 'math', 'table', 'media', 'html']);
-export const StyleIdSchema = z.enum(['minimal-tech', 'clean-light', 'academic', 'social-short', 'whiteboard']);
 
 export const SceneSourceRefSchema = z.object({
   chapterIndex: z.number().int().nonnegative(),
@@ -132,6 +135,8 @@ export type Transition = z.infer<typeof TransitionSchema>;
 
 export const StoryboardSchema = z.object({
   title: z.string().min(1),
+  brandKitId: z.string().max(64).optional(),
+  brand: BrandSnapshotSchema.optional(),
   pronunciationRules: z.array(PronunciationRuleSchema.refine(rule => rule.occurrence === undefined, '项目规则不能指定出现位置')).max(200).optional(),
   aspectRatio: AspectRatioSchema.default('16:9'),
   styleId: StyleIdSchema,
@@ -169,6 +174,7 @@ export type Storyboard = z.infer<typeof StoryboardSchema>;
 export type StyleId = z.infer<typeof StyleIdSchema>;
 
 export * from "./batch";
+export * from "./brand-kit";
 export * from "./captions";
 export * from "./delivery";
 export * from "./editor";

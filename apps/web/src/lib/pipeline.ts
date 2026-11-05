@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, type Scene, type Storyboard } from '@m2v/schema';
 import { db } from './db';
+import { copyBrandLogoToProject } from './brand-kit-logo-files';
 import { pageBody } from './extraction';
 import type { ExtractionMeta, PageInfo } from './extraction';
 import { readLocalLlmConfig, withLocalLlmSlot } from './local-llm-config';
@@ -1307,6 +1308,10 @@ export function parseProject<T extends { storyboardJson: string | null; assetsJs
 
 export async function saveStoryboard(projectId: string, storyboard: unknown, expectedRevision?: number) {
   const parsed = StoryboardSchema.parse(storyboard);
+  const snapshotLogo = parsed.brand?.logo;
+  if (snapshotLogo) {
+    snapshotLogo.src = await copyBrandLogoToProject(projectId, snapshotLogo.src);
+  }
   const previousProject = await db.project.findUniqueOrThrow({ where: { id: projectId }, select: { storyboardJson: true } });
   const previous = previousProject.storyboardJson ? StoryboardSchema.parse(JSON.parse(previousProject.storyboardJson)) : null;
   const changedRules = JSON.stringify(previous?.pronunciationRules ?? []) !== JSON.stringify(parsed.pronunciationRules ?? []);

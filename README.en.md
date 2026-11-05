@@ -54,7 +54,14 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 - The home-page environment check diagnoses Python, Ollama and required models, FFmpeg/ffprobe, F5-TTS dependencies, OCR, and the render Worker. It provides guidance but does not automatically download models or install system dependencies.
 - Long-form generation and render tasks retain status, progress, errors, and checkpoints. Suitable tasks can be resumed or retried from the project list or project page.
 
-### V1.2–V1.6.4 highlights
+### Brand kits and project snapshots
+
+- Brand Kits use local JSON storage and a settings API for create, update, rename, duplicate, default selection, and deletion, with a limit of 30 kits.
+- Logo upload accepts PNG, JPG/JPEG, and WebP up to 5 MiB, and validates the decoded image format and dimensions (up to 40 megapixels).
+- Storyboards can save a source `brandKitId` and an independent Brand Snapshot. Rendering reads the snapshot's base style, colors, fonts, and Logo, so later Brand Kit edits or deletion do not change saved projects.
+- Managed Logos are copied into project assets and included in snapshots and `.m2v` backups. Restoring a project remaps the Logo to its project copy without changing the global Brand Kit. The API and snapshot rendering are available; a UI for selecting or applying Brand Kits is not yet provided.
+
+### V1.2–V1.6.5 highlights
 
 - **V1.2 — Recovery and control:** edit subtitle text/timing on a shared timeline; review extraction page by page; locate storyboard scenes by source page; retry tasks with actionable failure states; run export preflight and navigate to affected scenes; inspect unused assets and validate snapshots.
 - **V1.3 — Quality and delivery:** run subtitle and voice QC, validate rendered MP4 resolution/duration/tracks, create ZIP delivery packages containing MP4, SRT/VTT/ASS, cover, `.m2v` backup, and notes; save reusable export presets.
@@ -191,9 +198,14 @@ pnpm typecheck
 pnpm test
 pnpm test:v15
 pnpm test:v15:integration
+pnpm test:v16
+pnpm test:v16:integration
+pnpm test:v16:render
 ```
 
 The V1.5 validation record reports TypeScript checks and V1.1–V1.5 unit/integration suites passing on 2026-10-23. Integration tests use temporary data where documented; some V1.3/V1.4 media-package integration paths require FFmpeg.
+
+V1.6.5 validation on 2026-11-06 passed `pnpm typecheck`, `pnpm test:v16`, `pnpm test:v16:integration`, and `pnpm test:v16:render`. The checks cover Brand Kit schemas and APIs, Logo validation and cleanup, project snapshot/backup path remapping, and an actual Remotion render using snapshot styling and Logo.
 
 ## Data and limitations
 

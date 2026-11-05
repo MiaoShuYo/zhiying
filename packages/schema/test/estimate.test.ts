@@ -25,6 +25,7 @@ const planOf = (patch: Partial<RenderPlan> = {}): RenderPlan => {
     version: 1,
     preset: 'full',
     fps: RENDER_FPS,
+    brand: null,
     totalFrames: Math.round(totalSeconds * RENDER_FPS),
     totalSeconds,
     segments: Array.from({ length: 4 }, () => ({}) as PlannedSegment),

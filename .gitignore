@@ -12,6 +12,7 @@ logs/
 examples/
 apps/web/public/audio/
 apps/web/public/projects/
+apps/web/public/brand-kits/
 *.db
 *.db-journal
 __pycache__/

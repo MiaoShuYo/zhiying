@@ -57,6 +57,8 @@ export type RenderPlan = {
   version: number;
   preset: 'full' | 'draft';
   fps: number;
+  /** The immutable brand data used by the renderer; null for legacy projects. */
+  brand: Storyboard['brand'] | null;
   totalFrames: number;
   totalSeconds: number;
   segments: PlannedSegment[];
@@ -155,6 +157,9 @@ export function segmentPlan(input: SegmentPlanInput): RenderPlan {
       fadeIn: storyboard.bgmFadeIn ?? 1,
       fadeOut: storyboard.bgmFadeOut ?? 1,
     },
+    // Keep the exact legacy fingerprint for boards without a brand. Brand kit IDs
+    // are provenance only; only the snapshot can affect rendered pixels.
+    ...(storyboard.brand ? { brand: storyboard.brand } : {}),
   }));
   const cachedByFingerprint = new Map<string, CachedSegment>();
   const cachedByKey = new Map<string, CachedSegment>();
@@ -201,6 +206,7 @@ export function segmentPlan(input: SegmentPlanInput): RenderPlan {
     version: RENDER_VERSION,
     preset,
     fps,
+    brand: storyboard.brand ?? null,
     totalFrames,
     totalSeconds: Math.round((totalFrames / fps) * 100) / 100,
     segments: planned,
