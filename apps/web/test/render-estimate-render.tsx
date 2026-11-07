@@ -11,7 +11,7 @@ import {
   segmentPlan,
   type Storyboard,
 } from '@m2v/schema';
-import { RenderEstimateBody, type RenderEstimatePayload } from '../src/components/render-estimate-panel';
+import { RenderEstimateBody, RenderEstimatePanel, type RenderEstimatePayload } from '../src/components/render-estimate-panel';
 
 const board = (count: number): Storyboard => StoryboardSchema.parse({
   title: '渲染面板示例',
@@ -40,12 +40,24 @@ const payloadOf = (storyboard: Storyboard, patch: Partial<RenderEstimatePayload>
 const html = (payload: RenderEstimatePayload, preset: 'full' | 'draft' = 'full') =>
   renderToStaticMarkup(createElement(RenderEstimateBody, { payload, preset }));
 
-test('the panel renders the summary, the cost grid and the plan reasons', () => {
+// The header (including the full/draft label) belongs to RenderEstimatePanel. Render it directly
+// so that coverage is not lost while the Body tests stay scoped to the body markup.
+test('the panel header labels the full and draft estimate presets', () => {
+  const full = renderToStaticMarkup(createElement(RenderEstimatePanel, { projectId: 'p1', preset: 'full' }));
+  assert.ok(full.includes('渲染前估算'));
+  assert.ok(full.includes('成片'));
+  assert.ok(full.includes('估算中…'));
+  const draft = renderToStaticMarkup(createElement(RenderEstimatePanel, { projectId: 'p1', preset: 'draft' }));
+  assert.ok(draft.includes('渲染前估算'));
+  assert.ok(draft.includes('540p 草稿'));
+});
+
+// `渲染前估算` / `成片` / `540p 草稿` belong to the RenderEstimatePanel header, not the Body.
+// These tests only assert what RenderEstimateBody itself is responsible for rendering.
+test('the body renders the summary, the cost grid and the plan reasons', () => {
   const payload = payloadOf(board(3));
   const markup = html(payload);
   assert.ok(markup.includes('render-estimate-body'));
-  assert.ok(markup.includes('渲染前估算'));
-  assert.ok(markup.includes('成片'));
   assert.ok(markup.includes('需要渲染全部 3 个片段'), markup);
   assert.ok(markup.includes('预计耗时'));
   assert.ok(markup.includes('片段复用'));
@@ -57,7 +69,7 @@ test('the panel renders the summary, the cost grid and the plan reasons', () => 
   assert.equal(markup.includes('render-estimate-danger'), false, '没有风险时不要整块标红');
 });
 
-test('the draft preset is labelled and reuse is shown', () => {
+test('the body shows the draft preset reuse summary', () => {
   const storyboard = board(2);
   const first = fullRenderPlan(storyboard);
   const reuse = segmentPlan({
@@ -73,7 +85,6 @@ test('the draft preset is labelled and reuse is shown', () => {
     reasons: planReasons(reuse),
     cache: { segments: reuse.segments.length, bytes: 10 },
   }, 'draft');
-  assert.ok(markup.includes('540p 草稿'));
   assert.ok(markup.includes('复用 2/2 个片段'), '复用信息要写在摘要里');
   assert.equal(markup.includes('render-estimate-reasons'), false, '全部复用时不该有原因列表');
 });

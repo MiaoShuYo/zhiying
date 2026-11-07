@@ -156,6 +156,11 @@ export function preflight(storyboard: Storyboard, assets: { path: string; kind?:
   if (storyboard.bgmSrc && stale(storyboard.bgmSrc)) {
     issues.push({ code: 'missing_bgm', severity: 'error', assetPath: storyboard.bgmSrc, assetKind: 'bgm', message: `背景音乐文件已不存在：${storyboard.bgmSrc}`, fix: 'upload_asset' });
   }
+  const brandLogo = storyboard.brand?.logo;
+  // The Logo is decorative: a missing file must warn the user, not block the export.
+  if (brandLogo?.enabled && brandLogo.src.trim() && stale(brandLogo.src)) {
+    issues.push({ code: 'missing_file', severity: 'warning', assetPath: brandLogo.src, assetKind: 'image', message: `项目品牌 Logo 文件已不存在：${brandLogo.src}；导出时可能无法加载 Logo。`, fix: 'open_assets' });
+  }
   if (storyboard.subtitles?.enabled === false) {
     issues.push({ code: 'subtitles_off', severity: 'info', message: '字幕已关闭，导出视频不会带字幕文件。', fix: 'open_render' });
   }

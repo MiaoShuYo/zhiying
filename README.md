@@ -61,11 +61,12 @@
 - 受管理的 Logo 会复制到项目自己的素材目录；项目快照与 `.m2v` 项目包携带被引用的 Logo，恢复后重映射到项目副本。因此品牌套件被修改或删除后，已保存项目仍可复现。
 - 当前提供存储、API、快照和渲染支持，尚未提供选择或应用 Brand Kit 的界面。
 
-### V1.2–V1.6.5 版本摘要
+### V1.2–V1.6.6 版本摘要
 
 - **V1.2–V1.5：** 可控性、恢复、质检交付、稳定性、制作效率与成片精修，详见下方各版本记录。
 - **V1.6 — 长项目渲染可靠性：** 增加渲染前估算、片段缓存与增量渲染、阶段日志、中断恢复和任务中心集中查看。
 - **V1.6.5 — 品牌套件与可复现快照：** 增加 Brand Kit Schema、本地存储和 CRUD/Logo API；故事板保存品牌快照，项目渲染与备份恢复使用项目自己的 Logo 副本。
+- **V1.6.6 — 品牌主题补齐、全局 Logo 与项目应用 API：** SceneView 完整使用品牌颜色/字体（含 serif/sans fallback），HTML 场景外层采用品牌主题；新增视频根层 Logo Overlay（四角/大小/透明度/边距/字幕安全区），Logo 文件缺失时由服务端 preflight 给出 warning；新增项目级应用、重新应用、移除 Brand Kit API，只更新品牌快照，不触碰场景与音频；测试包含 1080p 全尺寸关键像素基线。
 
 ### V1.2 可控性与恢复
 
@@ -157,7 +158,15 @@
 - 新增 Brand Kit 与 Brand Snapshot Schema，并提供本地 JSON 存储和设置 API，支持创建、更新、重命名、复制、设为默认和删除，最多保存 30 个品牌套件。
 - 支持 PNG、JPG/JPEG 和 WebP Logo 上传，文件上限 5 MiB、图片上限 40 MP；上传时校验 MIME、扩展名与实际解码格式。
 - 故事板保存 brandKitId 来源记录和独立品牌快照。渲染从快照解析基础风格、颜色、字体和 Logo，品牌库后续变更不会影响已保存项目。
-- 受管理的 Logo 会复制到项目素材目录，并随项目快照和 .m2v 项目包备份；恢复时映射到项目自己的副本。旧故事板继续兼容；当前尚无选择或应用 Brand Kit 的界面。
+- 受管理的 Logo 会复制到项目素材目录，并随项目快照和 .m2v 项目包备份；恢复时映射到项目自己的副本。旧故事板继续兼容；当前尚无选择/应用界面（项目级应用、重新应用、移除 API 见 V1.6.6）。
+
+### V1.6.6 品牌主题、全局 Logo 与项目应用 API
+
+- SceneView 完整消费品牌主题：颜色（bg/fg/muted/accent/card/secondary）、标题/正文字体，以及和 `sceneStyle` 组合后的设计语言；字体按基础风格提供 serif/sans fallback，不下载远程字体。
+- HTML 场景在项目有品牌时使用品牌背景/前景/正文 fallback 字体，无品牌保持原有行为；full-bleed PPT/media 仍以原页图片为完整画面，不被品牌背景覆盖。
+- 新增视频根层 `BrandLogoOverlay`：支持四角定位、width/opacity/margin/enabled，按画布缩放并直接应用透明度；Logo 在全部场景与转场之外绘制一次，full-bleed 场景同样显示；与上下字幕同边时按 2 行字幕安全区自动抬高。实际 Logo 文件缺失时由服务端 preflight 给出 warning，不阻断导出。
+- 新增项目动作 API：`POST /api/projects/:id/brand-kit` 把 Brand Kit 当前值复制成项目独立 Brand Snapshot（再次 POST 即刷新），`DELETE /api/projects/:id/brand-kit` 移除项目品牌。两者只改 `brandKitId/brand`，不改 `styleId`、scene、旁白、音频、字幕时间或制作方案，也不触发 Ollama/TTS；沿用项目锁与 revision/if-match 语义。
+- 验证：`pnpm test:v16` 116 项、`pnpm test:v16:integration`、`pnpm test:v16:render` 22 帧（含 1080p 全尺寸关键像素基线）全部通过。项目选择/应用 UI 仍不在 V1.6.6 范围内。
 
 应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
 
@@ -404,9 +413,9 @@ pnpm test:v14     # V1.4 稳定性测试（四态质检、交付包记录、导�
 pnpm test:v14:integration  # V1.4 全链路集成测试（含真实 MP4 与 ZIP，需 FFmpeg）
 pnpm test:v15     # V1.5 制作效率与成片精修测试（导出检查归并、导出流程、批量、制作方案、Range 解析）
 pnpm test:v15:integration  # V1.5 集成测试（真实路由与数据库，无需 FFmpeg）
-pnpm test:v16     # V1.6/V1.6.5 单元、API 与面板测试
-pnpm test:v16:integration  # V1.6/V1.6.5 集成测试（含品牌套件 API、项目快照及备份恢复）
-pnpm test:v16:render  # V1.6.5 Remotion 实际渲染验证（品牌快照样式与 Logo）
+pnpm test:v16     # V1.6/V1.6.5/V1.6.6 单元、API 与面板测试
+pnpm test:v16:integration  # V1.6/V1.6.5/V1.6.6 集成测试（含品牌套件、项目快照、项目应用 API 及备份恢复）
+pnpm test:v16:render  # V1.6.5/V1.6.6 Remotion 实际渲染验证（品牌快照样式、Logo、主题、安全区、1080p 像素基线）
 pnpm db:migrate:v16  # 只补 V1.6 新增的可空列，旧库可平滑升级
 pnpm db:generate  # 生成 Prisma Client
 pnpm db:push      # 同步 SQLite 数据库结构
@@ -420,7 +429,7 @@ pnpm db:push      # 同步 SQLite 数据库结构
 
 ## 支持范围与限制
 
-当前支持 PDF/PPTX/Markdown/公开文章 URL/粘贴文本输入，16:9 与 9:16 输出，title/text/bullets/diagram/comparison/chart/code/timeline/math/table/media/html 场景，Minimal Tech、Clean Light、Academic、Social Short 和 Whiteboard 五种风格，PPTX 双模式，场景编辑与重试，声音克隆、逐词字幕与字幕时间轴精修、Commons 图片、本地 BGM、实时预览、导出前检查、片头片尾与转场、任务中心恢复入口、素材占用与快照校验、项目搜索筛选排序、成片质检（字幕与语音）、成片文件校验、交付包 ZIP、导出预设、MP4 导出，以及 Brand Kit 本地 API 和项目级品牌快照。旧项目默认保持 16:9。Brand Kit 暂无选择/应用界面；云端模型 Provider 暂不支持。
+当前支持 PDF/PPTX/Markdown/公开文章 URL/粘贴文本输入，16:9 与 9:16 输出，title/text/bullets/diagram/comparison/chart/code/timeline/math/table/media/html 场景，Minimal Tech、Clean Light、Academic、Social Short 和 Whiteboard 五种风格，PPTX 双模式，场景编辑与重试，声音克隆、逐词字幕与字幕时间轴精修、Commons 图片、本地 BGM、实时预览、导出前检查、片头片尾与转场、任务中心恢复入口、素材占用与快照校验、项目搜索筛选排序、成片质检（字幕与语音）、成片文件校验、交付包 ZIP、导出预设、MP4 导出，以及 Brand Kit 本地 API、项目级品牌快照和项目应用/移除 API。旧项目默认保持 16:9。Brand Kit 暂无选择/应用界面；云端模型 Provider 暂不支持。
 
 - **PDF**：优先读取可选择的文本；扫描页使用本地 Tesseract OCR，需要 chi_sim 与 eng 语言包及 TESSDATA_PREFIX。环境自检会显示缺失项；也可粘贴已识别的文字。
 - **网页**：仅支持无需登录的公开文章；本机、内网或非公开网络地址会被拒绝。页面抽取失败时可粘贴正文。
@@ -460,6 +469,32 @@ pnpm db:generate
 上一条报错会连带表现为 `.\start.ps1` 卡住：脚本等的是 `http://127.0.0.1:3000` 返回 2xx–4xx，500 会让它一直等到 120 秒超时。现在超时信息会说明是「已监听但返回 HTTP 500」，并指出该看哪个日志文件，而不再只报“等待服务启动超时”。真正的端口冲突也会直接列出端口和占用进程，例如 `端口已被其他进程占用：3000（占用进程：node (PID 1234)）`；`.\stop.ps1` 结束后若仍有非脚本启动的监听者，也会给出同样的提示。就绪探测用 `System.Net.Http.HttpClient` 取状态码，而不是 `Invoke-WebRequest`：`-SkipHttpErrorCheck` 只有 PowerShell 6+ 才有，Windows PowerShell 5.1 遇到非 2xx 会直接抛异常，于是健康检查会被误判成超时。`start.ps1` 与 `stop.ps1` 在 5.1 和 7 上都能运行。
 
 `next dev` 运行时不要执行 `pnpm build`（或 `apps/web` 的 `pnpm build`）：两者共用 `apps/web/.next`，生产构建会覆盖开发服务器正在使用的 server chunk，之后项目页会返回 500 并报 `Cannot find module './vendor-chunks/zod@<version>.js'`。遇到该报错先 `.\stop.ps1` 停掉服务，删除 `apps/web/.next`，再用 `.\start.ps1` 启动即可；需要生产构建时先停服务、构建完再重启开发服务。
+
+## V1.6.6：品牌主题、全局 Logo 与项目应用 API
+
+`SceneView` 现在完整消费品牌主题：颜色（bg/fg/muted/accent/card/secondary）、标题/正文字体，以及与 `sceneStyle` 组合后的设计语言；字体按基础风格提供 serif/sans fallback，不下载远程字体。HTML 场景在项目有品牌时使用品牌背景/前景/正文 fallback 字体，无品牌保持原有 `#0b1020` 行为；full-bleed PPT/media 仍以原页图片为完整画面，不被品牌背景覆盖。
+
+新增视频根层 `BrandLogoOverlay`：支持四角定位、width/opacity/margin/enabled，按画布缩放并直接应用透明度；Logo 在全部场景与转场之外绘制一次，因此位置稳定、不参与 entrance/transition；full-bleed 场景同样显示。Logo 与上下字幕同边时，按共享的 2 行字幕安全区自动抬高，不做复杂碰撞检测；未配置/disabled/空路径直接跳过。Logo 文件实际缺失时，服务端 preflight 会给出 warning（不阻断导出）。
+
+新增项目动作 API：
+
+- `POST /api/projects/:id/brand-kit`：`{ brandKitId }`，把 Brand Kit 当前值复制成项目独立 Brand Snapshot；同一 kit 再次 POST 表示刷新快照。
+- `DELETE /api/projects/:id/brand-kit`：移除项目品牌，回到项目自身 `styleId`。
+
+两者只改 `storyboard.brandKitId` / `storyboard.brand`，不修改 `styleId`、scene 内容、旁白、音频、字幕时间或制作方案，也不触发 Ollama/TTS；沿用项目锁与 `saveStoryboard` 的 revision/if-match 语义。项目选择/应用 UI 仍不在本版本范围内。
+
+### V1.6.6 验证记录
+
+2026-11-07 自动化验收通过：`pnpm typecheck`、`pnpm test:v16`（116 项）、`pnpm test:v16:integration`（含新增项目品牌 API 集成测试）和 `pnpm test:v16:render`（22 帧真实 Remotion 渲染，含 1080p 全尺寸关键像素基线）。逐项测试与验收结果见 `doc/V1.6.6_test_report.md` 与 `doc/V1.6.6_acceptance_report.md`。
+
+后续补齐：
+
+- 渲染测试增加 1080p 全尺寸品牌背景、full-bleed 原图与 Logo 像素断言；
+- 面板测试直接覆盖 header 的「渲染前估算 / 成片 / 540p 草稿」文案；
+- Logo 缺失由服务端 preflight 给出 warning；
+- 三个集成测试的临时目录清理改为 best-effort，避免 Windows EBUSY 把已通过的测试误报为失败。
+
+详见 `doc/V1.6.6_followups_report.md`。
 
 ## V1.6.5：Brand Kit 与项目品牌快照
 

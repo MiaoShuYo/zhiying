@@ -106,6 +106,93 @@ test('explicit style wins; otherwise brand base style or minimal-tech is used', 
   assert.deepEqual(resolveBrandTheme(), resolveBrandTheme('minimal-tech'));
 });
 
+const SANS_STACK = ['Arial', 'Microsoft YaHei', 'sans-serif'];
+const SERIF_STACK = ['Georgia', 'Times', 'serif'];
+
+test('fontFamilies provide the design-language fallback chain for every base style', () => {
+  const expected: Record<StyleId, string[]> = {
+    'minimal-tech': SANS_STACK,
+    'clean-light': SANS_STACK,
+    academic: SERIF_STACK,
+    'social-short': SANS_STACK,
+    whiteboard: SANS_STACK,
+  };
+
+  for (const styleId of Object.keys(expected) as StyleId[]) {
+    const theme = resolveBrandTheme(styleId);
+    assert.equal(theme.fontFamilies.heading, expected[styleId].join(', '), `${styleId} heading fallback`);
+    assert.equal(theme.fontFamilies.body, expected[styleId].join(', '), `${styleId} body fallback`);
+    assert.equal(theme.typography.headingFont, styles[styleId].typography.headingFont, `${styleId} keeps the raw headingFont`);
+    assert.equal(theme.typography.bodyFont, styles[styleId].typography.bodyFont, `${styleId} keeps the raw bodyFont`);
+  }
+});
+
+test('brand fonts come first in the font stack and inherit the serif fallback of an academic base', () => {
+  const academic = resolveBrandTheme('academic', brand);
+  assert.equal(academic.fontFamilies.heading, 'Brand Display, Georgia, Times, serif');
+  assert.equal(academic.fontFamilies.body, 'Brand Sans, Georgia, Times, serif');
+  assert.equal(academic.typography.headingFont, 'Brand Display', 'typography keeps the bare configured name');
+  assert.equal(academic.typography.bodyFont, 'Brand Sans', 'typography keeps the bare configured name');
+  assert.equal(academic.typography.headingFont.includes(','), false, 'typography must not contain the fallback stack');
+});
+
+test('brand fonts on a sans base use the sans fallback chain', () => {
+  const clean = resolveBrandTheme('clean-light', brand);
+  assert.equal(clean.fontFamilies.heading, 'Brand Display, Arial, Microsoft YaHei, sans-serif');
+  assert.equal(clean.fontFamilies.body, 'Brand Sans, Arial, Microsoft YaHei, sans-serif');
+  assert.equal(clean.typography.headingFont, 'Brand Display');
+  assert.equal(clean.typography.bodyFont, 'Brand Sans');
+
+  const minimal = resolveBrandTheme('minimal-tech');
+  assert.equal(minimal.fontFamilies.heading, 'Arial, Microsoft YaHei, sans-serif');
+  assert.equal(minimal.fontFamilies.body, 'Arial, Microsoft YaHei, sans-serif');
+});
+
+test('the serif fallback follows the base style, not the brand font name', () => {
+  const academicBrand = resolveBrandTheme('academic', { ...brand, typography: { headingFont: 'Inter', bodyFont: 'Inter' } });
+  assert.equal(academicBrand.typography.headingFont, 'Inter');
+  assert.ok(academicBrand.fontFamilies.heading.startsWith('Inter, '), 'the brand font stays first');
+  assert.ok(academicBrand.fontFamilies.heading.includes('serif'), 'an academic base keeps a serif fallback');
+  assert.equal(academicBrand.fontFamilies.heading.includes('sans-serif'), false, 'academic must not silently become sans-serif');
+
+  const minimalBrand = resolveBrandTheme('minimal-tech', { ...brand, typography: { headingFont: 'Georgia', bodyFont: 'Georgia' } });
+  assert.equal(minimalBrand.typography.headingFont, 'Georgia');
+  assert.ok(minimalBrand.fontFamilies.heading.startsWith('Georgia, '), 'the brand serif name is still used first');
+  assert.ok(minimalBrand.fontFamilies.heading.endsWith('sans-serif'), 'a minimal-tech base keeps a sans fallback');
+});
+
+test('a brand font equal to a fallback entry is not repeated in the stack', () => {
+  assert.equal(resolveBrandTheme('academic', brand).fontFamilies.heading, 'Brand Display, Georgia, Times, serif');
+  assert.equal(
+    resolveBrandTheme('academic', { ...brand, typography: { headingFont: 'Georgia', bodyFont: 'Times' } }).fontFamilies.heading,
+    'Georgia, Times, serif',
+    'Georgia is not duplicated',
+  );
+  assert.equal(
+    resolveBrandTheme('academic', { ...brand, typography: { headingFont: 'Georgia', bodyFont: 'Times' } }).fontFamilies.body,
+    'Times, Georgia, serif',
+    'the configured name keeps its position',
+  );
+  assert.equal(
+    resolveBrandTheme('minimal-tech', { ...brand, typography: { headingFont: 'Arial', bodyFont: 'Microsoft YaHei' } }).fontFamilies.heading,
+    'Arial, Microsoft YaHei, sans-serif',
+    'Arial is not duplicated',
+  );
+  assert.equal(
+    resolveBrandTheme('minimal-tech', { ...brand, typography: { headingFont: 'Arial', bodyFont: 'Microsoft YaHei' } }).fontFamilies.body,
+    'Microsoft YaHei, Arial, sans-serif',
+    'the configured body font keeps its position',
+  );
+});
+
+test('brand typography overrides heading and body independently while keeping the stack shape', () => {
+  const theme = resolveBrandTheme('clean-light', { ...brand, typography: { headingFont: 'Heading Only', bodyFont: brand.typography.bodyFont } });
+  assert.equal(theme.typography.headingFont, 'Heading Only');
+  assert.equal(theme.typography.bodyFont, brand.typography.bodyFont);
+  assert.equal(theme.fontFamilies.heading, 'Heading Only, Arial, Microsoft YaHei, sans-serif');
+  assert.equal(theme.fontFamilies.body, 'Brand Sans, Arial, Microsoft YaHei, sans-serif');
+});
+
 test('resolution does not mutate inputs or share mutable nested objects with defaults', () => {
   const before = structuredClone(brand);
   const result = resolveBrandTheme('minimal-tech', brand);

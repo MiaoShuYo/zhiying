@@ -5,6 +5,13 @@ import { SceneSchema, StoryboardSchema, preflight } from '../src/index';
 const scene = (patch: Record<string, unknown> = {}) => SceneSchema.parse({ id: 'a', type: 'title', narration: '第一句。第二句。', visual: {}, duration: 6, ...patch });
 const board = (scenes: Record<string, unknown>[], patch: Record<string, unknown> = {}) => StoryboardSchema.parse({ title: '例子', styleId: 'minimal-tech', scenes, ...patch });
 const codes = (result: ReturnType<typeof preflight>) => result.issues.map(issue => issue.code);
+const brandSnapshot = (logo?: Record<string, unknown>) => ({
+  name: '测试品牌',
+  baseStyleId: 'minimal-tech',
+  colors: { bg: '#080d19', fg: '#f3f7ff', muted: '#9aaac2', accent: '#50e3c2', card: '#111b2c', secondary: '#182741' },
+  typography: { headingFont: 'Arial', bodyFont: 'Arial' },
+  ...(logo ? { logo } : {}),
+});
 
 test('a complete scene passes with no blocking issue', () => {
   const result = preflight(board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6 })]), []);
@@ -45,6 +52,31 @@ test('missing files are only reported when the server supplies a filesystem chec
   assert.ok(codes(bgmGone).includes('missing_bgm'));
   const audioGone = preflight(board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6 })]), [], { exists: () => false });
   assert.deepEqual(codes(audioGone), ['missing_file']);
+});
+
+test('a missing brand Logo is a server-side warning, not a blocking error', () => {
+  const logoSrc = 'projects/p/assets/brand-logos/x.png';
+  const logo = { src: logoSrc, enabled: true };
+  const logoBoard = board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6 })], { brand: brandSnapshot(logo) });
+
+  // The browser has no filesystem, so the browser-side preflight cannot report a missing Logo.
+  assert.deepEqual(codes(preflight(logoBoard, [])), []);
+
+  const missing = preflight(logoBoard, [], { exists: path => path !== logoSrc });
+  const issue = missing.issues.find(item => item.assetPath === logoSrc);
+  assert.ok(issue);
+  assert.equal(issue.code, 'missing_file');
+  assert.equal(issue.severity, 'warning');
+  assert.equal(issue.assetKind, 'image');
+  assert.equal(issue.fix, 'open_assets');
+  assert.equal(missing.blocking, 0, 'a missing Logo must not block the export');
+  assert.match(issue.message, /品牌 Logo/);
+
+  const present = preflight(logoBoard, [], { exists: () => true });
+  assert.equal(present.issues.some(item => item.assetPath === logoSrc), false);
+
+  const disabledBoard = board([scene({ audioSrc: 'audio/a.wav', audioDuration: 6 })], { brand: brandSnapshot({ ...logo, enabled: false }) });
+  assert.equal(preflight(disabledBoard, [], { exists: () => false }).issues.some(item => item.assetPath === logoSrc), false);
 });
 
 test('narration without generated voice blocks the export', () => {
