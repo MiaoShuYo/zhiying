@@ -280,7 +280,10 @@ async function main() {
     await db.$disconnect();
     // Windows refuses to delete a directory that is still the process cwd.
     process.chdir(repo);
-    await rm(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    // Cleanup is best-effort: a lingering Windows file handle must not turn a passing test red.
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(error => {
+      console.warn(`[cleanup] temporary sandbox kept: ${error instanceof Error ? error.message : String(error)}`);
+    });
   }
 }
 

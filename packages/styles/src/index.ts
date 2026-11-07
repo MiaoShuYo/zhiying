@@ -19,6 +19,12 @@ export const palettes: Record<StyleId, BrandPalette> = {
 
 type StyleDefinition = (typeof styles)[StyleId];
 
+/** CSS font-family lists (configured name + design-language fallbacks) for the renderer. */
+export type FontFamilies = {
+  heading: string;
+  body: string;
+};
+
 export type ResolvedTheme = {
   visual: StyleDefinition['visual'];
   typography: {
@@ -28,26 +34,59 @@ export type ResolvedTheme = {
     bodyScale: number;
     maxWordsPerScreen: number;
   };
+  /** Ready-to-use CSS font-family stacks; `typography` keeps the configured names untouched. */
+  fontFamilies: FontFamilies;
   layout: StyleDefinition['layout'];
   motion: StyleDefinition['motion'];
   narration: StyleDefinition['narration'];
   colors: BrandPalette;
 };
 
+// Georgia/Times keep their serif character instead of silently becoming sans-serif.
+const SERIF_TYPE_FONT = /georgia|times|serif|song|宋|楷|仿宋/i;
+const SERIF_FALLBACKS = ['Georgia', 'Times', 'serif'];
+const SANS_FALLBACKS = ['Arial', 'Microsoft YaHei', 'sans-serif'];
+
+/** Serif design languages keep a serif fallback chain; every other style falls back to sans-serif. */
+function usesSerifTypeface(style: StyleDefinition): boolean {
+  return SERIF_TYPE_FONT.test(`${style.typography.headingFont} ${style.typography.bodyFont}`);
+}
+
+/** Builds a CSS font-family stack without repeating the configured name inside its own fallbacks. */
+function fontFamilyWithFallback(fontName: string, serif: boolean): string {
+  const seen = new Set<string>();
+  return [fontName, ...(serif ? SERIF_FALLBACKS : SANS_FALLBACKS)]
+    .map(part => part.trim())
+    .filter(part => {
+      const key = part.toLowerCase();
+      if (!part || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .join(', ');
+}
+
 /** Combines one built-in style's design language with optional brand identity. */
 export function resolveBrandTheme(styleId?: StyleId, brandSnapshot?: BrandSnapshot): ResolvedTheme {
   const selectedStyleId = styleId ?? brandSnapshot?.baseStyleId ?? 'minimal-tech';
   const style = styles[selectedStyleId];
   const colors = brandSnapshot?.colors ?? palettes[selectedStyleId];
+  const headingFont = brandSnapshot?.typography.headingFont ?? style.typography.headingFont;
+  const bodyFont = brandSnapshot?.typography.bodyFont ?? style.typography.bodyFont;
+  const serif = usesSerifTypeface(style);
 
   return {
     visual: { ...style.visual },
     typography: {
       ...style.typography,
       ...(brandSnapshot ? {
-        headingFont: brandSnapshot.typography.headingFont,
-        bodyFont: brandSnapshot.typography.bodyFont,
+        headingFont,
+        bodyFont,
       } : {}),
+    },
+    fontFamilies: {
+      heading: fontFamilyWithFallback(headingFont, serif),
+      body: fontFamilyWithFallback(bodyFont, serif),
     },
     layout: { ...style.layout },
     motion: { ...style.motion },

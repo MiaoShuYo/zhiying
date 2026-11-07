@@ -8,7 +8,7 @@ import { PreflightPanel } from '../src/components/preflight-panel';
 const scene = (patch: Record<string, unknown> = {}) => SceneSchema.parse({ id: 'a', type: 'title', narration: '第一句。第二句。', visual: {}, duration: 6, ...patch });
 const board = (scenes: Record<string, unknown>[]) => StoryboardSchema.parse({ title: '例子', styleId: 'minimal-tech', scenes });
 const image = 'projects/p/assets/a.png';
-const long = { subtitleCues: [{ text: '很'.repeat(40), start: 0, end: 2 }] };
+const long = { subtitleCues: [{ text: '很'.repeat(120), start: 0, end: 2 }] };
 
 const render = (data: ReturnType<typeof preflight>) => renderToStaticMarkup(createElement(PreflightPanel, {
   data,
