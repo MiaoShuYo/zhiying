@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } from './delivery';
 import { BrandSnapshotSchema } from './brand-kit';
+import { CodeVisualSchema } from './code-visual';
 import { StyleIdSchema } from './style-id';
 
 export { StyleIdSchema } from './style-id';
@@ -96,6 +97,16 @@ export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
   if (scene.type === 'media' && (typeof scene.visual.src !== 'string' || !/^(projects\/[A-Za-z0-9_-]+\/assets\/[^/]+)$/.test(scene.visual.src))) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'src'], message: 'media 场景需要本地素材路径' });
   }
+  if (scene.type === 'code') {
+    // Code scenes share one structured visual between the Standard and HTML renderers; a code
+    // scene without source or with illegal beat line numbers must never reach the timeline.
+    const parsed = CodeVisualSchema.safeParse(scene.visual);
+    if (!parsed.success) {
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', ...issue.path], message: issue.message });
+      }
+    }
+  }
 });
 
 /** Restrict generated scene markup to inert presentation HTML and inline styles. */
@@ -103,7 +114,7 @@ export function sanitizeSceneHtml(input: string): string {
   let html = input.slice(0, 20000)
     .replace(/<(script|style|iframe|object|embed|form|video|audio|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
     .replace(/<(script|style|iframe|object|embed|form|video|audio|svg|math)\b[^>]*\/?>/gi, '');
-  const tags = new Set(['div', 'span', 'p', 'h1', 'h2', 'h3', 'strong', 'b', 'em', 'i', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'br', 'hr']);
+  const tags = new Set(['div', 'span', 'p', 'h1', 'h2', 'h3', 'strong', 'b', 'em', 'i', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'br', 'hr', 'pre', 'code']);
   html = html.replace(/<\/?([a-z][a-z0-9-]*)\b([^>]*)>/gi, (whole, rawName: string, rawAttrs: string) => {
     const name = rawName.toLowerCase();
     if (!tags.has(name)) return '';
@@ -113,7 +124,7 @@ export function sanitizeSceneHtml(input: string): string {
     if (className && /^[\w\s-]{1,120}$/.test(className)) attrs.push(`class="${className}"`);
     const style = /\bstyle\s*=\s*(["'])(.*?)\1/i.exec(rawAttrs)?.[2];
     if (style) {
-      const allowed = new Set(['color', 'background', 'background-color', 'font-size', 'font-weight', 'text-align', 'line-height', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin', 'border', 'border-top', 'border-radius', 'display', 'flex', 'flex-direction', 'flex-wrap', 'gap', 'align-items', 'justify-content', 'width', 'min-width', 'max-width', 'height', 'grid-template-columns', 'box-shadow', 'box-sizing', 'border-collapse']);
+      const allowed = new Set(['color', 'background', 'background-color', 'font-size', 'font-weight', 'text-align', 'line-height', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin', 'border', 'border-top', 'border-radius', 'display', 'flex', 'flex-direction', 'flex-wrap', 'gap', 'align-items', 'justify-content', 'width', 'min-width', 'max-width', 'height', 'grid-template-columns', 'box-shadow', 'box-sizing', 'border-collapse', 'font-family', 'white-space', 'opacity', 'overflow', 'letter-spacing', 'text-overflow']);
       const declarations = style.split(';').flatMap(rule => {
         const colon = rule.indexOf(':');
         if (colon < 1) return [];
@@ -177,6 +188,9 @@ export * from "./batch";
 export * from "./brand-kit";
 export * from "./brand-layout";
 export * from "./captions";
+export * from "./code-timeline";
+export * from "./code-viewport";
+export * from "./code-visual";
 export * from "./delivery";
 export * from "./editor";
 export * from "./estimate";

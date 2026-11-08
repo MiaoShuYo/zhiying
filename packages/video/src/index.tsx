@@ -2,11 +2,14 @@ import React, { useCallback, useMemo, useLayoutEffect, useRef, useState } from '
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { AbsoluteFill, Audio, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig, delayRender, continueRender } from 'remotion';
-import { sanitizeSceneHtml, SubtitleSchema, SceneSchema, layoutMetrics, timelineFrames, type Scene, type Storyboard, type StyleId, type FrameCard } from '@m2v/schema';
+import { sanitizeSceneHtml, SubtitleSchema, SceneSchema, layoutMetrics, timelineFrames, codeVisualOf, type Scene, type Storyboard, type StyleId, type FrameCard } from '@m2v/schema';
 import { resolveSceneTheme } from './theme';
 import { captionDuration, captionAt, resolveCaptionCues } from './captions';
-import { rendererScale, CAPTION_EDGE_RATIO, CAPTION_LINE_HEIGHT, CAPTION_PADDING_Y } from './safe-area';
+import { rendererScale, CAPTION_EDGE_RATIO, CAPTION_LINE_HEIGHT, CAPTION_PADDING_Y, captionSafeArea } from './safe-area';
 import { brandLogoPlacement } from './brand-overlay';
+import { CodeScene } from './code-scene';
+
+export * from './code-scene';
 
 function FitContent({ children, signature, onOverflow }: { children: React.ReactNode; signature: string; onOverflow?: (overflowing: boolean) => void }) {
   const outer = useRef<HTMLDivElement>(null), inner = useRef<HTMLDivElement>(null);
@@ -37,6 +40,7 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
   const captionStyle: React.CSSProperties = { position: "absolute", zIndex: 5, left: `${CAPTION_EDGE_RATIO * 100}%`, right: `${CAPTION_EDGE_RATIO * 100}%`, ...(subtitle.position === "top" ? { top: `${CAPTION_EDGE_RATIO * 100}%` } : subtitle.position === "center" ? { top: "50%", transform: "translateY(-50%)" } : { bottom: `${CAPTION_EDGE_RATIO * 100}%` }), boxSizing: "border-box", padding: `${CAPTION_PADDING_Y * scale}px ${18 * scale}px`, borderRadius: 8 * scale, background: subtitle.preset === "minimal" ? "transparent" : `${subtitle.background}${Math.round(subtitle.backgroundOpacity * 255).toString(16).padStart(2, "0")}`, color: subtitle.color, textShadow: subtitle.preset === "minimal" ? "0 2px 4px #000" : undefined, textAlign: "center", fontSize: subtitle.fontSize * scale, lineHeight: CAPTION_LINE_HEIGHT, fontWeight: subtitle.preset === "highlight" ? 900 : 700, overflowWrap: "anywhere" };
   const imageStyle: React.CSSProperties = { width: "100%", height: "100%", objectFit: scene.image?.fit ?? "contain", objectPosition: `${scene.image?.x ?? 50}% ${scene.image?.y ?? 50}%`, transform: `scale(${scene.image?.zoom ?? 1})`, transformOrigin: `${scene.image?.x ?? 50}% ${scene.image?.y ?? 50}%` };
   const colors = theme.colors;
+  const bg = styleId === 'minimal-tech' ? `linear-gradient(${brand ? `${colors.accent}0E` : 'rgba(80,227,194,.055)'} 1px, transparent 1px), linear-gradient(90deg, ${brand ? `${colors.accent}0E` : 'rgba(80,227,194,.055)'} 1px, transparent 1px), radial-gradient(ellipse at 85% 15%, ${brand ? colors.secondary : '#173553'} 0%, ${colors.bg} 56%)` : styleId === 'social-short' ? `radial-gradient(circle at 12% 85%, ${colors.secondary} 0%, transparent 34%), radial-gradient(circle at 88% 15%, ${brand ? colors.secondary : '#6346bd'} 0%, ${colors.bg} 50%)` : colors.bg;
   const entering = style.motion.entrance === 'kinetic'
     ? { opacity: interpolate(frame, [0, 9], [0, 1], { extrapolateRight: 'clamp' }), transform: `translateY(${interpolate(frame, [0, 12], [80, 0], { extrapolateRight: 'clamp' })}px) scale(${interpolate(frame, [0, 12], [.86, 1], { extrapolateRight: 'clamp' })})` }
     : style.motion.entrance === 'slide'
@@ -108,7 +112,25 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
       }
       break;
     }
-    case 'code': content = <div>{title}<div style={{ ...box, color: colors.fg, fontSize: 30 * scale * style.typography.bodyScale, lineHeight: 1.5 }}><p>{String(scene.visual.explanation ?? scene.narration)}</p>{Array.isArray(scene.visual.steps) && <ul>{(scene.visual.steps as unknown[]).filter((step): step is string => typeof step === 'string' && Boolean(step.trim())).slice(0, 5).map((step, index) => <li key={index}>{step}</li>)}</ul>}</div></div>; break;
+    case 'code': {
+      // Structured code scenes render the real source window at a protected font size and are not
+      // part of the generic content-fitting pass.
+      if (codeVisualOf(scene.visual)) {
+        // Reserve the real caption band (live subtitle size/position) so the beat card cannot
+        // overlap the subtitles in either aspect ratio.
+        const captionReservedPx = subtitle.enabled && subtitle.position === 'bottom'
+          ? captionSafeArea({ videoHeight: height, fontSize: subtitle.fontSize, scale, lines: 2 }).total
+          : 0;
+        return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, backgroundSize: styleId === 'minimal-tech' ? '42px 42px, 42px 42px, cover' : 'cover', overflow: 'hidden' }}>
+          <CodeScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} />
+          {caption && <div style={captionStyle}>{caption}</div>}
+          {scene.audioSrc && <Audio src={staticFile(scene.audioSrc)} />}
+        </AbsoluteFill>;
+      }
+      // Legacy code scenes (explanation/steps only, no visual.code) keep their original layout.
+      content = <div>{title}<div style={{ ...box, color: colors.fg, fontSize: 30 * scale * style.typography.bodyScale, lineHeight: 1.5 }}><p>{String(scene.visual.explanation ?? scene.narration)}</p>{Array.isArray(scene.visual.steps) && <ul>{(scene.visual.steps as unknown[]).filter((step): step is string => typeof step === 'string' && Boolean(step.trim())).slice(0, 5).map((step, index) => <li key={index}>{step}</li>)}</ul>}</div></div>;
+      break;
+    }
     case 'diagram': {
       const sourceNodes = scene.visual.nodes;
       const rawNodes = Array.isArray(sourceNodes) ? sourceNodes : sourceNodes && typeof sourceNodes === 'object' ? Object.values(sourceNodes) : [];
@@ -134,7 +156,6 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
     case 'media': content = <div>{title}<div style={{ height: height * .56, overflow: 'hidden' }}><Img src={staticFile(String(scene.visual.src ?? ''))} style={imageStyle} /></div>    {creditText && <small style={{ display: 'block', textAlign: 'center', marginTop: 12, color: colors.muted, fontSize: 13 * scale }}>{creditText}</small>}</div>; break;
     case 'html': content = <div style={{ width: '100%', height: height * .7, maxHeight: height * .78, overflow: 'hidden', display: 'flex', flexDirection: 'column', color: colors.fg, fontFamily: theme.fontFamilies.body, fontSize: 30 * scale * style.typography.bodyScale, lineHeight: 1.45 }} dangerouslySetInnerHTML={{ __html: htmlVisual }} />; break;
   }
-  const bg = styleId === 'minimal-tech' ? `linear-gradient(${brand ? `${colors.accent}0E` : 'rgba(80,227,194,.055)'} 1px, transparent 1px), linear-gradient(90deg, ${brand ? `${colors.accent}0E` : 'rgba(80,227,194,.055)'} 1px, transparent 1px), radial-gradient(ellipse at 85% 15%, ${brand ? colors.secondary : '#173553'} 0%, ${colors.bg} 56%)` : styleId === 'social-short' ? `radial-gradient(circle at 12% 85%, ${colors.secondary} 0%, transparent 34%), radial-gradient(circle at 88% 15%, ${brand ? colors.secondary : '#6346bd'} 0%, ${colors.bg} 50%)` : colors.bg;
   if (typeof scene.visual.html === 'string' && scene.type !== 'media') {
     return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, overflow: 'hidden' }}>
       <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'grid', overflow: 'hidden', background: brand ? colors.bg : '#0b1020', ...(brand ? { color: colors.fg, fontFamily: theme.fontFamilies.body } : {}), whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: htmlVisual }} />

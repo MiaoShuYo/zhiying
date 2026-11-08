@@ -26,6 +26,7 @@
     "test:v16:render": "tsx apps/worker/test/render-brand-snapshot.ts",
     "test:v17": "tsx --test packages/schema/test/preflight-v17.test.ts packages/schema/test/preflight-brand.test.ts packages/schema/test/brand-layout.test.ts && tsx --tsconfig apps/web/test/tsconfig.json --test apps/web/test/v17-brand-ui.test.ts apps/web/test/v17-brand-editor-ui.test.ts && tsx --tsconfig apps/web/test/tsconfig.json apps/web/test/brand-kit-settings-render.tsx apps/web/test/brand-kit-project-render.tsx",
     "test:v17:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-brand-creation.integration.ts && tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-brand-kit-api.integration.ts && tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-brand-pending.integration.ts && tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-brand-project.integration.ts && tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-preflight.integration.ts",
+    "test:v18": "tsx --test packages/schema/test/code-visual.test.ts packages/schema/test/code-timeline.test.ts packages/schema/test/code-viewport.test.ts packages/video/test/code-scene.test.ts apps/web/test/code-source.test.ts",
     "test:v11:render": "tsx apps/worker/test/render-v11.ts"
   },
   "devDependencies": {
