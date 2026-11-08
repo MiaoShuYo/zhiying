@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>知影 · 本地 AI 讲解视频工作室</title>
+  <meta name="description" content="知影（Local Studio）是一个运行在本机的 AI 讲解视频工作室：把 PDF、Markdown、PowerPoint 或文章整理成分镜，用本地模型生成旁白、字幕与成片。资料不上传云端。">
+  <meta name="keywords" content="知影, Local Studio, AI 讲解视频, 本地 AI, Remotion, F5-TTS, Ollama, 视频生成">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="知影 · 本地 AI 讲解视频工作室">
+  <meta property="og:description" content="从资料到分镜、旁白、字幕与成片，全部在你的电脑上完成。">
+  <meta property="og:url" content="https://miaoshuyo.github.io/zhiying/">
+  <meta property="og:image" content="https://miaoshuyo.github.io/zhiying/assets/zhiying-icon.svg">
+  <link rel="icon" type="image/svg+xml" href="assets/zhiying-icon.svg">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="#top" aria-label="知影首页">
+        <img src="assets/zhiying-logo.svg" alt="知影 Local Studio">
+      </a>
+      <nav class="nav-links" aria-label="页面导航">
+        <a href="#features">功能</a>
+        <a href="#workflow">工作流</a>
+        <a href="#brand">品牌套件</a>
+        <a href="#stack">技术栈</a>
+        <a href="#start">快速开始</a>
+        <a href="#faq">常见问题</a>
+      </nav>
+      <a class="btn btn-primary" href="https://github.com/MiaoShuYo/zhiying" target="_blank" rel="noopener">
+        GitHub 仓库 ↗
+      </a>
+    </div>
+  </header>
+
+  <main id="top">
+
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <p class="eyebrow">LOCAL AI EXPLAINER STUDIO</p>
+          <h1>把复杂知识，<br><span class="gradient">讲得清楚</span>。</h1>
+          <p class="lead">
+            知影是运行在你电脑上的 AI 讲解视频工作室。把 PDF、Markdown、PowerPoint
+            或一篇文章整理成分镜，用本地模型生成旁白、字幕与成片——资料不上传云端。
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/MiaoShuYo/zhiying" target="_blank" rel="noopener">在 GitHub 上查看</a>
+            <a class="btn btn-ghost" href="#start">快速开始 ↓</a>
+          </div>
+          <div class="meta">
+            <span><i class="dot"></i>全部本地运行</span>
+            <span><i class="dot"></i>MIT License</span>
+            <span><i class="dot"></i>Windows 10 / 11</span>
+            <span><i class="dot"></i>最新版本 V1.6.7</span>
+          </div>
+        </div>
+
+        <div class="mock">
+          <div class="frame" role="img" aria-label="知影视频画面与字幕示意">
+            <div class="frame-logo">ACME</div>
+            <div class="frame-scene">
+              <h3>复杂知识，<br>也可以<em>讲得很清楚</em>。</h3>
+              <ul>
+                <li>资料自动整理成故事板</li>
+                <li>本地生成旁白与逐词字幕</li>
+                <li>一键导出 16:9 / 9:16 成片</li>
+              </ul>
+            </div>
+            <div class="frame-caption">在<b>你的电脑上</b>，完成从资料到成片的整条流水线。</div>
+          </div>
+          <div class="mock-badge"><i class="pulse"></i>本地 AI · 无需上传资料</div>
+          <p class="mock-note">画面为界面与品牌主题示意，非实际成片截图。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">FEATURES</p>
+          <h2>一条本地流水线，从资料到成片</h2>
+          <p>导入、分镜、配音、字幕、预览、导出、质检——每个环节都在本机完成，不需要云端账号。</p>
+        </div>
+
+        <div class="grid-9">
+          <article class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></div>
+            <h3>多种资料导入</h3>
+            <p>PDF、PPTX、Markdown、公开文章链接或直接粘贴文本；扫描页可用本地 OCR 识别。</p>
+          </article>
+          <article class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="7" rx="1.5"/><rect x="14" y="4" width="7" height="7" rx="1.5"/><rect x="3" y="15" width="7" height="5" rx="1.5"/><rect x="14" y="15" width="7" height="5" rx="1.5"/></svg></div>
+            <h3>故事板与五种风格</h3>
+            <p>Minimal Tech、Clean Light、Academic、Social Short、Whiteboard；逐场编辑内容、版式与时长。</p>
+          </article>
+          <article class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/></svg></div>
+            <h3>声音克隆与逐词字幕</h3>
+            <p>用一段参考音频克隆音色，本地 TTS 生成旁白；逐词时间轴可精修，支持中文多音字纠正。</p>
+          </article>
+          <article class="card">
+            <div class="tag">V1.6.7</div>
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="9" r="1.2"/><circle cx="15" cy="9" r="1.2"/><circle cx="9" cy="15" r="1.2"/><circle cx="15" cy="15" r="1.2"/></svg></div>
+            <h3>品牌套件</h3>
+            <p>颜色、字体与 Logo 组成全局品牌库；新建或打开项目时套用，项目保存独立快照，可复现。</p>
+          </article>
+          <article class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><path d="M10 9.5l5 2.5-5 2.5z"/></svg></div>
+            <h3>实时预览与本地 BGM</h3>
+            <p>Remotion 实时预览画面与字幕；可添加本地背景音乐，先导出 540p 草稿快速审片。</p>
+          </article>
+          <article class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg></div>
+            <h3>导出、质检与交付</h3>
+            <p>1080p MP4 导出、字幕与语音质检、成片文件校验，以及包含视频、字幕与备份的 ZIP 交付包。</p>
+          </article>
+          <article class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+            <h3>长项目更可靠</h3>
+            <p>章节检查点、断点续跑、渲染前估算与增量渲染；失败任务可在任务中心继续或重试。</p>
+          </article>
+          <article class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M7 8h6M7 11h4"/></svg></div>
+            <h3>PPT 保留原页画面</h3>
+            <p>PPTX 可选择“保留原页画面”：幻灯片图像原样使用，模型只为每页生成旁白。</p>
+          </article>
+          <article class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+            <h3>数据留在本机</h3>
+            <p>项目数据库、素材、音频与成片都保存在本地；除你主动发起的网页抓取外不访问云端。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">WORKFLOW</p>
+          <h2>六步，从一份资料到一条成片</h2>
+          <p>每一步都有可编辑、可检查的中间结果，不用把整条视频交给黑盒。</p>
+        </div>
+        <div class="steps">
+          <div class="step"><div class="n">1</div><h3>新建项目</h3><p>导入资料并检查抽取结果；选择画幅、视觉风格、品牌套件与 PPTX 处理方式。</p></div>
+          <div class="step"><div class="n">2</div><h3>生成故事板</h3><p>本地模型把正文整理成章节与场景，可逐场调整内容、版式、顺序和时长。</p></div>
+          <div class="step"><div class="n">3</div><h3>生成旁白</h3><p>用参考音频克隆音色，设置语速与停顿，逐词字幕自动对齐，可按需纠正读音。</p></div>
+          <div class="step"><div class="n">4</div><h3>品牌与预览</h3><p>套用品牌套件的颜色、字体和 Logo，在实时预览里检查画面与排版。</p></div>
+          <div class="step"><div class="n">5</div><h3>导出视频</h3><p>先导出 540p 草稿审片，满意后输出 1080p、30 FPS 的 H.264 MP4。</p></div>
+          <div class="step"><div class="n">6</div><h3>质检交付</h3><p>字幕与语音质检、成片文件校验，最后生成包含视频与字幕的交付包。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="brand">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">BRAND KIT · V1.6.7</p>
+          <h2>让每一条视频，都像你的作品</h2>
+          <p>品牌套件（Brand Kit）管理「长什么样」：颜色、字体与 Logo。它与视觉风格（Style）、制作方案（Production Template）互相独立。</p>
+        </div>
+
+        <div class="brand-split">
+          <div class="panel" aria-label="品牌套件设置示意">
+            <div class="panel-head">
+              <b>品牌套件</b>
+              <span class="pill accent">默认</span>
+            </div>
+            <div class="swatch-wrap">
+              <div class="swatches">
+                <div class="swatch" style="background:#080d19"><span>bg</span></div>
+                <div class="swatch" style="background:#f3f7ff"><span>fg</span></div>
+                <div class="swatch" style="background:#9aaac2"><span>muted</span></div>
+                <div class="swatch" style="background:#50e3c2"><span>accent</span></div>
+                <div class="swatch" style="background:#111b2c"><span>card</span></div>
+                <div class="swatch" style="background:#182741"><span>secondary</span></div>
+              </div>
+            </div>
+            <div class="kv"><span>标题字体</span><b>Noto Sans SC</b></div>
+            <div class="kv"><span>正文字体</span><b>Noto Serif SC</b></div>
+            <div class="kv"><span>Logo 位置</span><span class="positions">
+              <span class="pos tl active"><i></i></span>
+              <span class="pos tr"><i></i></span>
+              <span class="pos bl"><i></i></span>
+              <span class="pos br"><i></i></span>
+            </span></div>
+            <div class="kv"><span>宽度 / 不透明度 / 边距</span><b>160px · 85% · 40px</b></div>
+          </div>
+
+          <div>
+            <div class="preview-card" aria-label="品牌主题预览示意">
+              <div class="pc-logo">ACME</div>
+              <div class="pc-bg"></div>
+              <div class="pc-eyebrow">EXPLAINER</div>
+              <h4>把复杂知识<br>讲得清楚。</h4>
+              <p>品牌套件只改变颜色、字体和 Logo，不改旁白、分镜与字幕时间。</p>
+              <div class="pc-row"><span class="pc-btn">查看示例</span><span class="pc-btn ghost">了解更多</span></div>
+            </div>
+            <ul class="brand-list">
+              <li>设置页管理品牌库：新建、编辑、复制、设为默认、删除，Logo 上传/替换，最多 30 个</li>
+              <li>六个 renderer 颜色字段支持 color 与十六进制输入，非法值即时提示且不提交</li>
+              <li>新建项目时独立选择品牌，默认品牌自动预选，也可选「无品牌」</li>
+              <li>项目编辑器可更换、重新应用或移除品牌；只更新视觉快照，不触发 LLM / TTS</li>
+              <li>项目保存独立品牌快照，品牌库后续修改或删除都不影响已保存项目</li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="height:22px"></div>
+        <div class="grid-3">
+          <div class="card"><h3>Style · 设计语言</h3><p>布局、密度、动画与排版尺度。品牌不会变成新的 StyleId。</p></div>
+          <div class="card"><h3>Brand Kit · 品牌身份</h3><p>颜色、字体与 Logo。跨项目复用，项目保存独立快照。</p></div>
+          <div class="card"><h3>Production Template · 制作参数</h3><p>声音、语速、停顿、字幕、画幅、转场、BGM 与导出质量。</p></div>
+        </div>
+
+        <div style="height:18px"></div>
+        <div class="version">
+          <b>最新版本 V1.6.7</b>
+          <span>品牌套件设置页 · 新建/编辑器品牌选择与切换 · 导出前品牌 Logo 检查（缺失 / 字幕安全区 / 超大尺寸）</span>
+          <a class="pill" href="https://github.com/MiaoShuYo/zhiying#readme" target="_blank" rel="noopener">阅读更新记录 ↗</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="stack">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">TECH STACK</p>
+          <h2>本地模型 + 现代 Web 技术栈</h2>
+          <p>Web 与 Worker 负责交互和渲染，Python 服务负责语音与 OCR，模型通过 Ollama 在本机推理。</p>
+        </div>
+        <div class="stack">
+          <span class="pill">Next.js 15</span>
+          <span class="pill">React 19</span>
+          <span class="pill">TypeScript</span>
+          <span class="pill">Remotion</span>
+          <span class="pill">Prisma + SQLite</span>
+          <span class="pill">Ollama · qwen3:4b</span>
+          <span class="pill">F5-TTS</span>
+          <span class="pill">Tesseract OCR</span>
+          <span class="pill">FFmpeg</span>
+          <span class="pill">sharp</span>
+          <span class="pill">Zod</span>
+        </div>
+        <div style="height:20px"></div>
+        <div class="grid-3">
+          <div class="card"><h3>本地优先</h3><p>没有云端生成服务。网页抓取与 Commons 素材搜索只在你主动操作时联网。</p></div>
+          <div class="card"><h3>可恢复</h3><p>任务保留状态、进度与检查点；长文生成和渲染可以继续或重试，不用从头再来。</p></div>
+          <div class="card"><h3>可复现</h3><p>项目保存分镜、品牌快照与素材引用，配合快照和 .m2v 项目包，旧项目仍可还原。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="start">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">QUICK START</p>
+          <h2>在自己的电脑上跑起来</h2>
+          <p>Windows 10/11 本地运行；需要 Node.js、pnpm、Python、FFmpeg 与 Ollama。首次运行会下载约 4B 的本地模型。</p>
+        </div>
+        <div class="start-grid">
+          <div>
+            <ul class="req">
+              <li><span class="ic">1</span><div><b>Windows 10 22H2 / Windows 11（64 位）</b><small>16 GB 内存起步；同时运行 Ollama 与语音服务建议 32 GB</small></div></li>
+              <li><span class="ic">2</span><div><b>Node.js 与 pnpm 11</b><small>用于 Web / Worker / 渲染流程</small></div></li>
+              <li><span class="ic">3</span><div><b>Python 3 与 FFmpeg</b><small>语音合成、OCR 与视频编码</small></div></li>
+              <li><span class="ic">4</span><div><b>Ollama + qwen3:4b</b><small>本地分镜与读音推理；不需要云端 API Key</small></div></li>
+            </ul>
+            <p class="note">完整环境变量、模型与排障说明见 <a href="https://github.com/MiaoShuYo/zhiying#readme" target="_blank" rel="noopener">README</a>。</p>
+          </div>
+          <div>
+<pre><code><span class="c"># 1. 克隆仓库</span>
+git clone https://github.com/MiaoShuYo/zhiying.git
+cd zhiying
+
+<span class="c"># 2. 安装依赖并初始化数据库</span>
+pnpm install
+pnpm db:push
+
+<span class="c"># 3. 启动（Python + Web + Worker）</span>
+.\start.ps1
+
+<span class="c"># PowerShell 拦截未签名脚本时：</span>
+<span class="g">powershell -ExecutionPolicy Bypass -File .\start.ps1</span></code></pre>
+            <p class="note">启动后访问 <b style="color:var(--accent)">http://127.0.0.1:3000</b>。停止服务用 <code>.\stop.ps1</code>（同样可加 <code>-ExecutionPolicy Bypass</code>）。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">FAQ</p>
+          <h2>常见问题</h2>
+        </div>
+        <div class="faq">
+          <details>
+            <summary>我的资料会被上传到云端吗？</summary>
+            <p>不会。资料抽取、分镜、语音、渲染与导出都在本机完成；除你主动发起的网页抓取和 Wikimedia Commons 搜索外，不访问云端服务。</p>
+          </details>
+          <details>
+            <summary>必须要有独立显卡吗？</summary>
+            <p>不必须。CPU 可以完成推理与语音生成，只是会更慢；有 Intel XPU 时语音合成会更快。Ollama 能否使用 GPU 由 Ollama 与驱动决定。</p>
+          </details>
+          <details>
+            <summary>运行 start.ps1 提示“未对文件进行数字签名”怎么办？</summary>
+            <p>这是 Windows PowerShell 的执行策略在拦截未签名的本地脚本，不是项目错误。当前会话临时放行后运行：<code>Set-ExecutionPolicy -Scope Process Bypass -Force</code>；或直接用 <code>powershell -ExecutionPolicy Bypass -File .\start.ps1</code>。也可以读一遍脚本内容，确认可信后再运行。</p>
+          </details>
+          <details>
+            <summary>可以商用吗？</summary>
+            <p>项目使用 MIT License，可自由使用、修改和分发；模型与素材的许可证仍各自适用，请在商用前确认。</p>
+          </details>
+          <details>
+            <summary>能用自己的品牌颜色和 Logo 吗？</summary>
+            <p>可以。V1.6.7 提供品牌套件：在设置页创建品牌（颜色、字体、Logo），新建项目或在项目编辑器里应用。项目保存独立快照，所以之后修改品牌库不会影响已有项目。</p>
+          </details>
+          <details>
+            <summary>旧项目还能打开吗？</summary>
+            <p>能。没有品牌字段的旧故事板继续按原样渲染；历史项目包也可以恢复为新项目。项目数据保留在本地 SQLite 与项目目录中。</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <img src="assets/zhiying-logo.svg" alt="知影 Local Studio">
+      </div>
+      <p class="footer-note">知影 · LOCAL STUDIO — 在你的电脑上，把复杂知识讲清楚。</p>
+      <nav class="footer-links" aria-label="页脚链接">
+        <a href="https://github.com/MiaoShuYo/zhiying" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/MiaoShuYo/zhiying/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="https://github.com/MiaoShuYo/zhiying/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+        <a href="https://github.com/MiaoShuYo/zhiying/releases" target="_blank" rel="noopener">Releases</a>
+      </nav>
+    </div>
+  </footer>
+
+</body>
+</html>
