@@ -13,7 +13,7 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 ### Import and storyboard creation
 
 - Import PDF, PPTX, Markdown (`.md` / `.markdown`), pasted text, and public webpages that do not require sign-in. Review, preview, and edit extracted text before generating a storyboard.
-- Markdown tables are passed to storyboard generation as structured table data. Code examples are explained rather than rendered as raw source in the video.
+- Markdown tables are passed to storyboard generation as structured table data. Fenced code (``` / ~~~) is preserved as structured code blocks with its language and verbatim source, so the chapter text keeps only the explanatory prose; code that matters for understanding can become a focused code scene, while incidental examples are still explained in text.
 - Extract text from PDFs, with optional local Tesseract OCR for scanned pages. PPTX files can be rebuilt from extracted content or preserve original slide images; the latter requires PowerPoint or LibreOffice. Speaker notes can be prioritized for narration.
 - Web extraction targets public articles, blocks localhost and private-network addresses, and reports errors. Pasting text is available as a fallback.
 - Ollama runs locally to analyze sources and generate scripts and storyboards. Long documents are processed in batches with checkpoints and can resume when the input and settings have not changed.
@@ -26,6 +26,17 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 - Preview storyboards live. Choose Minimal Tech, Clean Light, Academic, Social Short, or Whiteboard styles. Insert built-in or custom scene templates and save scenes as reusable templates.
 - Selecting a storyboard scene seeks the preview to that scene's start. Edit narration and visual JSON in a popup, and undo storyboard changes.
 - Use automatic, vertical, side-by-side, or compact layouts. Select multiple scenes to adjust duration or style, and get navigable layout warnings for dense content and portrait scenes.
+
+### Code scenes (V1.6.8)
+
+- Markdown fenced code is preserved as structured code blocks with its language and verbatim source; the chapter text keeps only the explanatory prose. Markdown without code blocks is unchanged, and legacy "code example" text markers are still recognized.
+- Storyboard generation may choose a `code` scene when the code matters to the explanation and emits narration beats (line ranges, short labels, and narration text used for alignment). Incidental code examples can still use text/bullets/chart.
+- Source fidelity: `visual.code` must be a verbatim slice of the input code blocks. Rewritten, completed, or invented source is rejected and replaced by a safe fallback scene, and narration that repeats raw source is blocked.
+- Code scenes render as an IDE-style window: filename/language in the header, source line numbers, the current beat fully highlighted, other lines dimmed (opacity 0.38), and no automatic line wrapping.
+- Beat timing is derived from word-level narration timings or subtitle cues (with even distribution as a last resort) instead of hard-coded seconds, so changing speech speed or regenerating audio re-derives the timeline without regenerating the storyboard beats.
+- Readable type protection and viewport scrolling: 50+ line files are not shrunk; the window shows 12–16 lines in landscape and 7–11 in portrait with smooth 8–15 frame transitions, keeps consecutive beats in the same viewport still, and clamps at the first/last lines.
+- Aspect-ratio specific layout: landscape keeps at least 68% of the frame for code with the beat card in a right column; portrait stacks the code and card while keeping the card clear of the caption safe area; long filename/language/title text is ellipsized.
+- Standard and HTML generation modes share the same structured code visual; HTML mode renders the same code window, line numbers, and beat highlighting.
 
 ### Narration, pacing, and subtitles
 
@@ -64,7 +75,7 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 - New projects can pick a Brand Kit independently from the visual style (the default kit is preselected, and “No brand” is allowed); the project editor can change, re-apply, or remove the brand. Applying a brand snapshots the current library values and only changes visuals — no Ollama/TTS calls, narration, audio, subtitle timings, scene durations, or production templates are touched.
 - Export preflight now reports brand Logo problems: an enabled but missing Logo file, a Logo that conflicts with same-side caption safe area, and an oversized portrait Logo (over 30% of the design canvas). Findings are project-level and provide an “Open brand kits” fix; projects without a brand are unaffected.
 
-### V1.2–V1.6.7 highlights
+### V1.2–V1.6.8 highlights
 
 - **V1.2 — Recovery and control:** edit subtitle text/timing on a shared timeline; review extraction page by page; locate storyboard scenes by source page; retry tasks with actionable failure states; run export preflight and navigate to affected scenes; inspect unused assets and validate snapshots.
 - **V1.3 — Quality and delivery:** run subtitle and voice QC, validate rendered MP4 resolution/duration/tracks, create ZIP delivery packages containing MP4, SRT/VTT/ASS, cover, `.m2v` backup, and notes; save reusable export presets.
@@ -78,6 +89,7 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 - **V1.6.5 — Brand Kits and reproducible project snapshots:** add Brand Kit schemas, local JSON CRUD and Logo upload APIs, and independent storyboard brand snapshots. Rendering and project backups use project-owned Logo copies, so saved projects remain reproducible after a Brand Kit changes or is deleted. Brand Kit selection and application UI are not included yet.
 - **V1.6.6 — Brand theme completion, global Logo, and project apply API:** `SceneView` now consumes brand colors/fonts end to end with serif/sans fallbacks, and HTML scenes adopt the brand background/foreground/body font while full-bleed slides keep their original image. A video-level `BrandLogoOverlay` supports four corners, width, opacity, margin, and a two-line caption safe area while staying outside scene transitions. New project APIs apply, re-apply, or remove a Brand Kit snapshot without touching `styleId`, scenes, narration, audio, or timings. A missing Logo file becomes a server-side preflight warning, and the render test includes a full-size 1080p pixel baseline.
 - **V1.6.7 — Brand settings UI, project brand selection, and delivery checks:** add the settings-page Brand Kit manager (CRUD, Logo upload, six-color/font/Logo editing, deterministic static live preview), independent Brand Kit selection when creating a project with pending-snapshot injection on first storyboard creation, and project-editor change/re-apply/remove actions that only update the visual snapshot. Server preflight now flags missing Logo files, same-side caption safe-area conflicts, and oversized portrait Logos; shared brand geometry moved to `@m2v/schema` so the renderer and the check use the same pure functions.
+- **V1.6.8 — Code scenes:** preserve Markdown fenced code as structured `codeBlocks` with verbatim source; let storyboard generation choose `code` scenes with focused narration beats while enforcing verbatim source fidelity and falling back on invented code or source-repeating narration; add pure beat-timeline and viewport/scroll planners; render IDE-style code windows in standard mode (line numbers, current-beat highlighting, dimmed context, five styles); use landscape 12–16 line and portrait 7–11 line layouts with caption-safe beat cards; share the same structured code visual between standard and HTML modes.
 
 Browser acceptance on 2026-10-23 covered subtitle seeking/playback and timing, native file-picker upload and missing-asset repair, caption text edits, scene-duration adjustment, a new render, QC, MP4 validation, and delivery-package consistency. On 2026-10-24, browser testing also applied a batch layout change to two scenes, verified the before/after impact preview and undo, then saved and copied a production plan. Applying it in another project previewed only the aspect-ratio change (16:9 → 9:16); the original 16:9 export preset restored that project afterward. The source project passed QC again (0 errors, 0 warnings) and its seven-file delivery package was regenerated. With user confirmation, the temporary production plan and its copy were deleted from the global plan library; existing export presets were retained. See [the V1.5 manual acceptance checklist](doc/V1.5_manual_acceptance.md) for detailed scenarios and scope.
 
@@ -86,7 +98,7 @@ The app is designed for local use and does not provide cloud generation or compl
 ## Typical workflow
 
 1. Create a project, import source material or paste text, review the extracted content, and choose aspect ratio, visual style, an optional Brand Kit, and PPTX handling.
-2. Edit the storyboard, scene content, layout, order, and duration. Use templates, batch edits, or local/Commons images as needed.
+2. Edit the storyboard, scene content, layout, order, and duration. Markdown code blocks can become focused code scenes when needed. Use templates, batch edits, or local/Commons images as needed.
 3. Configure a voice reference and transcript, generate and preview narration, then adjust speed, pauses, scene gaps, subtitles, and pronunciation rules.
 4. Review visuals and layout in live preview; optionally add local background music or render a 540p draft. You can also change, re-apply, or remove the project brand in the editor — brand changes only update the visual snapshot and never regenerate narration.
 5. Export MP4, monitor or cancel the render, and download the result from export history. Create snapshots or backups when needed.
@@ -209,6 +221,7 @@ pnpm test:v16:integration
 pnpm test:v16:render
 pnpm test:v17
 pnpm test:v17:integration
+pnpm test:v18
 ```
 
 The V1.5 validation record reports TypeScript checks and V1.1–V1.5 unit/integration suites passing on 2026-10-23. Integration tests use temporary data where documented; some V1.3/V1.4 media-package integration paths require FFmpeg.
@@ -219,6 +232,8 @@ V1.6.6 validation on 2026-11-07 passed `pnpm typecheck`, `pnpm test:v16` (116 te
 
 V1.6.7 validation on 2026-11-08 passed `pnpm typecheck`, `pnpm test:v16` (133 tests), `pnpm test:v16:integration`, `pnpm test:v15`, `pnpm test:v12`, `pnpm test:v17` (42 tests plus 2 static render checks), `pnpm test:v17:integration` (5/5), and `pnpm test:v16:render` (22 actual Remotion frames, including a full-size 1080p pixel baseline). Coverage includes the Brand Kit settings UI, project creation pending-snapshot injection, editor change/re-apply/remove with zero LLM/TTS jobs, and the brand Logo preflight checks. See `doc/V1.6.7_test_report.md` and `doc/V1.6.7_acceptance_report.md`.
 
+V1.6.8 validation on 2026-11-08 passed `pnpm typecheck`, `pnpm test:v18` (61 tests covering 60 test requirements), the pipeline regression (`pipeline-p0` / `pipeline-p1` / `fallback-chapter`, 40 tests), `pnpm test:v12` (66 tests plus 2 static render scripts), `pnpm test:v16`, and `pnpm test:v17`; all 40 acceptance criteria passed. See `doc/V1.6.8_test_report.md` and `doc/V1.6.8_acceptance_report.md`.
+
 Follow-ups completed: the render test now asserts 1080p brand-background, full-bleed source, and Logo pixels; the panel test directly covers the `渲染前估算 / 成片 / 540p 草稿` header; a missing brand Logo becomes a server-side preflight warning; and integration-test cleanup is best-effort so a Windows EBUSY cannot mark a passing test as failed. See `doc/V1.6.6_followups_report.md`.
 
 ## Data and limitations
@@ -228,5 +243,6 @@ Follow-ups completed: the render test now asserts 1080p brand-background, full-b
 - CPU speech inference is supported but slower. Intel XPU acceleration is Intel-specific.
 - Public webpage extraction does not access sign-in content. If extraction fails, paste the text instead.
 - Commons images require the user to review license and attribution details. Model and source-media licenses remain applicable.
+- Code scenes keep source verbatim; when generated code cannot be traced back to the imported source, the scene is replaced by a safe fallback instead of showing invented code.
 
 For detailed version history and implementation notes, see the [Chinese README](README.md). For V1.5 browser acceptance scenarios, see [doc/V1.5_manual_acceptance.md](doc/V1.5_manual_acceptance.md).
