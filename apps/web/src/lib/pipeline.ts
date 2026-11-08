@@ -4,6 +4,7 @@ import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path
 import { sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, type Scene, type Storyboard } from '@m2v/schema';
 import { db } from './db';
 import { copyBrandLogoToProject } from './brand-kit-logo-files';
+import { applyPendingBrandSnapshot, consumePendingBrandKitId, readImportSettings, resolveCreationBrandKitId, writeImportSettings } from './brand-kit-pending';
 import { pageBody } from './extraction';
 import type { ExtractionMeta, PageInfo } from './extraction';
 import { readLocalLlmConfig, withLocalLlmSlot } from './local-llm-config';
@@ -1121,7 +1122,7 @@ async function ollamaPreservedSlideNarrations(title: string, chapters: Chapter[]
   });
 }
 
-export async function createProject(input: { name: string; text: string; styleId: string; aspectRatio?: string; importMode?: string; generationMode?: string; file: File | null; preferLocalAI?: boolean }) {
+export async function createProject(input: { name: string; text: string; styleId: string; aspectRatio?: string; importMode?: string; generationMode?: string; file: File | null; preferLocalAI?: boolean; brandKitId?: string }) {
   const extension = input.file ? extname(input.file.name).toLowerCase() : '';
   if (input.file && !['.pdf', '.md', '.markdown', '.pptx'].includes(extension)) throw new Error('目前支持 PDF、PPTX、Markdown 文件或直接输入文本');
   if (input.aspectRatio && !['16:9', '9:16'].includes(input.aspectRatio)) throw new Error('不支持的视频画幅');
@@ -1137,8 +1138,9 @@ export async function createProject(input: { name: string; text: string; styleId
     sourcePath = relativePath;
     await db.project.update({ where: { id: project.id }, data: { sourcePath } });
   }
-  await mkdir(resolve(process.cwd(), '../../data/projects', project.id), { recursive: true });
-  await writeFile(resolve(process.cwd(), '../../data/projects', project.id, 'import-settings.json'), JSON.stringify({ preferLocalAI: input.preferLocalAI === true, generationMode: input.generationMode === 'html' ? 'html' : 'standard' }));
+  // 项目还没有 Storyboard：先把品牌选择记为 pending，runProject 首次构造时注入快照。
+  const pendingBrandKitId = await resolveCreationBrandKitId(input.brandKitId);
+  await writeImportSettings(project.id, { preferLocalAI: input.preferLocalAI === true, generationMode: input.generationMode === 'html' ? 'html' : 'standard', ...(pendingBrandKitId ? { brandKitId: pendingBrandKitId } : {}) });
   await db.job.create({ data: { projectId: project.id, kind: 'storyboard', status: 'queued', stage: 'extracting', attempt: 1 } });
   return { ...project, sourcePath };
 }
@@ -1150,7 +1152,7 @@ const activeProjectRuns = new Set<string>();
 export async function processProject(projectId: string, startAt: ProjectStage = 'extracting', preferLocalAI = false) {
   if (activeProjectRuns.has(projectId)) return;
   activeProjectRuns.add(projectId);
-  try { let requiredAI = preferLocalAI; let generationMode: 'standard' | 'html' = 'standard'; try { const settings = JSON.parse(await readFile(resolve(process.cwd(), '../../data/projects', projectId, 'import-settings.json'), 'utf8')); requiredAI ||= settings.preferLocalAI === true; generationMode = settings.generationMode === 'html' ? 'html' : 'standard'; } catch {} await runProject(projectId, startAt, requiredAI, generationMode); }
+  try { let requiredAI = preferLocalAI; let generationMode: 'standard' | 'html' = 'standard'; const settings = await readImportSettings(projectId); requiredAI ||= settings.preferLocalAI === true; generationMode = settings.generationMode === 'html' ? 'html' : 'standard'; await runProject(projectId, startAt, requiredAI, generationMode); }
   finally { activeProjectRuns.delete(projectId); }
 }
 
@@ -1271,7 +1273,8 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
       const designedHtml = structuredSceneHtml(scene, index);
       return { ...scene, visual: { ...scene.visual, html: sanitizeSceneHtml(designedHtml) } };
     });
-    const storyboard: Storyboard = StoryboardSchema.parse({ title: project.name, styleId: project.styleId, aspectRatio: project.aspectRatio, scenes: finalScenes });
+    // 首次构造 storyboard 时注入 pending 品牌；已存在分镜的项目不会走到这里。
+    const storyboard: Storyboard = await applyPendingBrandSnapshot(projectId, StoryboardSchema.parse({ title: project.name, styleId: project.styleId, aspectRatio: project.aspectRatio, scenes: finalScenes }));
     await db.project.update({ where: { id: projectId }, data: { status: 'storyboarding' } });
     await db.job.update({ where: { id: job.id }, data: { stage: 'storyboarding' } });
     await db.$transaction([
@@ -1280,6 +1283,8 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
       db.project.update({ where: { id: projectId }, data: { status: 'awaiting_review', storyboardJson: JSON.stringify(storyboard) } }),
       db.job.update({ where: { id: job.id }, data: { status: 'completed', stage: 'awaiting_review', error: null, progress: JSON.stringify({ phase: 'completed', message: `已完成 ${chapters.length} 个章节`, completedChapters: chapters.length, chapterCount: chapters.length, percent: 100 }) } }),
     ]);
+    // pending 品牌只注入一次：成功落库后清除，重试时不会用旧选择覆盖用户后来切换的品牌。
+    await consumePendingBrandKitId(projectId).catch(() => undefined);
   } catch (error) {
     const message = error instanceof Error ? error.message : '生成失败';
     await db.$transaction([db.project.update({ where: { id: projectId }, data: { status: 'failed' } }), db.job.update({ where: { id: job.id }, data: { status: 'failed', error: message, progress: JSON.stringify({ phase: 'failed', message }) } })]);

@@ -175,6 +175,7 @@ export type StyleId = z.infer<typeof StyleIdSchema>;
 
 export * from "./batch";
 export * from "./brand-kit";
+export * from "./brand-layout";
 export * from "./captions";
 export * from "./delivery";
 export * from "./editor";

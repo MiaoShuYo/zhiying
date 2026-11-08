@@ -1,16 +1,19 @@
 import type { Scene, Storyboard } from './index';
 import { timelineFor } from './timeline';
 import { captionDuration, resolveCaptionCues } from './captions';
+import { CAPTION_RESERVED_LINES, brandLogoPlacement, captionSafeArea, designCanvas, rendererScale } from './brand-layout';
+import { SubtitleSchema } from './delivery';
 
 export type PreflightSeverity = 'error' | 'warning' | 'info';
 
 export type PreflightCode =
   | 'missing_image' | 'missing_file' | 'missing_audio' | 'empty_narration' | 'narration_too_long'
   | 'caption_overflow' | 'caption_overtime' | 'scene_too_short'
-  | 'duration_target_miss' | 'missing_bgm' | 'subtitles_off';
+  | 'duration_target_miss' | 'missing_bgm' | 'subtitles_off'
+  | 'brand_logo_caption_conflict' | 'brand_logo_too_large';
 
 /** `fix` names the panel that can resolve the issue, so the UI can jump straight there. */
-export type PreflightFix = 'upload_asset' | 'open_assets' | 'generate_audio' | 'open_captions' | 'open_render' | 'rewrite_narration';
+export type PreflightFix = 'upload_asset' | 'open_assets' | 'generate_audio' | 'open_captions' | 'open_render' | 'rewrite_narration' | 'open_brand_settings';
 
 export type PreflightIssue = {
   code: PreflightCode;
@@ -54,6 +57,8 @@ export const preflightCodeLabels: Record<PreflightCode, string> = {
   duration_target_miss: '时长偏离目标',
   missing_bgm: '背景音乐缺失',
   subtitles_off: '字幕已关闭',
+  brand_logo_caption_conflict: '品牌 Logo 与字幕冲突',
+  brand_logo_too_large: '品牌 Logo 尺寸过大',
 };
 export const preflightFixLabels: Record<PreflightFix, string> = {
   upload_asset: '补充素材',
@@ -62,6 +67,7 @@ export const preflightFixLabels: Record<PreflightFix, string> = {
   open_captions: '打开字幕',
   open_render: '检查导出设置',
   rewrite_narration: '补充旁白',
+  open_brand_settings: '打开品牌套件',
 };
 
 const sceneLabel = (scene: Scene, index: number) => `场景 ${index + 1}${scene.title ? `「${scene.title}」` : ''}`;
@@ -93,6 +99,101 @@ function cueIssues(scene: Scene, index: number, portrait: boolean, fontSize: num
     const lateIndex = orderedManualCues.indexOf(lateCue);
     issues.push({ code: 'caption_overtime', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, ...(lateIndex >= 0 ? { cueIndex: lateIndex } : {}), message: `${target}第 ${Math.max(0, lateIndex) + 1} 条手动字幕超出场景音频的 ${window.toFixed(2)} 秒。`, fix: 'open_captions' });
   }
+  return issues;
+}
+
+/** Share of the design-canvas width above which a portrait Logo is visually dominant (issue #49 check 3). */
+export const brandLogoSizeWarnRatio = 0.3;
+
+/**
+ * Conservative worst-case Logo height as a multiple of its width. The Logo asset's aspect ratio is
+ * not stored in the brand snapshot, so the preflight assumes a square image: real logos are usually
+ * wider than tall, which makes this an upper bound for the geometric check.
+ */
+export const brandLogoHeightEstimateRatio = 1;
+
+/** Largest caption line count any scene needs, measured exactly like the caption QC and the renderer. */
+function maxCaptionLines(storyboard: Storyboard, portrait: boolean, fontSize: number): number {
+  const limit = captionCharLimit(portrait, fontSize);
+  let lines = 1;
+  for (const scene of storyboard.scenes) {
+    for (const cue of resolveCaptionCues(scene, captionDuration(scene), portrait)) {
+      lines = Math.max(lines, captionLineCount(cue.text, limit));
+    }
+  }
+  return lines;
+}
+
+/**
+ * Issue #49 brand delivery checks. They are deliberately project-level: the video renders the Logo
+ * once, so one project-level finding is emitted no matter how many scenes reference it.
+ *
+ * The geometry is the renderer's own: `brandLogoPlacement` resolves the pinned edge and the lift
+ * above the caption safe area, and `captionSafeArea` gives the reserved band. A Logo sharing the
+ * caption edge is only reported when:
+ * - the lift is insufficient for the captions a scene actually needs (the renderer reserves 2
+ *   lines; more lines grow the caption block back into the Logo band), or
+ * - the conservative square height estimate would push the lifted Logo past the frame edge.
+ * "Same side but the layout is safe" therefore never warns.
+ */
+function brandLogoIssues(storyboard: Storyboard, portrait: boolean, stale: (path: string) => boolean): PreflightIssue[] {
+  const logo = storyboard.brand?.logo;
+  const src = typeof logo?.src === 'string' ? logo.src.trim() : '';
+  if (!logo?.enabled || !src) return [];
+
+  // Check 1: the Logo file does not exist. It is decorative, so this stays a warning: the export
+  // must not be blocked, but the user has to know the Logo will be missing.
+  if (stale(src)) {
+    return [{
+      code: 'missing_file',
+      severity: 'warning',
+      assetPath: src,
+      assetKind: 'image',
+      message: `品牌 Logo 文件不存在：${src}；请打开品牌套件设置重新上传 Logo。`,
+      fix: 'open_brand_settings',
+    }];
+  }
+
+  const issues: PreflightIssue[] = [];
+  const canvas = designCanvas(portrait);
+
+  // Check 3: extreme portrait size. The ratio is design-canvas based, so it does not depend on the
+  // export resolution and a landscape canvas never trips the 500px schema cap.
+  if (portrait && logo.width > canvas.width * brandLogoSizeWarnRatio) {
+    issues.push({
+      code: 'brand_logo_too_large',
+      severity: 'warning',
+      message: `竖屏画面中品牌 Logo 宽度占设计画布的 ${Math.round((logo.width / canvas.width) * 100)}%，超过 ${Math.round(brandLogoSizeWarnRatio * 100)}%；Logo 会占据过多画面，请打开品牌套件设置调小 Logo 宽度。`,
+      fix: 'open_brand_settings',
+    });
+  }
+
+  // Check 2: Logo and captions share a vertical edge. Center/opposite captions never move the Logo,
+  // so `brandLogoPlacement` yields the plain margin and the check below is skipped.
+  const placement = brandLogoPlacement({ logo, subtitles: storyboard.subtitles, videoWidth: canvas.width, videoHeight: canvas.height });
+  const subtitles = SubtitleSchema.parse(storyboard.subtitles ?? {});
+  if (placement && subtitles.enabled && subtitles.position === placement.verticalEdge) {
+    const scale = rendererScale(canvas.width, canvas.height);
+    const lines = maxCaptionLines(storyboard, portrait, subtitles.fontSize);
+    const band = captionSafeArea({ videoHeight: canvas.height, fontSize: subtitles.fontSize, scale, lines });
+    const estimatedHeight = placement.width * brandLogoHeightEstimateRatio;
+    const overlapsCaptions = placement.verticalOffset < band.total - 1e-9;
+    const squeezedOut = placement.verticalOffset + estimatedHeight > canvas.height;
+    if (overlapsCaptions || squeezedOut) {
+      const side = placement.verticalEdge === 'top' ? '顶部' : '底部';
+      const reasons = [
+        ...(overlapsCaptions ? [`字幕实际需要 ${lines} 行，超过 Logo 避让预留的 ${CAPTION_RESERVED_LINES} 行安全区`] : []),
+        ...(squeezedOut ? ['按保守高度估计，Logo 被安全区抬高后会超出画面'] : []),
+      ];
+      issues.push({
+        code: 'brand_logo_caption_conflict',
+        severity: 'warning',
+        message: `品牌 Logo 与${side}字幕同侧：${reasons.join('；')}，可能与字幕重叠或显示不全；请打开品牌套件设置调整 Logo 位置或大小。`,
+        fix: 'open_brand_settings',
+      });
+    }
+  }
+
   return issues;
 }
 
@@ -156,16 +257,13 @@ export function preflight(storyboard: Storyboard, assets: { path: string; kind?:
   if (storyboard.bgmSrc && stale(storyboard.bgmSrc)) {
     issues.push({ code: 'missing_bgm', severity: 'error', assetPath: storyboard.bgmSrc, assetKind: 'bgm', message: `背景音乐文件已不存在：${storyboard.bgmSrc}`, fix: 'upload_asset' });
   }
-  const brandLogo = storyboard.brand?.logo;
-  // The Logo is decorative: a missing file must warn the user, not block the export.
-  if (brandLogo?.enabled && brandLogo.src.trim() && stale(brandLogo.src)) {
-    issues.push({ code: 'missing_file', severity: 'warning', assetPath: brandLogo.src, assetKind: 'image', message: `项目品牌 Logo 文件已不存在：${brandLogo.src}；导出时可能无法加载 Logo。`, fix: 'open_assets' });
-  }
+  // Brand Logo findings are project-level (one Logo for the whole video) and never block export.
+  issues.push(...brandLogoIssues(storyboard, portrait, stale));
   if (storyboard.subtitles?.enabled === false) {
     issues.push({ code: 'subtitles_off', severity: 'info', message: '字幕已关闭，导出视频不会带字幕文件。', fix: 'open_render' });
   }
 
-  const full = portrait ? 1080 : 1920;
+  const full = designCanvas(portrait).width;
   return {
     issues,
     blocking: issues.filter(issue => issue.severity === 'error').length,
@@ -195,6 +293,8 @@ export function preflightCategoryOf(issue: PreflightIssue): PreflightCategory {
   if (issue.code === 'missing_file') return issue.assetKind === 'audio' ? 'voice' : 'asset';
   if (issue.code === 'missing_bgm') return 'asset';
   if (issue.code === 'caption_overflow' || issue.code === 'caption_overtime') return 'subtitle';
+  if (issue.code === 'brand_logo_caption_conflict') return 'subtitle';
+  if (issue.code === 'brand_logo_too_large') return 'render';
   if (issue.code === 'empty_narration' || issue.code === 'narration_too_long') return 'narration';
   return 'render';
 }
