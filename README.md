@@ -59,14 +59,17 @@
 - Brand Kit 通过本地 JSON 存储和 settings API 管理，支持创建、更新、重命名、复制、设为默认和删除，最多保存 30 个；Logo 上传支持 PNG、JPG/JPEG 和 WebP（最大 5 MiB），会校验实际图片格式与尺寸。
 - 故事板保存 `brandKitId` 来源记录和独立的 Brand Snapshot。渲染只使用项目快照中的基础风格、品牌颜色、字体和 Logo，不依赖当前品牌库内容。
 - 受管理的 Logo 会复制到项目自己的素材目录；项目快照与 `.m2v` 项目包携带被引用的 Logo，恢复后重映射到项目副本。因此品牌套件被修改或删除后，已保存项目仍可复现。
-- 当前提供存储、API、快照和渲染支持，尚未提供选择或应用 Brand Kit 的界面。
+- 「设置 → 品牌套件」提供完整管理界面：列表、新建、编辑、复制、设为默认、删除、Logo 上传/替换与确定性静态实时预览；保存中防重复提交，删除确认会说明已应用项目的品牌快照不受影响。品牌只影响颜色、字体与 Logo，不包含声音、字幕、BGM 或导出设置。
+- 新建项目时可独立选择视觉风格和品牌套件（默认品牌自动预选，也可选「无品牌」）；项目编辑器可更换、重新应用或移除品牌，切换前逐项说明影响范围，且只更新品牌快照，不重新生成旁白、不重跑 TTS、不改字幕时间与场景时长。
+- 导出前检查新增品牌 Logo 交付检查：启用但文件缺失、与同侧字幕安全区冲突、竖屏 Logo 宽度超过设计画布 30% 时给出项目级 warning，并提供「打开品牌套件」修复入口；无品牌项目行为不变。
 
-### V1.2–V1.6.6 版本摘要
+### V1.2–V1.6.7 版本摘要
 
 - **V1.2–V1.5：** 可控性、恢复、质检交付、稳定性、制作效率与成片精修，详见下方各版本记录。
 - **V1.6 — 长项目渲染可靠性：** 增加渲染前估算、片段缓存与增量渲染、阶段日志、中断恢复和任务中心集中查看。
 - **V1.6.5 — 品牌套件与可复现快照：** 增加 Brand Kit Schema、本地存储和 CRUD/Logo API；故事板保存品牌快照，项目渲染与备份恢复使用项目自己的 Logo 副本。
 - **V1.6.6 — 品牌主题补齐、全局 Logo 与项目应用 API：** SceneView 完整使用品牌颜色/字体（含 serif/sans fallback），HTML 场景外层采用品牌主题；新增视频根层 Logo Overlay（四角/大小/透明度/边距/字幕安全区），Logo 文件缺失时由服务端 preflight 给出 warning；新增项目级应用、重新应用、移除 Brand Kit API，只更新品牌快照，不触碰场景与音频；测试包含 1080p 全尺寸关键像素基线。
+- **V1.6.7 — 品牌设置页、项目品牌选择与交付检查：** 新增设置页品牌套件管理界面（列表/新建/编辑/复制/默认/删除、Logo 上传/替换、六色与字体、静态实时预览）；新建视频独立选择品牌（默认品牌预选、可选无品牌），项目编辑器可更换/重新应用/移除品牌，pending 品牌在首次 storyboard 生成时注入独立快照；品牌切换只影响视觉，不触发 Ollama/TTS。服务端 preflight 新增 Logo 缺失、与同侧字幕安全区冲突和竖屏超大尺寸检查，品牌渲染几何抽到 `@m2v/schema` 由渲染器与检查共用。
 
 ### V1.2 可控性与恢复
 
@@ -168,14 +171,22 @@
 - 新增项目动作 API：`POST /api/projects/:id/brand-kit` 把 Brand Kit 当前值复制成项目独立 Brand Snapshot（再次 POST 即刷新），`DELETE /api/projects/:id/brand-kit` 移除项目品牌。两者只改 `brandKitId/brand`，不改 `styleId`、scene、旁白、音频、字幕时间或制作方案，也不触发 Ollama/TTS；沿用项目锁与 revision/if-match 语义。
 - 验证：`pnpm test:v16` 116 项、`pnpm test:v16:integration`、`pnpm test:v16:render` 22 帧（含 1080p 全尺寸关键像素基线）全部通过。项目选择/应用 UI 仍不在 V1.6.6 范围内。
 
+### V1.6.7 品牌套件设置页、项目品牌选择与 preflight 品牌检查
+
+- 设置页新增「品牌套件」区域：列表卡片显示 Logo 缩略图、名称、六色简化色板、基础 Style 与默认标记；支持新建/编辑/复制/设为默认/删除、Logo 上传替换、六色 color+hex 双输入（非法值即时提示且不提交）、标题/正文字体、Logo enabled/四角/宽度/透明度/边距，以及确定性静态实时预览。保存中禁用重复提交，上传失败不丢失其它未改字段，删除确认明确说明已应用项目的品牌快照继续保留；上限 30 个。该页面不包含声音、字幕、BGM 或导出设置。
+- 新建视频时新增独立「品牌套件」下拉：有默认品牌时自动选中，可选择「无品牌」，与 Style 选择互不影响。项目还没有 Storyboard 时，品牌选择写入项目目录的 `import-settings.json`，首次生成 storyboard 时复制成项目独立 Brand Snapshot 并把 Logo 复制为项目自有文件；来源套件已被删除时跳过注入，不影响项目生成。
+- 项目编辑器新增项目级品牌栏：显示当前品牌，提供「更换 / 重新应用 / 移除」；选择器列出 Logo、名称、简化色板、base Style 和默认标记，确认框逐项列出「将更新：品牌颜色、标题/正文字体、Logo」与「不会修改：旁白、分镜内容、配音、语速/停顿、字幕时间、场景时长、制作方案」。切换/重新应用/移除只改品牌快照，不触发 Ollama/TTS、不创建任务；来源套件删除后显示「来源套件已删除」，项目仍可预览/导出；项目锁定或忙碌时按钮禁用并显示错误。
+- 品牌渲染几何（`rendererScale`、`captionSafeArea`、`brandLogoPlacement` 与字幕安全区常量）迁到 `@m2v/schema`，渲染器改为兼容 re-export，preflight 复用同一纯函数。新增项目级检查：启用但 Logo 文件缺失（warning，不阻断导出，修复入口「打开品牌套件」）、Logo 与同侧字幕安全区冲突（仅当某场景字幕实际超过预留下的 2 行，或按保守高度估计被抬高后超出画面时提示）、竖屏 Logo 宽度超过设计画布 30%。同侧但布局安全不误报，多场景只报一次，无 Brand 项目行为不变。
+- 验证：`pnpm typecheck`、`pnpm test:v16`（133 项）、`pnpm test:v16:integration`、`pnpm test:v15`、`pnpm test:v12`、`pnpm test:v17`（42 项 + 2 段静态渲染）、`pnpm test:v17:integration`（5/5）、`pnpm test:v16:render`（22 帧，含 1080p 像素基线）全部通过。
+
 应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
 
 ## 基本使用流程
 
-1. 新建项目，导入资料或粘贴文本，检查并编辑抽取结果；选择画幅、视觉风格及 PPTX 处理方式。
+1. 新建项目，导入资料或粘贴文本，检查并编辑抽取结果；选择画幅、视觉风格、品牌套件（可选）及 PPTX 处理方式。
 2. 检查并编辑故事板，调整场景内容、版式、顺序和时长；按需使用模板、批量调整或添加本地/Commons 图片。
 3. 配置声音参考音频和转录，生成并试听旁白；设置语速、停顿和场景间隔，检查字幕及中文读音规则。
-4. 在实时预览中检查画面和排版，设置可选的本地 BGM；需要时先导出 540p 草稿审片。
+4. 在实时预览中检查画面和排版，设置可选的本地 BGM；需要时先导出 540p 草稿审片。也可在项目编辑器更换、重新应用或移除品牌——只更新视觉快照，不重新生成旁白。
 5. 导出 MP4，查看阶段进度或取消任务；完成后从导出记录下载视频，并按需创建项目快照或备份。
 6. 交付前在「质检交付」检查字幕与语音问题、校验成片文件，再生成交付包 ZIP；常用的画幅、字幕样式和片头片尾可保存为导出预设复用。
 
@@ -416,6 +427,8 @@ pnpm test:v15:integration  # V1.5 集成测试（真实路由与数据库，无�
 pnpm test:v16     # V1.6/V1.6.5/V1.6.6 单元、API 与面板测试
 pnpm test:v16:integration  # V1.6/V1.6.5/V1.6.6 集成测试（含品牌套件、项目快照、项目应用 API 及备份恢复）
 pnpm test:v16:render  # V1.6.5/V1.6.6 Remotion 实际渲染验证（品牌快照样式、Logo、主题、安全区、1080p 像素基线）
+pnpm test:v17     # V1.6.7 品牌设置页、项目品牌选择与 preflight 品牌检查测试
+pnpm test:v17:integration  # V1.6.7 集成测试（品牌库 CRUD/Logo、pending 品牌注入、项目切换/移除、preflight 接线）
 pnpm db:migrate:v16  # 只补 V1.6 新增的可空列，旧库可平滑升级
 pnpm db:generate  # 生成 Prisma Client
 pnpm db:push      # 同步 SQLite 数据库结构
@@ -429,7 +442,7 @@ pnpm db:push      # 同步 SQLite 数据库结构
 
 ## 支持范围与限制
 
-当前支持 PDF/PPTX/Markdown/公开文章 URL/粘贴文本输入，16:9 与 9:16 输出，title/text/bullets/diagram/comparison/chart/code/timeline/math/table/media/html 场景，Minimal Tech、Clean Light、Academic、Social Short 和 Whiteboard 五种风格，PPTX 双模式，场景编辑与重试，声音克隆、逐词字幕与字幕时间轴精修、Commons 图片、本地 BGM、实时预览、导出前检查、片头片尾与转场、任务中心恢复入口、素材占用与快照校验、项目搜索筛选排序、成片质检（字幕与语音）、成片文件校验、交付包 ZIP、导出预设、MP4 导出，以及 Brand Kit 本地 API、项目级品牌快照和项目应用/移除 API。旧项目默认保持 16:9。Brand Kit 暂无选择/应用界面；云端模型 Provider 暂不支持。
+当前支持 PDF/PPTX/Markdown/公开文章 URL/粘贴文本输入，16:9 与 9:16 输出，title/text/bullets/diagram/comparison/chart/code/timeline/math/table/media/html 场景，Minimal Tech、Clean Light、Academic、Social Short 和 Whiteboard 五种风格，PPTX 双模式，场景编辑与重试，声音克隆、逐词字幕与字幕时间轴精修、Commons 图片、本地 BGM、实时预览、导出前检查、片头片尾与转场、任务中心恢复入口、素材占用与快照校验、项目搜索筛选排序、成片质检（字幕与语音）、成片文件校验、交付包 ZIP、导出预设、MP4 导出，以及 Brand Kit 本地 API、项目级品牌快照、项目应用/移除 API、品牌套件设置页、新建项目与项目编辑器的品牌选择/切换，以及品牌 Logo 的导出前检查。旧项目默认保持 16:9；云端模型 Provider 暂不支持。
 
 - **PDF**：优先读取可选择的文本；扫描页使用本地 Tesseract OCR，需要 chi_sim 与 eng 语言包及 TESSDATA_PREFIX。环境自检会显示缺失项；也可粘贴已识别的文字。
 - **网页**：仅支持无需登录的公开文章；本机、内网或非公开网络地址会被拒绝。页面抽取失败时可粘贴正文。
@@ -469,6 +482,22 @@ pnpm db:generate
 上一条报错会连带表现为 `.\start.ps1` 卡住：脚本等的是 `http://127.0.0.1:3000` 返回 2xx–4xx，500 会让它一直等到 120 秒超时。现在超时信息会说明是「已监听但返回 HTTP 500」，并指出该看哪个日志文件，而不再只报“等待服务启动超时”。真正的端口冲突也会直接列出端口和占用进程，例如 `端口已被其他进程占用：3000（占用进程：node (PID 1234)）`；`.\stop.ps1` 结束后若仍有非脚本启动的监听者，也会给出同样的提示。就绪探测用 `System.Net.Http.HttpClient` 取状态码，而不是 `Invoke-WebRequest`：`-SkipHttpErrorCheck` 只有 PowerShell 6+ 才有，Windows PowerShell 5.1 遇到非 2xx 会直接抛异常，于是健康检查会被误判成超时。`start.ps1` 与 `stop.ps1` 在 5.1 和 7 上都能运行。
 
 `next dev` 运行时不要执行 `pnpm build`（或 `apps/web` 的 `pnpm build`）：两者共用 `apps/web/.next`，生产构建会覆盖开发服务器正在使用的 server chunk，之后项目页会返回 500 并报 `Cannot find module './vendor-chunks/zod@<version>.js'`。遇到该报错先 `.\stop.ps1` 停掉服务，删除 `apps/web/.next`，再用 `.\start.ps1` 启动即可；需要生产构建时先停服务、构建完再重启开发服务。
+
+## V1.6.7：品牌套件设置页、项目品牌选择与交付检查
+
+V1.6.5/V1.6.6 已提供品牌 Schema、本地存储/CRUD/Logo API、快照渲染与项目应用 API；V1.6.7 补齐用户可操作闭环和交付前检查。
+
+设置页新增「品牌套件」区域：列表卡片显示 Logo 缩略图、名称、六色简化色板、基础 Style 和默认标记；支持新建、编辑、复制、设为默认、删除、Logo 上传/替换，以及确定性静态实时预览。表单直接编辑六个 renderer palette 字段（color input + 十六进制文本输入，非法值即时提示且不提交）、标题/正文字体、Logo enabled/四角/width/opacity/margin。保存中禁用重复提交；API 错误显示在当前表单；上传 Logo 失败不丢失其它未改字段；删除需要确认并说明「已应用到项目的品牌快照会继续保留；删除只会移除品牌库中的套件」；达到 30 个上限时禁止继续创建并显示原因。该页面不包含声音、字幕、BGM 或导出设置。
+
+新建视频弹窗新增独立「品牌套件」字段：有默认品牌时自动选中，可选择「无品牌」，且不影响 Style 选择。项目尚未生成 Storyboard 时，品牌选择写入项目目录的 `import-settings.json`，首次生成 storyboard 时复制成项目独立 Brand Snapshot，并把 Logo 复制为项目自有文件；来源套件已被删除时跳过注入。项目编辑器显示当前品牌，提供「更换 / 重新应用 / 移除」，更换选择器列出 Logo、名称、简化色板、base Style 与默认标记；切换前确认框明确列出「将更新：品牌颜色、标题/正文字体、Logo」与「不会修改：旁白、分镜内容、配音、语速/停顿、字幕时间、场景时长、制作方案」。切换只更新品牌快照，不调用 Ollama/TTS、不创建任务；来源套件被删除后显示「来源套件已删除」，项目仍可预览/导出；项目锁定或忙碌时按钮禁用并显示错误。
+
+导出前检查（preflight）复用渲染器几何：把 `rendererScale`、`captionSafeArea`、`brandLogoPlacement` 与字幕安全区常量迁到 `@m2v/schema`，渲染器改为兼容 re-export。新增项目级检查：启用但 Logo 文件不存在（warning，不阻断导出，修复入口为「打开品牌套件」）、Logo 与同侧字幕安全区冲突（仅当某场景字幕实际超过预留下的 2 行，或按保守高度估计被抬高后超出画面时提示）、竖屏 Logo 宽度超过设计画布 30%（按设计画布 1080 px 计算，不写死输出分辨率）。同侧但布局安全不误报，多场景只报一次，无 Brand 项目的 preflight 结果不变。
+
+模板/制作方案仍是独立的制作参数体系：Brand Kit 只负责颜色、字体与 Logo，不会成为新的 StyleId，也不包含声音/BGM/字幕/导出设置。
+
+### V1.6.7 验证记录
+
+2026-11-08 自动化验收通过：`pnpm typecheck`、`pnpm test:v16`（133 项）、`pnpm test:v16:integration`、`pnpm test:v15`、`pnpm test:v12`、`pnpm test:v17`（42 项 + 2 段静态渲染）、`pnpm test:v17:integration`（5/5）和 `pnpm test:v16:render`（22 帧真实 Remotion 渲染，含 1080p 全尺寸关键像素基线）。逐项测试与验收结果见 `doc/V1.6.7_test_report.md` 与 `doc/V1.6.7_acceptance_report.md`。
 
 ## V1.6.6：品牌主题、全局 Logo 与项目应用 API
 

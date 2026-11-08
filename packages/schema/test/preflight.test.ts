@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SceneSchema, StoryboardSchema, preflight } from '../src/index';
 
+// `package.json` is outside this issue's write scope and its `test` script lists test files
+// explicitly, so the split brand suites are imported here to stay covered by both
+// `pnpm --filter @m2v/schema test` and `pnpm test:v16`. Running a suite file directly still works.
+import './brand-layout.test';
+import './preflight-brand.test';
+
 const scene = (patch: Record<string, unknown> = {}) => SceneSchema.parse({ id: 'a', type: 'title', narration: '第一句。第二句。', visual: {}, duration: 6, ...patch });
 const board = (scenes: Record<string, unknown>[], patch: Record<string, unknown> = {}) => StoryboardSchema.parse({ title: '例子', styleId: 'minimal-tech', scenes, ...patch });
 const codes = (result: ReturnType<typeof preflight>) => result.issues.map(issue => issue.code);
@@ -68,7 +74,7 @@ test('a missing brand Logo is a server-side warning, not a blocking error', () =
   assert.equal(issue.code, 'missing_file');
   assert.equal(issue.severity, 'warning');
   assert.equal(issue.assetKind, 'image');
-  assert.equal(issue.fix, 'open_assets');
+  assert.equal(issue.fix, 'open_brand_settings', 'the fix now opens the brand kit settings, not the generic asset manager');
   assert.equal(missing.blocking, 0, 'a missing Logo must not block the export');
   assert.match(issue.message, /品牌 Logo/);
 

@@ -59,9 +59,12 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 - Brand Kits use local JSON storage and a settings API for create, update, rename, duplicate, default selection, and deletion, with a limit of 30 kits.
 - Logo upload accepts PNG, JPG/JPEG, and WebP up to 5 MiB, and validates the decoded image format and dimensions (up to 40 megapixels).
 - Storyboards can save a source `brandKitId` and an independent Brand Snapshot. Rendering reads the snapshot's base style, colors, fonts, and Logo, so later Brand Kit edits or deletion do not change saved projects.
-- Managed Logos are copied into project assets and included in snapshots and `.m2v` backups. Restoring a project remaps the Logo to its project copy without changing the global Brand Kit. The API and snapshot rendering are available; a UI for selecting or applying Brand Kits is not yet provided.
+- Managed Logos are copied into project assets and included in snapshots and `.m2v` backups. Restoring a project remaps the Logo to its project copy without changing the global Brand Kit.
+- Settings → Brand Kits provides the full library UI: list/create/edit/duplicate/set-default/delete, Logo upload and replacement, six-color palette with color and hex inputs (invalid values are flagged and never submitted), heading/body fonts, Logo enabled/four corners/width/opacity/margin, and a deterministic static live preview. The page only manages brand identity (colors, fonts, Logo) and never includes voice, subtitle, BGM, or export settings.
+- New projects can pick a Brand Kit independently from the visual style (the default kit is preselected, and “No brand” is allowed); the project editor can change, re-apply, or remove the brand. Applying a brand snapshots the current library values and only changes visuals — no Ollama/TTS calls, narration, audio, subtitle timings, scene durations, or production templates are touched.
+- Export preflight now reports brand Logo problems: an enabled but missing Logo file, a Logo that conflicts with same-side caption safe area, and an oversized portrait Logo (over 30% of the design canvas). Findings are project-level and provide an “Open brand kits” fix; projects without a brand are unaffected.
 
-### V1.2–V1.6.6 highlights
+### V1.2–V1.6.7 highlights
 
 - **V1.2 — Recovery and control:** edit subtitle text/timing on a shared timeline; review extraction page by page; locate storyboard scenes by source page; retry tasks with actionable failure states; run export preflight and navigate to affected scenes; inspect unused assets and validate snapshots.
 - **V1.3 — Quality and delivery:** run subtitle and voice QC, validate rendered MP4 resolution/duration/tracks, create ZIP delivery packages containing MP4, SRT/VTT/ASS, cover, `.m2v` backup, and notes; save reusable export presets.
@@ -74,6 +77,7 @@ Zhiying (Local Studio) is a Windows desktop-local workspace for turning PDFs, PP
 - **V1.6.4 — CPU inference controls, PPT preservation, and model comparison:** PPT Preserve generates narration only, prioritizes speaker notes, and keeps the matching slide image in both standard and HTML modes; invalid narration falls back per slide, and completed slides are reused on resume. Web and Python share validated Ollama settings (`OLLAMA_KEEP_ALIVE=30m`, `OLLAMA_NUM_CTX=4096`, `OLLAMA_STREAM=true`, `LLM_MAX_CONCURRENCY=1` by default) and a cross-process generation-slot limit. Polyphone prediction uses the measured 32-target batch and 384-token output cap, keeps dictionary and user corrections authoritative, and continues after a failed batch using dictionary readings for that batch. HTML scene text preserves manual line breaks. A CPU comparison found faster warm storyboard, HTML, regenerate, and PPT Preserve runs with `qwen3:4b-instruct-2507-q4_K_M`, but slower and slightly less accurate polyphone prediction; `qwen3:4b` therefore remains the default and Instruct is optional. See the [CPU benchmark report](docs/benchmarks/qwen3-4b-cpu.md).
 - **V1.6.5 — Brand Kits and reproducible project snapshots:** add Brand Kit schemas, local JSON CRUD and Logo upload APIs, and independent storyboard brand snapshots. Rendering and project backups use project-owned Logo copies, so saved projects remain reproducible after a Brand Kit changes or is deleted. Brand Kit selection and application UI are not included yet.
 - **V1.6.6 — Brand theme completion, global Logo, and project apply API:** `SceneView` now consumes brand colors/fonts end to end with serif/sans fallbacks, and HTML scenes adopt the brand background/foreground/body font while full-bleed slides keep their original image. A video-level `BrandLogoOverlay` supports four corners, width, opacity, margin, and a two-line caption safe area while staying outside scene transitions. New project APIs apply, re-apply, or remove a Brand Kit snapshot without touching `styleId`, scenes, narration, audio, or timings. A missing Logo file becomes a server-side preflight warning, and the render test includes a full-size 1080p pixel baseline.
+- **V1.6.7 — Brand settings UI, project brand selection, and delivery checks:** add the settings-page Brand Kit manager (CRUD, Logo upload, six-color/font/Logo editing, deterministic static live preview), independent Brand Kit selection when creating a project with pending-snapshot injection on first storyboard creation, and project-editor change/re-apply/remove actions that only update the visual snapshot. Server preflight now flags missing Logo files, same-side caption safe-area conflicts, and oversized portrait Logos; shared brand geometry moved to `@m2v/schema` so the renderer and the check use the same pure functions.
 
 Browser acceptance on 2026-10-23 covered subtitle seeking/playback and timing, native file-picker upload and missing-asset repair, caption text edits, scene-duration adjustment, a new render, QC, MP4 validation, and delivery-package consistency. On 2026-10-24, browser testing also applied a batch layout change to two scenes, verified the before/after impact preview and undo, then saved and copied a production plan. Applying it in another project previewed only the aspect-ratio change (16:9 → 9:16); the original 16:9 export preset restored that project afterward. The source project passed QC again (0 errors, 0 warnings) and its seven-file delivery package was regenerated. With user confirmation, the temporary production plan and its copy were deleted from the global plan library; existing export presets were retained. See [the V1.5 manual acceptance checklist](doc/V1.5_manual_acceptance.md) for detailed scenarios and scope.
 
@@ -81,10 +85,10 @@ The app is designed for local use and does not provide cloud generation or compl
 
 ## Typical workflow
 
-1. Create a project, import source material or paste text, review the extracted content, and choose aspect ratio, visual style, and PPTX handling.
+1. Create a project, import source material or paste text, review the extracted content, and choose aspect ratio, visual style, an optional Brand Kit, and PPTX handling.
 2. Edit the storyboard, scene content, layout, order, and duration. Use templates, batch edits, or local/Commons images as needed.
 3. Configure a voice reference and transcript, generate and preview narration, then adjust speed, pauses, scene gaps, subtitles, and pronunciation rules.
-4. Review visuals and layout in live preview; optionally add local background music or render a 540p draft.
+4. Review visuals and layout in live preview; optionally add local background music or render a 540p draft. You can also change, re-apply, or remove the project brand in the editor — brand changes only update the visual snapshot and never regenerate narration.
 5. Export MP4, monitor or cancel the render, and download the result from export history. Create snapshots or backups when needed.
 6. Before delivery, run subtitle/narration QC, validate the MP4, and create a delivery ZIP. Save common aspect ratio, subtitle, intro, and outro settings as export presets.
 
@@ -203,6 +207,8 @@ pnpm test:v15:integration
 pnpm test:v16
 pnpm test:v16:integration
 pnpm test:v16:render
+pnpm test:v17
+pnpm test:v17:integration
 ```
 
 The V1.5 validation record reports TypeScript checks and V1.1–V1.5 unit/integration suites passing on 2026-10-23. Integration tests use temporary data where documented; some V1.3/V1.4 media-package integration paths require FFmpeg.
@@ -210,6 +216,8 @@ The V1.5 validation record reports TypeScript checks and V1.1–V1.5 unit/integr
 V1.6.5 validation on 2026-11-06 passed `pnpm typecheck`, `pnpm test:v16`, `pnpm test:v16:integration`, and `pnpm test:v16:render`. The checks cover Brand Kit schemas and APIs, Logo validation and cleanup, project snapshot/backup path remapping, and an actual Remotion render using snapshot styling and Logo.
 
 V1.6.6 validation on 2026-11-07 passed `pnpm typecheck`, `pnpm test:v16` (116 tests), `pnpm test:v16:integration`, and `pnpm test:v16:render` (22 actual Remotion frames, including a full-size 1080p pixel baseline). Coverage includes brand colors/fonts, HTML scene branding, full-bleed preservation, the video-level Logo with caption safe area, and the project apply/re-apply/remove Brand Kit API. See `doc/V1.6.6_test_report.md` and `doc/V1.6.6_acceptance_report.md`.
+
+V1.6.7 validation on 2026-11-08 passed `pnpm typecheck`, `pnpm test:v16` (133 tests), `pnpm test:v16:integration`, `pnpm test:v15`, `pnpm test:v12`, `pnpm test:v17` (42 tests plus 2 static render checks), `pnpm test:v17:integration` (5/5), and `pnpm test:v16:render` (22 actual Remotion frames, including a full-size 1080p pixel baseline). Coverage includes the Brand Kit settings UI, project creation pending-snapshot injection, editor change/re-apply/remove with zero LLM/TTS jobs, and the brand Logo preflight checks. See `doc/V1.6.7_test_report.md` and `doc/V1.6.7_acceptance_report.md`.
 
 Follow-ups completed: the render test now asserts 1080p brand-background, full-bleed source, and Logo pixels; the panel test directly covers the `渲染前估算 / 成片 / 540p 草稿` header; a missing brand Logo becomes a server-side preflight warning; and integration-test cleanup is best-effort so a Windows EBUSY cannot mark a passing test as failed. See `doc/V1.6.6_followups_report.md`.
 

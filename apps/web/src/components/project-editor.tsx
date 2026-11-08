@@ -10,9 +10,10 @@ import { FinalCutPreview } from './final-cut-preview';
 import { PreflightPanel } from './preflight-panel';
 import { RenderEstimatePanel } from './render-estimate-panel';
 import { FrameSettings } from './frame-settings';
+import { BrandKitChangeDialog, BrandKitPicker, ProjectBrandBar } from './brand-kit-picker';
 import { Player, type PlayerRef } from '@remotion/player';
 import { ExplainerVideo, getDurationInFrames } from '@m2v/video';
-import { StoryboardSchema, timelineFrames, type EstimateFinding, type PreflightIssue, type PreflightResult, type Scene, type Storyboard, type StyleId, type SubtitleCue } from '@m2v/schema';
+import { StoryboardSchema, timelineFrames, type BrandKit, type EstimateFinding, type PreflightIssue, type PreflightResult, type Scene, type Storyboard, type StyleId, type SubtitleCue } from '@m2v/schema';
 import { renderPercent } from '@/lib/task-actions';
 import { styles } from '@m2v/styles';
 
@@ -125,6 +126,14 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   const [preflightLoading, setPreflightLoading] = useState(false);
   const [preflightError, setPreflightError] = useState('');
   const [allowIssues, setAllowIssues] = useState(false);
+  // 项目级品牌：切换只刷新视觉快照，不触发任何 LLM/TTS/渲染。
+  const [brandKits, setBrandKits] = useState<BrandKit[] | null>(null);
+  const [brandCatalogError, setBrandCatalogError] = useState('');
+  const [brandKitError, setBrandKitError] = useState('');
+  const [brandKitNotice, setBrandKitNotice] = useState('');
+  const [brandWorking, setBrandWorking] = useState(false);
+  const [brandPickerOpen, setBrandPickerOpen] = useState(false);
+  const [brandConfirm, setBrandConfirm] = useState<{ kind: 'apply'; kit: BrandKit } | { kind: 'remove' } | null>(null);
   // Findings from the estimate gate; the render is queued only after the user acknowledges them.
   const [renderRisks, setRenderRisks] = useState<{ preset: 'full' | 'draft'; findings: EstimateFinding[] } | null>(null);
   // A production template can carry a preferred export quality; it seeds the render tab until a preflight picks one.
@@ -171,6 +180,12 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   useEffect(() => { if (!previewExpanded) return; const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewExpanded(false); }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, [previewExpanded]);
   const storyboard = data.storyboard; const safeIndex = Math.min(active, Math.max(0, (storyboard?.scenes.length ?? 1) - 1)); const isBusy = retryBusy || saving || audioUploading || ['created', 'extracting', 'analyzing', 'storyboarding', 'generating_audio', 'rendering', 'encoding'].includes(data.status) || data.jobs.some(job => ['queued', 'running', 'cancelling'].includes(job.status));
   const selectedScene = storyboard?.scenes[safeIndex];
+  const currentBrandKitId = storyboard?.brandKitId;
+  const currentProjectBrand = storyboard?.brand;
+  const currentBrandKit = currentBrandKitId && brandKits ? brandKits.find(kit => kit.id === currentBrandKitId) ?? null : null;
+  // 项目快照仍可正常预览/导出；只是品牌库里已经找不到来源套件（品牌库读取失败时不误报）。
+  const brandStale = Boolean(currentBrandKitId && brandKits !== null && !brandCatalogError && !currentBrandKit);
+  const currentBrandName = currentProjectBrand?.name ?? currentBrandKit?.name ?? null;
   useEffect(() => {
     if (!selectedScene) return;
     if (visualJsonSceneId.current !== selectedScene.id) {
@@ -291,6 +306,15 @@ export function ProjectEditor({ initial }: { initial: Data }) {
     const timer = window.setInterval(poll, 1800);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [data.id, shouldPollProgress]);
+  // 品牌库只用于显示与选择器；项目预览始终读取自己的快照，不依赖这个请求。
+  useEffect(() => {
+    let stopped = false;
+    void fetch('/api/settings/brand-kits', { cache: 'no-store' })
+      .then(response => response.json())
+      .then(result => { if (!stopped) setBrandKits(Array.isArray(result.brandKits) ? result.brandKits as BrandKit[] : []); })
+      .catch(() => { if (!stopped) { setBrandKits([]); setBrandCatalogError('读取品牌套件失败，暂时无法切换品牌；请刷新页面后重试。'); } });
+    return () => { stopped = true; };
+  }, [data.id]);
   async function saveTranscript(value: string) {
     setTranscriptSaving(true);
     try {
@@ -530,7 +554,57 @@ export function ProjectEditor({ initial }: { initial: Data }) {
       return null;
     } finally { setPreflightLoading(false); }
   }
+  /** Brand API returns the rewritten board + new revision; adopt it without creating an undo entry. */
+  function adoptBrandStoryboard(next: Storyboard, revision: number) {
+    savedBoard.current = JSON.stringify(next);
+    revisionRef.current = revision;
+    latest.current = { ...latest.current, storyboard: next, revision };
+    clearBoardUndo();
+    setSaveError('');
+    setData(current => ({ ...current, storyboard: next, revision }));
+  }
+  /** 品牌切换前先把未保存的分镜落库，因为品牌 API 会整体重写 storyboard。 */
+  async function changeBrandKit(kitId: string) {
+    if (isBusy || brandWorking) return;
+    setBrandWorking(true); setBrandKitError(''); setBrandKitNotice('');
+    try {
+      if (!await persistBoard()) throw new Error('分镜保存失败，请先保存再切换品牌');
+      const response = await fetch(`/api/projects/${data.id}/brand-kit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'if-match': String(revisionRef.current) },
+        body: JSON.stringify({ brandKitId: kitId }),
+      });
+      const result = await response.json() as { storyboard?: Storyboard; revision?: number; error?: string };
+      if (!response.ok || !result.storyboard || typeof result.revision !== 'number') throw new Error(result.error ?? '切换品牌失败');
+      adoptBrandStoryboard(result.storyboard, result.revision);
+      setBrandConfirm(null);
+      setBrandPickerOpen(false);
+      setBrandKitNotice('品牌快照已更新，预览立即使用新视觉；旁白、配音、字幕时间与场景时长未改变。');
+    } catch (error) {
+      setBrandKitError(error instanceof Error ? error.message : '切换品牌失败');
+    } finally { setBrandWorking(false); }
+  }
+  async function removeProjectBrand() {
+    if (isBusy || brandWorking) return;
+    setBrandWorking(true); setBrandKitError(''); setBrandKitNotice('');
+    try {
+      if (!await persistBoard()) throw new Error('分镜保存失败，请先保存再移除品牌');
+      const response = await fetch(`/api/projects/${data.id}/brand-kit`, {
+        method: 'DELETE',
+        headers: { 'if-match': String(revisionRef.current) },
+      });
+      const result = await response.json() as { storyboard?: Storyboard; revision?: number; error?: string };
+      if (!response.ok || !result.storyboard || typeof result.revision !== 'number') throw new Error(result.error ?? '移除品牌失败');
+      adoptBrandStoryboard(result.storyboard, result.revision);
+      setBrandConfirm(null);
+      setBrandKitNotice('已移除项目品牌，项目回到自身 Style；旁白、配音、字幕时间与场景时长未改变。');
+    } catch (error) {
+      setBrandKitError(error instanceof Error ? error.message : '移除品牌失败');
+    } finally { setBrandWorking(false); }
+  }
   function locateIssue(issue: Pick<PreflightIssue, 'fix' | 'sceneIndex' | 'cueIndex'>) {
+    // preflight 的品牌 Logo 问题跳转到设置页品牌套件区域；用字符串比较，避免与 schema 版本耦合。
+    if (String(issue.fix) === 'open_brand_settings') { window.location.assign('/settings#brand-kits'); return; }
     if (issue.sceneIndex !== undefined) setActive(issue.sceneIndex);
     if (issue.fix === 'generate_audio') { setTab('voice'); return; }
     if (issue.fix === 'open_render') { setTab('render'); return; }
@@ -580,6 +654,18 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   // server-side recovery passes, so this only appears if recovery was skipped.
   const stuckProject = activeStatuses.includes(data.status) && !data.jobs.some(job => ['queued', 'running', 'cancelling'].includes(job.status)) && !retryBusy && !saving && !isBusy;
   return <main className="shell editor-shell"><header className="topbar"><Link className="brand" href="/">知影 <span>LOCAL STUDIO</span></Link><div className="crumb">项目 / <b>{data.name}</b></div><div className="top-actions"><span role="status">{autoSaveState}</span><button className="button subtle" disabled={!undoCount || isBusy} title="撤销上一步分镜修改（Ctrl+Z）" onClick={undoBoard}>↶ 撤销</button><button className="button subtle" onClick={save} disabled={!storyboard || isBusy}>{saving ? '保存中…' : '保存分镜'}</button><button className="button primary" onClick={() => void render()} disabled={!storyboard || isBusy}>导出视频 ↗</button></div></header><div className="editor-heading"><div><p className="eyebrow">PROJECT WORKSPACE</p><h1>{data.name}</h1><p className="muted">{storyboard?.scenes.length ?? 0} 个场景 · {styles[data.styleId as StyleId]?.name ?? data.styleId} · {storyboard?.aspectRatio ?? data.aspectRatio ?? '16:9'}</p></div><WorkflowProgress data={data} /><div className="tabs">{(['storyboard', 'voice', 'render', 'final', 'qc'] as const).map(t => <button className={tab === t ? 'active' : ''} onClick={() => setTab(t)} key={t}>{t === 'storyboard' ? '故事板' : t === 'voice' ? '声音设置' : t === 'render' ? '渲染导出' : t === 'final' ? '成片精修' : '质检交付'}</button>)}</div></div>
+  {storyboard && <ProjectBrandBar
+    brandName={currentBrandName}
+    brandColors={currentProjectBrand?.colors}
+    stale={brandStale}
+    disabled={isBusy || brandWorking}
+    working={brandWorking}
+    error={brandKitError || brandCatalogError}
+    notice={brandKitNotice}
+    onOpenPicker={() => { setBrandKitError(''); setBrandKitNotice(''); setBrandPickerOpen(true); }}
+    onReapply={() => { const id = currentBrandKitId; if (id) void changeBrandKit(id); }}
+    onRemove={() => { setBrandKitError(''); setBrandKitNotice(''); setBrandConfirm({ kind: 'remove' }); }}
+  />}
   {data.status === 'failed' && <section className="settings-card retry-card"><p className="eyebrow">TASK FAILED</p><h2>项目执行失败</h2><p className="error-text">{failedJob?.error ?? '执行遇到错误，请检查本地服务后重试。'}</p><p className="failure-step"><span>失败步骤</span><code>{failedJob ? stageLabels[failedJob.stage] ?? failedJob.stage : '未知'}</code></p>{failedJob?.kind === 'storyboard' && <p className="hint">从失败步骤继续时会检查章节检查点，只复用与当前资料匹配且完整的章节；无有效检查点时会重新生成。从头执行会清空当前分镜。</p>}<div className="retry-actions">{failedJob?.kind === 'storyboard' && <><button className="button primary" disabled={retryBusy} onClick={() => void retryProject('step')}>{retryBusy ? '重新执行中…' : '从失败步骤重试'}</button><button className="button subtle" disabled={retryBusy} onClick={() => void retryProject('restart')}>从头重新执行</button></>}{failedJob?.kind === 'render' && <button className="button primary" disabled={isBusy} onClick={() => { setTab('render'); void render(); }}>重新导出视频</button>}{failedJob?.kind === 'tts' && <button className="button primary" disabled={retryBusy} onClick={() => void synthesize()}>{retryBusy ? '重新执行中…' : '继续生成未完成语音'}</button>}<Link className="button subtle" href="/">返回项目列表</Link></div></section>}
   {stuckProject && <section className="settings-card retry-card"><p className="eyebrow">TASK NOT RUNNING</p><h2>任务已停止推进</h2><p className="muted">项目停在「{stageLabels[data.status] ?? data.status}」，但已经没有排队或运行中的任务。可能是本地服务被中断，或页面曾经关闭过。可以重新检查并解除锁定。</p><div className="retry-actions"><button className="button primary" disabled={retryBusy} onClick={() => void recoverProject()}>{retryBusy ? '检查中…' : '重新检查并解除锁定'}</button><Link className="button subtle" href="/">返回项目列表</Link></div></section>}
   {message && data.status !== 'failed' && <div className="toast" onClick={() => setMessage('')}>{message}<button>×</button></div>}
@@ -596,6 +682,23 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   {tab === 'final' && <FinalCutPreview id={data.id} jobId={finalCutJobId} board={storyboard} disabled={isBusy} onSaveCues={saveSceneCues} onJumpScene={locateScene} onOpenRender={() => setTab('render')} onMessage={setMessage} />}
   {tab === 'qc' && storyboard && <QualityDelivery id={data.id} board={storyboard} busy={isBusy} save={persistBoard} onLocate={locateQcIssue} onRegenerateAudio={sceneId => void synthesizeScene(sceneId)} onApplyPreset={patch => { if (latest.current.storyboard) commitBoard({ ...latest.current.storyboard, ...patch }); }} onOpenRender={() => setTab('render')} currentPreset={preflight?.preset ?? presetPreference} onTemplateApplied={result => { setPresetPreference(result.renderPreset); void reloadProject(); }} />}
   {!storyboard && !['awaiting_source_review', 'created', 'extracting', 'analyzing', 'storyboarding', 'failed'].includes(data.status) && <div className="empty"><h2>项目还没有故事板</h2><p>返回首页并重新导入素材。</p></div>}
+  {brandPickerOpen && <BrandKitPicker
+    kits={brandKits ?? []}
+    currentKitId={currentBrandKitId}
+    loading={brandKits === null}
+    disabled={isBusy || brandWorking}
+    error={brandKitError || brandCatalogError}
+    onSelect={kit => { setBrandPickerOpen(false); setBrandKitError(''); setBrandConfirm({ kind: 'apply', kit }); }}
+    onClose={() => { if (!brandWorking) setBrandPickerOpen(false); }}
+  />}
+  {brandConfirm && <BrandKitChangeDialog
+    kind={brandConfirm.kind}
+    kitName={brandConfirm.kind === 'apply' ? brandConfirm.kit.name : currentBrandName ?? undefined}
+    working={brandWorking}
+    error={brandKitError}
+    onConfirm={() => { if (brandConfirm.kind === 'apply') void changeBrandKit(brandConfirm.kit.id); else void removeProjectBrand(); }}
+    onCancel={() => { if (!brandWorking) { setBrandConfirm(null); setBrandKitError(''); } }}
+  />}
   {fieldEditor && <div className="field-editor-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setFieldEditor(null); }}><section className="field-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="field-editor-title"><div className="field-editor-header"><div><p className="eyebrow">场景 {safeIndex + 1} · {fieldEditor === "narration" ? "旁白" : "画面数据 JSON"}</p><h2 id="field-editor-title">{fieldEditor === "narration" ? "编辑旁白" : "编辑画面数据"}</h2></div><button type="button" className="modal-close" aria-label="关闭编辑窗口" onClick={() => setFieldEditor(null)}>×</button></div><textarea autoFocus className={`input textarea field-editor-textarea ${fieldEditor === "visual" ? "json-area" : ""}`} spellCheck={fieldEditor !== "visual"} value={fieldEditorDraft} onChange={event => { setFieldEditorDraft(event.target.value); setFieldEditorError(""); }} onKeyDown={event => { if (event.key === "Escape") setFieldEditor(null); if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) applyFieldEditor(); }} />{fieldEditorError && <p className="error-text" role="alert">{fieldEditorError}</p>}<p className="hint">在弹窗中编辑，点击“应用”后同步到场景并自动保存。</p><div className="field-editor-actions"><button type="button" className="button subtle" onClick={() => setFieldEditor(null)}>取消</button><button type="button" className="button primary" disabled={isBusy} onClick={applyFieldEditor}>应用</button></div></section></div>}
   </main>;
 }
