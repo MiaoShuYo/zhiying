@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>知影 · 本地 AI 讲解视频工作室</title>
-  <meta name="description" content="知影（Local Studio）是一个运行在本机的 AI 讲解视频工作室：把 PDF、Markdown、PowerPoint 或文章整理成分镜，用本地模型生成旁白、字幕与成片。资料不上传云端。">
-  <meta name="keywords" content="知影, Local Studio, AI 讲解视频, 本地 AI, Remotion, F5-TTS, Ollama, 视频生成">
+  <meta name="description" content="知影（Local Studio）是一个运行在本机的 AI 讲解视频工作室：把 PDF、Markdown、PowerPoint 或文章整理成分镜（含代码讲解场景），用本地模型生成旁白、字幕与成片。资料不上传云端。">
+  <meta name="keywords" content="知影, Local Studio, AI 讲解视频, 本地 AI, 代码讲解, Code Scene, Markdown 代码, Remotion, F5-TTS, Ollama, 视频生成">
   <meta property="og:type" content="website">
   <meta property="og:title" content="知影 · 本地 AI 讲解视频工作室">
   <meta property="og:description" content="从资料到分镜、旁白、字幕与成片，全部在你的电脑上完成。">
@@ -23,6 +23,7 @@
       </a>
       <nav class="nav-links" aria-label="页面导航">
         <a href="#features">功能</a>
+        <a href="#code">代码场景</a>
         <a href="#workflow">工作流</a>
         <a href="#brand">品牌套件</a>
         <a href="#stack">技术栈</a>
@@ -54,7 +55,7 @@
             <span><i class="dot"></i>全部本地运行</span>
             <span><i class="dot"></i>MIT License</span>
             <span><i class="dot"></i>Windows 10 / 11</span>
-            <span><i class="dot"></i>最新版本 V1.6.7</span>
+            <span><i class="dot"></i>最新版本 V1.6.8</span>
           </div>
         </div>
 
@@ -66,6 +67,7 @@
               <ul>
                 <li>资料自动整理成故事板</li>
                 <li>本地生成旁白与逐词字幕</li>
+                <li>代码讲解场景，逐行聚焦</li>
                 <li>一键导出 16:9 / 9:16 成片</li>
               </ul>
             </div>
@@ -132,6 +134,14 @@
             <h3>数据留在本机</h3>
             <p>项目数据库、素材、音频与成片都保存在本地；除你主动发起的网页抓取外不访问云端。</p>
           </article>
+          <article class="card wide">
+            <div class="tag">V1.6.8</div>
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6M13.5 4l-3 16"/></svg></div>
+            <div class="wide-body">
+              <h3>代码讲解场景（Code Scene）</h3>
+              <p>Markdown 代码块保留为结构化源码；模型按旁白给代码行分段，画面高亮当前讲解行、弱化其余行，长代码自动滚动。横屏 16:9 与竖屏 9:16 各有专用布局，源码逐字保留、不由模型改写。</p>
+            </div>
+          </article>
         </div>
       </div>
     </section>
@@ -145,11 +155,66 @@
         </div>
         <div class="steps">
           <div class="step"><div class="n">1</div><h3>新建项目</h3><p>导入资料并检查抽取结果；选择画幅、视觉风格、品牌套件与 PPTX 处理方式。</p></div>
-          <div class="step"><div class="n">2</div><h3>生成故事板</h3><p>本地模型把正文整理成章节与场景，可逐场调整内容、版式、顺序和时长。</p></div>
+          <div class="step"><div class="n">2</div><h3>生成故事板</h3><p>本地模型把正文整理成章节与场景（含代码讲解场景），可逐场调整内容、版式、顺序和时长。</p></div>
           <div class="step"><div class="n">3</div><h3>生成旁白</h3><p>用参考音频克隆音色，设置语速与停顿，逐词字幕自动对齐，可按需纠正读音。</p></div>
           <div class="step"><div class="n">4</div><h3>品牌与预览</h3><p>套用品牌套件的颜色、字体和 Logo，在实时预览里检查画面与排版。</p></div>
           <div class="step"><div class="n">5</div><h3>导出视频</h3><p>先导出 540p 草稿审片，满意后输出 1080p、30 FPS 的 H.264 MP4。</p></div>
           <div class="step"><div class="n">6</div><h3>质检交付</h3><p>字幕与语音质检、成片文件校验，最后生成包含视频与字幕的交付包。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="code">
+      <div class="container">
+        <div class="section-head">
+          <p class="eyebrow">CODE SCENE · V1.6.8</p>
+          <h2>代码讲解，也能一屏看懂</h2>
+          <p>Markdown 里的 fenced code 会被保留成结构化代码块；模型为每段旁白挑选要聚焦的代码行，画面按节拍高亮、弱化其余行，长代码自动滚动查看。源码逐字保留，不由模型改写。</p>
+        </div>
+
+        <div class="brand-split">
+          <div class="panel" aria-label="Code Scene 聚焦渲染示意">
+            <div class="panel-head">
+              <b class="code-file">cache.ts</b>
+              <span class="pill">TypeScript</span>
+            </div>
+            <div class="code-window" role="img" aria-label="代码讲解场景：高亮命中缓存并直接返回的两行">
+              <div class="code-line"><span class="ln">1</span><span class="lc">const cache = new Map();</span></div>
+              <div class="code-line"><span class="ln">2</span><span class="lc"></span></div>
+              <div class="code-line"><span class="ln">3</span><span class="lc">async function getUser(id) {</span></div>
+              <div class="code-line active"><span class="ln">4</span><span class="lc">  if (cache.has(id)) {</span></div>
+              <div class="code-line active"><span class="ln">5</span><span class="lc">    return cache.get(id);</span></div>
+              <div class="code-line"><span class="ln">6</span><span class="lc">  }</span></div>
+              <div class="code-line"><span class="ln">7</span><span class="lc">  return fetchUser(id);</span></div>
+              <div class="code-line"><span class="ln">8</span><span class="lc">}</span></div>
+              <div class="code-beat"><i class="pulse"></i>命中后直接返回</div>
+            </div>
+            <div class="code-caption">命中缓存后直接返回，避免重复请求。</div>
+          </div>
+
+          <div>
+            <div class="preview-card" aria-label="Code Scene 横竖屏布局示意">
+              <div class="pc-eyebrow">16:9 / 9:16</div>
+              <h4>两种画幅，各有专用布局</h4>
+              <p>横屏代码占主区域、说明卡在右侧；竖屏改为上下布局，说明卡放在代码下方并避开字幕安全区。</p>
+              <div class="pc-row"><span class="pc-btn">横屏 12–16 行</span><span class="pc-btn ghost">竖屏 7–11 行</span></div>
+            </div>
+            <ul class="brand-list">
+              <li>fenced code（``` / ~~~）保留为结构化代码块：语言与源码原样，正文继续是讲解文字</li>
+              <li>讲解 beats：每段聚焦行范围 + 简短 label + narrationText，时间轴自动对齐旁白与字幕，不写死秒数</li>
+              <li>可读字号保护：50+ 行代码不会被整体缩小，改为 viewport 内 8–15 帧平滑滚动</li>
+              <li>横屏代码区 ≥68%、说明卡在右列；竖屏上下布局，beat 提示卡不遮挡字幕</li>
+              <li>源码保真：visual.code 必须逐字来自输入源码，幻觉代码或旁白复述源码会自动回退到安全分镜</li>
+              <li>Standard 与 HTML 两种生成模式共用同一份结构化 visual，预览与成片表现一致</li>
+            </ul>
+          </div>
+        </div>
+
+        <div style="height:18px"></div>
+        <div class="version">
+          <b>最新版本 V1.6.8</b>
+          <span>代码讲解场景（Code Scene）· 结构化代码块 · 聚焦 beats 与字幕时间对齐 · 横屏/竖屏布局与自动滚动</span>
+          <a class="pill" href="https://github.com/MiaoShuYo/zhiying#readme" target="_blank" rel="noopener">阅读更新记录 ↗</a>
         </div>
       </div>
     </section>
@@ -217,7 +282,7 @@
 
         <div style="height:18px"></div>
         <div class="version">
-          <b>最新版本 V1.6.7</b>
+          <b>V1.6.7 · 品牌套件</b>
           <span>品牌套件设置页 · 新建/编辑器品牌选择与切换 · 导出前品牌 Logo 检查（缺失 / 字幕安全区 / 超大尺寸）</span>
           <a class="pill" href="https://github.com/MiaoShuYo/zhiying#readme" target="_blank" rel="noopener">阅读更新记录 ↗</a>
         </div>
@@ -316,6 +381,10 @@ pnpm db:push
           <details>
             <summary>能用自己的品牌颜色和 Logo 吗？</summary>
             <p>可以。V1.6.7 提供品牌套件：在设置页创建品牌（颜色、字体、Logo），新建项目或在项目编辑器里应用。项目保存独立快照，所以之后修改品牌库不会影响已有项目。</p>
+          </details>
+          <details>
+            <summary>代码讲解是怎么做的？</summary>
+            <p>V1.6.8 把 Markdown 里的 fenced code 保留为结构化源码块。生成分镜时，模型只为每段旁白选择要聚焦的代码行和一句简短提示，画面据此高亮当前行、弱化其余行，长代码按 viewport 自动平滑滚动。源码必须逐字来自你的资料，模型不能改写或补全代码；16:9 与 9:16 有各自布局，字幕继续遵循项目字幕设置。</p>
           </details>
           <details>
             <summary>旧项目还能打开吗？</summary>
