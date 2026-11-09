@@ -256,7 +256,7 @@ test('#16-2 modelVisualSchema(code) 输出 code/language/filename/mode/beats 且
   type JsonObject = { [key: string]: any };
   const schema = storyboardOutputSchema(1) as JsonObject;
   const oneOf = schema.properties.scenes.items.oneOf as JsonObject[];
-  assert.equal(oneOf.length, 9, 'MODEL_SCENE_TYPES 仍为 9 类');
+  assert.equal(oneOf.length, 10, 'MODEL_SCENE_TYPES 包含独立的 diagram 类型');
   const codeScene = oneOf.find(entry => entry.properties.type.enum[0] === 'code');
   assert.ok(codeScene, '9 类中含 code');
   const visual = codeScene!.properties.visual as JsonObject;

@@ -23,6 +23,35 @@ PRONUNCIATION_NUM_PREDICT = 384
 PRONUNCIATION_PROMPT_MODE = 'legacy'
 _LOCAL_CONTEXT_RADIUS = 24
 
+# These readings are fixed in the listed expressions even when segmentation
+# splits the expression or the general dictionary lacks the technical sense.
+# Store only the ambiguous positions so the other syllables retain tone sandhi.
+_CONTEXT_READINGS = {
+    '矩阵乘': {2: 'cheng2'},
+    '多卡互联': {1: 'ka3'},
+    '加载': {1: 'zai4'},
+    '卸载': {1: 'zai4'},
+    '负载': {1: 'zai4'},
+    '满载': {1: 'zai4'},
+    '过载': {1: 'zai4'},
+    '长序列': {0: 'chang2'},
+    '长上下文': {0: 'chang2'},
+    '长短期': {0: 'chang2'},
+    '长提示': {0: 'chang2'},
+    '长文本': {0: 'chang2'},
+    '通道数': {2: 'shu4'},
+    '参数量': {1: 'shu4'},
+    '计算量': {2: 'liang4'},
+    '数据量': {2: 'liang4'},
+    '读写量': {2: 'liang4'},
+    '批量大小': {1: 'liang4'},
+    '一行代码': {1: 'hang2'},
+    '几行代码': {1: 'hang2'},
+    '银行行长': {1: 'hang2', 2: 'hang2', 3: 'zhang3'},
+    '重复执行': {0: 'chong2', 3: 'xing2'},
+}
+_CONTEXT_PATTERN = re.compile('|'.join(map(re.escape, sorted(_CONTEXT_READINGS, key=len, reverse=True))))
+
 
 class PronunciationBatchError(ValueError):
     """A failed model batch with any timing/response metrics that were available."""
@@ -272,6 +301,7 @@ def resolve(text: str, scopes: list[list[dict]], base: str | None = None, model:
     for warning in config['warnings']:
         logging.getLogger(__name__).warning('Local LLM configuration: %s', warning)
     readings = lazy_pinyin(text, style=Style.TONE3, neutral_tone_with_five=True, tone_sandhi=True, errors=lambda chars: list(chars))
+    options_by_char = {char: candidates(char) for char in set(text) if chinese(char)}
     # Established phrase pronunciations must not be overwritten by a generative
     # model guessing every heteronym independently (e.g. 银行 / 行走).
     import rjieba
@@ -281,13 +311,19 @@ def resolve(text: str, scopes: list[list[dict]], base: str | None = None, model:
         entry = phrases_dict.get(word)
         if len(word) > 1 and entry and len(entry) == len(word) and all(len(sounds) == 1 for sounds in entry):
             for index, sounds in enumerate(entry):
-                readings[offset + index] = to_tone3(sounds[0], neutral_tone_with_five=True)
-                lexical.add(offset + index)
+                if len(options_by_char.get(word[index], [])) > 1:
+                    readings[offset + index] = to_tone3(sounds[0], neutral_tone_with_five=True)
+                    lexical.add(offset + index)
         offset += len(word)
+    for match in _CONTEXT_PATTERN.finditer(text):
+        for index, reading in _CONTEXT_READINGS[match.group()].items():
+            position = match.start() + index
+            readings[position] = reading
+            lexical.add(position)
     overrides: dict[int, str] = {}
     for rules in scopes:
         overrides.update(apply_rules(text, validate_rules(rules)))
-    ambiguous = {i: candidates(char) for i, char in enumerate(text) if chinese(char) and i not in overrides and i not in lexical and len(candidates(char)) > 1}
+    ambiguous = {i: options_by_char[char] for i, char in enumerate(text) if i not in overrides and i not in lexical and len(options_by_char.get(char, [])) > 1}
     warnings: list[str] = []
     if ambiguous:
         logger = logging.getLogger(__name__)

@@ -79,7 +79,21 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
     case 'title': content = <div style={{ textAlign: 'center' }}>{title}<p style={{ color: colors.muted, fontSize: 32 * scale * style.typography.bodyScale }}>{scene.narration}</p></div>; break;
     case 'text': content = <div>{title}<p style={{ color: colors.fg, fontSize: 34 * scale * style.typography.bodyScale, lineHeight: 1.55, whiteSpace: 'pre-wrap', textAlign: centered ? 'center' : 'left' }}>{String(scene.visual.text ?? scene.narration)}</p></div>; break;
     case 'bullets': { const items = (scene.visual.items as (string | { text: string; children?: string[] })[] | undefined) ?? []; content = <div>{title}<ul style={{ color: colors.fg, fontSize: 34 * scale * style.typography.bodyScale, lineHeight: styleId === 'academic' ? 1.45 : 1.65, paddingLeft: centered ? 38 * scale : undefined }}>{items.map((item, i) => { const text = typeof item === 'string' ? item : item.text; const children = typeof item === 'string' ? [] : item.children ?? []; return <li key={i} style={{ padding: `${5 * scale}px 0` }}>{text}{children.length > 0 && <ul style={{ fontSize: '0.78em', lineHeight: 1.45, paddingLeft: 30 * scale, marginTop: 4 * scale }}>{children.map((child, childIndex) => <li key={childIndex} style={{ padding: `${2 * scale}px 0` }}>{child}</li>)}</ul>}</li>; })}</ul></div>; break; }
-    case 'comparison': content = <div>{title}<div style={{ display: 'flex', flexDirection: metrics.stacked ? 'column' : 'row', gap: 24 * scale }}>{(scene.visual.columns as { title?: string; items?: string[] }[]).map((col, i) => <div key={i} style={{ ...box, flex: 1, color: colors.fg }}><h2>{col.title ?? `选项 ${i + 1}`}</h2>{(col.items ?? []).map((x, j) => <p key={j} style={{ fontSize: 25 * scale * style.typography.bodyScale }}>{x}</p>)}</div>)}</div></div>; break;
+    case 'comparison': {
+      const schematic = scene.visual.layout === 'diagram';
+      const columns = scene.visual.columns as { title?: string; items?: string[] }[];
+      const arrowOpacity = interpolate(frame, [0, Math.max(1, fps / 2)], [.2, 1], { extrapolateRight: 'clamp' });
+      content = <div>{title}<div style={{ display: 'flex', flexDirection: metrics.stacked ? 'column' : 'row', gap: 24 * scale }}>
+        {columns.map((col, i) => <React.Fragment key={i}>
+          {i > 0 && schematic && <span aria-hidden style={{ alignSelf: 'center', color: colors.accent, opacity: arrowOpacity, fontSize: 46 * scale }}>{metrics.stacked ? '↕' : '↔'}</span>}
+          <div style={{ ...box, ...(schematic ? { border: `2px solid ${i ? colors.secondary : colors.accent}88`, background: colors.card, padding: 22 * scale } : {}), flex: 1, color: colors.fg }}>
+            <h2 style={schematic ? { margin: 0, fontSize: 35 * scale } : undefined}>{col.title ?? `选项 ${i + 1}`}</h2>
+            {(col.items ?? []).map((item, j) => <p key={j} style={{ fontSize: 25 * scale * style.typography.bodyScale, ...(schematic ? { borderLeft: `3px solid ${colors.accent}`, background: colors.bg, margin: `${12 * scale}px 0 0 ${14 * scale}px`, padding: `${8 * scale}px ${14 * scale}px` } : {}) }}>{item}</p>)}
+          </div>
+        </React.Fragment>)}
+      </div></div>;
+      break;
+    }
     case 'chart': {
       const rawData: unknown[] = Array.isArray(scene.visual.data) ? scene.visual.data : [];
       const matrix = rawData.length > 0 && rawData.every(Array.isArray) ? rawData as unknown[][] : null;
