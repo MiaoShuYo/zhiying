@@ -171,6 +171,26 @@ class PronunciationTests(unittest.TestCase):
         self.assertEqual(readings, ['hang2', 'xing2'])
         self.assertEqual(warnings, [])
 
+    def test_contextual_readings_are_stable_and_allow_manual_overrides(self):
+        text = '加载模型时，长序列会提高数据量。多卡互联能分担计算量。'
+        def predict(_text, batch, *_args):
+            return ({position: sounds[0] for position, sounds in batch},
+                    {'wall_ms': 0, 'metrics': {}, 'done_reason': 'stop'})
+        with patch('app.pronunciation._predict_pronunciation_batch', side_effect=predict) as model:
+            readings, warnings = resolve(text, [])
+        expected = {'载': 'zai4', '长': 'chang2', '卡': 'ka3'}
+        for char, reading in expected.items():
+            self.assertEqual(readings[text.index(char)], reading)
+        for phrase in ('数据量', '计算量'):
+            self.assertEqual(readings[text.index(phrase) + 2], 'liang4')
+        for call in model.call_args_list:
+            self.assertFalse(any(text[position] in expected for position, _ in call.args[1]))
+        self.assertEqual(warnings, [])
+        with patch('app.pronunciation._predict_pronunciation_batch', side_effect=predict):
+            overridden, _ = resolve(text, [[{'text': '长', 'pinyin': ['zhang3'], 'occurrence': 1}]])
+        self.assertEqual(overridden[text.index('长')], 'zhang3')
+        self.assertIn('chang2', tokens(text, readings, None))
+
     def test_stale_and_invalid_annotations_fail(self):
         with self.assertRaises(ValueError):
             validate_rules([{'text': '行', 'pinyin': ['ma3']}])

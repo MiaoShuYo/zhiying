@@ -22,6 +22,7 @@ import {
   regenerateOutputSchema,
   storyboardNumPredict,
   storyboardOutputSchema,
+  structuredSceneHtml,
   splitIntoChapters,
 } from '../src/lib/pipeline';
 
@@ -211,7 +212,7 @@ test('3x3, 10x5, 31x4, bilingual, decimal and surrounding-text tables are inject
   assert.equal(markdownNarration.success, true);
   if (markdownNarration.success) {
     assert.doesNotMatch(markdownNarration.data.narration, /\|/);
-    assert.match(markdownNarration.data.narration, /表格对照/);
+    assert.match(markdownNarration.data.narration, /甲.*数值.*1/);
   }
   const grounded = buildModelStoryboardScene(
     { title: '数值校验', text: markdownTable(['指标', '方案甲', '方案乙'], [['耗时', '12.5 ms', '15.0 ms'], ['准确率', '98%', '96%'], ['成本', '$1.25', '$1.50']]) },
@@ -227,7 +228,7 @@ test('3x3, 10x5, 31x4, bilingual, decimal and surrounding-text tables are inject
   assert.equal(invented.success, true);
   if (invented.success) {
     assert.doesNotMatch(invented.data.narration, /16\.7|10 元/);
-    assert.match(invented.data.narration, /表格对照/);
+    assert.match(invented.data.narration, /耗时.*方案甲.*12\.5 ms.*方案乙.*15\.0 ms/);
   }
 });
 
@@ -240,7 +241,7 @@ test('strict model schemas cover single/batch, narration-only, fixed-type regene
   assert.equal(scenes(single).maxItems, 1);
   assert.equal(scenes(batch).minItems, 3);
   assert.equal(scenes(batch).maxItems, 3);
-  assert.equal(scenes(batch).items.oneOf?.length, 9);
+  assert.equal(scenes(batch).items.oneOf?.length, 10);
   assert.ok(scenes(batch).items.oneOf?.every(schema => schema.additionalProperties === false));
   assert.equal(scenes(batch).items.oneOf?.[0].properties && Object.keys(scenes(batch).items.oneOf![0].properties!).sort().join(','), 'narration,type,visual');
   assert.equal(scenes(table).items.properties && Object.keys(scenes(table).items.properties!).join(','), 'narration');
@@ -249,10 +250,33 @@ test('strict model schemas cover single/batch, narration-only, fixed-type regene
   const fixed = regenerateOutputSchema({ htmlMode: false, sceneType: 'bullets' });
   assert.deepEqual(Object.keys(fixed.properties as Record<string, unknown>).sort(), ['narration', 'visual']);
   const html = regenerateOutputSchema({ htmlMode: true, sceneType: 'html' });
-  assert.equal((html.oneOf as unknown[]).length, 9);
+  assert.equal((html.oneOf as unknown[]).length, 10);
   const request = buildStoryboardRequestPayload('项目', [{ title: '章', text: '内容。' }]);
   assert.equal(typeof request.format, 'object', 'the production request sends a JSON Schema format object, not the string json');
   assert.equal((request.format as Record<string, unknown>).type, 'object');
+});
+
+test('production directions are rejected while diagrams and narrated comparisons render from actual data', () => {
+  const chapter = { title: '两种发电方式', text: '水力发电由水流推动涡轮。风力发电由气流推动叶片。' };
+  const direction = '左侧展示水力发电原理图。右侧展示风力发电原理图。中间以箭头连接。背景使用蓝色。';
+  const narration = '水流推动涡轮，气流推动叶片，两种方式都将流体的运动用于发电。';
+  const rejected = buildStoryboardSceneOrFallback(chapter, { type: 'text', visual: { text: direction }, narration }, false, 'html');
+  assert.equal(rejected.fallbackUsed, true);
+  assert.equal(rejected.scene.narration, narration);
+  assert.doesNotMatch(String(rejected.scene.visual.html), /左侧展示|背景使用/);
+  const rejectedNarration = buildStoryboardSceneOrFallback(chapter, { type: 'text', visual: { text: '风力与水力' }, narration: '本节我们将介绍两种发电方式。' });
+  assert.equal(rejectedNarration.fallbackUsed, true);
+  assert.match(rejectedNarration.scene.narration, /水流推动涡轮/);
+
+  const comparison = buildStoryboardSceneOrFallback(chapter, { type: 'comparison', narration, visual: {
+    layout: 'diagram',
+    columns: [{ title: '水力发电', items: ['水流', '涡轮'] }, { title: '风力发电', items: ['气流', '叶片'] }],
+  } });
+  assert.equal(comparison.fallbackUsed, false);
+  assert.match(structuredSceneHtml(comparison.scene, 0), /水流.*涡轮.*↔.*气流.*叶片/);
+  const diagram = buildStoryboardSceneOrFallback(chapter, { type: 'diagram', narration, visual: { nodes: [{ id: 'a', label: '水流' }, { id: 'b', label: '涡轮' }] } });
+  assert.equal(diagram.fallbackUsed, false);
+  assert.match(structuredSceneHtml(diagram.scene, 0), /水流.*→.*涡轮/);
 });
 
 test('regenerate asks only for model-owned fields and preserves the same source context', () => {

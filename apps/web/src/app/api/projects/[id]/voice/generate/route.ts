@@ -267,7 +267,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         await reportProgress(batchIndex, scene.title ?? '未命名场景');
         const effectiveSpeed = scene.speechSpeed ?? speed;
         const scopes = [globalRules.filter(rule => scene.narration.includes(rule.text)), (storyboard.pronunciationRules ?? []).filter(rule => scene.narration.includes(rule.text)), scene.pronunciationOverrides ?? []];
-        const key = createHash('sha256').update(JSON.stringify({ text: scene.narration, voiceId, referenceKey, speed: effectiveSpeed, pause: scene.sentencePause ?? .12, scopes })).digest('hex');
+        const key = createHash('sha256').update(JSON.stringify({ pronunciationVersion: 2, text: scene.narration, voiceId, referenceKey, speed: effectiveSpeed, pause: scene.sentencePause ?? .12, scopes })).digest('hex');
         const existing = scene.audioSrc ? resolve(process.cwd(), 'public', scene.audioSrc) : '';
         if (existing && !forceRegenerate && scene.audioKey === key) {
           try {
