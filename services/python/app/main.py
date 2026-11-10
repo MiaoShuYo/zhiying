@@ -13,11 +13,13 @@ import re
 import socket
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import wave
 import zipfile
+from contextlib import asynccontextmanager
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Protocol
@@ -52,7 +54,18 @@ PROJECT_DIR = DATA / "projects"
 PROJECT_DIR.mkdir(parents=True, exist_ok=True)
 WEB_PUBLIC_ASSETS = Path(__file__).resolve().parents[3] / "apps" / "web" / "public" / "projects"
 
-app = FastAPI(title="M2V Local Services", version="0.1.0")
+@asynccontextmanager
+async def _service_lifespan(_app: FastAPI):
+    # F5-TTS prints the reference and narration. Windows redirected streams
+    # can default to GBK, which cannot encode symbols such as U+2212.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+    yield
+
+
+app = FastAPI(title="M2V Local Services", version="0.1.0", lifespan=_service_lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_methods=["*"], allow_headers=["*"])
 
 def _register_dll_directory(path: Path) -> None:

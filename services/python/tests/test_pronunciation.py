@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -18,6 +19,29 @@ from app.pronunciation import (
     _prediction_schema, candidates, resolve, validate_rules, tokens, f5_pronunciation,
 )
 from app.local_llm_config import local_llm_config, local_llm_slot
+
+
+class SpeechLoggingTests(unittest.TestCase):
+    def test_service_starts_with_utf8_logs_on_gbk_streams(self):
+        from app.main import app
+
+        stdout_bytes, stderr_bytes = io.BytesIO(), io.BytesIO()
+        narration = '计算 1 − 2，结果是负数。'
+        with io.TextIOWrapper(stdout_bytes, encoding='gbk') as stdout, io.TextIOWrapper(stderr_bytes, encoding='gbk') as stderr:
+            with self.assertRaises(UnicodeEncodeError):
+                print(narration, file=stdout)
+
+            async def run():
+                async with app.router.lifespan_context(app):
+                    print('gen_text 0', narration)
+                    print(narration, file=sys.stderr)
+
+            with patch.object(sys, 'stdout', stdout), patch.object(sys, 'stderr', stderr):
+                asyncio.run(run())
+            stdout.flush()
+            stderr.flush()
+            self.assertIn(narration, stdout_bytes.getvalue().decode('utf-8'))
+            self.assertIn(narration, stderr_bytes.getvalue().decode('utf-8'))
 
 
 class PronunciationTests(unittest.TestCase):
