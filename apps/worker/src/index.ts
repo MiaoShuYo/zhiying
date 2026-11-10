@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, mkdir, mkdtemp, rm, stat, writeFile, copyFile, rename } from 'node:fs/promises';
 import { cpus, freemem, tmpdir, totalmem } from 'node:os';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import {
   RENDER_STAGES,
@@ -29,6 +29,14 @@ import { ensureSegmentDir, pruneSegmentCache, readSegmentIndex, segmentBytes, se
 
 const repo = resolve(process.cwd(), '../..');
 dotenv.config({ path: resolve(repo, 'apps/web/.env') });
+if (process.platform === 'win32') {
+  // Remotion's bundled FFmpeg must be able to write intermediate frames and
+  // audio files. Use the project's writable volume for this Worker only.
+  const renderTemp = resolve(repo, 'data/tmp/render-worker');
+  mkdirSync(renderTemp, { recursive: true });
+  process.env.TEMP = renderTemp;
+  process.env.TMP = renderTemp;
+}
 const prisma = new PrismaClient();
 const outputRoot = resolve(repo, 'data/projects');
 const publicRoot = resolve(repo, 'apps/web/public');
