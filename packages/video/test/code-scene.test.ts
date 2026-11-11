@@ -59,6 +59,38 @@ function openTags(markup: string): string[] {
   }).filter(tag => /^[a-zA-Z]/.test(tag));
 }
 
+/**
+ * 去标签 + 解码实体，得到用户实际看到的文本。
+ * V1.6.9 起每行源码由多个 tok-* span 拼接，不能再断言源码连续字符串直接出现在 markup 里。
+ */
+function visibleText(markup: string): string {
+  return markup
+    .replace(/<[^>]*>/g, '')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number.parseInt(dec, 10)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * 按 data-line-number div 的开/闭标签边界截取某一行的可见源码文本。
+ * V1.6.9 起源码被拆成多个 tok-* span，不能再用固定字符窗口（会跨行命中、弱化断言）。
+ */
+function lineVisibleText(markup: string, lineNumber: number): string | undefined {
+  const match = new RegExp(`<div[^>]*\\bdata-line-number="${lineNumber}"[^>]*>`).exec(markup);
+  if (!match) return undefined;
+  const start = match.index + match[0].length;
+  const end = markup.indexOf('</div>', start);
+  const region = markup.slice(start, end === -1 ? undefined : end);
+  // 行号 span 在前、源码 span 在后：去掉第一个 span（行号）后取可见文本。
+  const firstSpanClose = region.indexOf('</span>');
+  return visibleText(firstSpanClose === -1 ? region : region.slice(firstSpanClose + '</span>'.length));
+}
+
 const lineNumberTags = (markup: string) => openTags(markup).filter(tag => /data-line-number="/.test(tag));
 const lineNumbers = (markup: string) => lineNumberTags(markup).map(tag => Number(/data-line-number="(\d+)"/.exec(tag)![1]));
 const activeTags = (markup: string) => openTags(markup).filter(tag => /data-active="true"/.test(tag));
@@ -83,7 +115,7 @@ test('#18-1 CodeSceneView 渲染 visual.code 的每一行且根节点含 data-co
   const markup = render(scene);
   assert.match(markup, /data-code-scene="true"/, '根节点标记');
   for (let index = 1; index <= 8; index += 1) {
-    assert.ok(markup.includes(`const line${index} = ${index};`), `第 ${index} 行源码出现在 markup`);
+    assert.ok(visibleText(markup).includes(`const line${index} = ${index};`), `第 ${index} 行源码出现在可见文本中`);
   }
   const numbers = lineNumbers(markup);
   assert.deepEqual(numbers, [1, 2, 3, 4, 5, 6, 7, 8], '8 行全部渲染且行号连续');
@@ -94,8 +126,7 @@ test('#18-2 data-line-number 为 1..N 连续且与源码行序一致，滚动窗
   const small = render(sceneOf({ beats: [{ lines: [2] }] }));
   assert.deepEqual(lineNumbers(small), [1, 2, 3, 4, 5, 6, 7, 8], '全量可见时 1..N 连续');
   for (const number of [1, 5, 8]) {
-    const tag = lineNumberTags(small).find(candidate => candidate.includes(`data-line-number="${number}"`))!;
-    assert.ok(textAfterTag(small, tag).includes(`const line${number} = ${number};`), `行号 ${number} 对应源码第 ${number} 行`);
+    assert.equal(lineVisibleText(small, number), `const line${number} = ${number};`, `行号 ${number} 区域对应源码第 ${number} 行（按行边界截取，不跨行）`);
   }
 
   // 30 行代码、beat 在 20 行：渲染窗口/全量都必须是源行号，不能重新从 1 编号。
@@ -108,8 +139,7 @@ test('#18-2 data-line-number 为 1..N 连续且与源码行序一致，滚动窗
   }
   for (const number of numbers) {
     assert.ok(number >= 1 && number <= 30, `源行号范围 1..30，实际 ${number}`);
-    const tag = lineNumberTags(markup).find(candidate => candidate.includes(`data-line-number="${number}"`))!;
-    assert.ok(textAfterTag(markup, tag).includes(`const line${number} = ${number};`), `行号 ${number} 与源码行序一致`);
+    assert.equal(lineVisibleText(markup, number), `const line${number} = ${number};`, `行号 ${number} 与该行区域源码逐字一致`);
   }
   assert.ok(numbers.length === 30 || numbers.length <= 16, '要么全量渲染，要么是可见窗口');
 });
@@ -173,7 +203,7 @@ test('#18-6 5 套 style 下 CodeSceneView 均输出代码文本与有效配色',
   const markups = new Set<string>();
   for (const styleId of STYLE_IDS) {
     const markup = render(scene, { styleId });
-    assert.ok(markup.includes('const line1 = 1;'), `${styleId} 输出代码文本`);
+    assert.ok(visibleText(markup).includes('const line1 = 1;'), `${styleId} 输出代码文本`);
     assert.ok(markup.toLowerCase().includes(palettes[styleId].bg.toLowerCase()), `${styleId} 使用该 style 背景色 ${palettes[styleId].bg}`);
     assert.doesNotMatch(markup, /undefined/, `${styleId} 无 undefined`);
     assert.match(markup, /#[0-9a-f]{3,8}/i, `${styleId} 有合法色值`);
@@ -249,7 +279,7 @@ test('#19-8 代码容器 whiteSpace=pre + overflow=hidden，超长单行不撑�
   const preTag = tags.find(tag => /white-space:\s*pre(?![\w-])/.test(styleOf(tag)));
   assert.ok(preTag, '代码容器使用 white-space: pre（不自动折行）');
   assert.ok(tags.some(tag => /overflow:\s*hidden/.test(styleOf(tag))), '代码容器 overflow: hidden（横向裁剪）');
-  assert.ok(markup.includes(longLine), '超长行原样输出');
+  assert.ok(visibleText(markup).includes(longLine), '超长行原样输出');
   const layout = resolveCodeSceneLayout({ width: LANDSCAPE.width, height: LANDSCAPE.height, hasBeats: true, hasBeatCard: true, captionReservedPx: 0 });
   assert.ok(layout.maxTextWidthPx > 0 && layout.maxTextWidthPx <= LANDSCAPE.width, 'maxTextWidthPx 生效且不超过画幅');
 });
@@ -383,7 +413,7 @@ test('#20-6 5 套 style × 横竖屏的 CodeSceneView 均可读：代码文本�
     assert.ok(layout.fontSizePx >= 16 * scale, `字号受保护 ${layout.fontSizePx} ≥ ${16 * scale}`);
     for (const styleId of STYLE_IDS) {
       const markup = render(scene, { width: frame.width, height: frame.height, styleId });
-      assert.ok(markup.includes('const line1 = 1;'), `${frame.width}x${frame.height} ${styleId} 输出代码`);
+      assert.ok(visibleText(markup).includes('const line1 = 1;'), `${frame.width}x${frame.height} ${styleId} 输出代码`);
       assert.match(markup, /#[0-9a-f]{3,8}/i, `${styleId} 有效色值`);
       assert.doesNotMatch(markup, /undefined|NaN/, `${styleId} 无 undefined/NaN`);
     }

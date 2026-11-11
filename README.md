@@ -74,7 +74,7 @@
 - 新建项目时可独立选择视觉风格和品牌套件（默认品牌自动预选，也可选「无品牌」）；项目编辑器可更换、重新应用或移除品牌，切换前逐项说明影响范围，且只更新品牌快照，不重新生成旁白、不重跑 TTS、不改字幕时间与场景时长。
 - 导出前检查新增品牌 Logo 交付检查：启用但文件缺失、与同侧字幕安全区冲突、竖屏 Logo 宽度超过设计画布 30% 时给出项目级 warning，并提供「打开品牌套件」修复入口；无品牌项目行为不变。
 
-### V1.2–V1.6.8 版本摘要
+### V1.2–V1.6.9 版本摘要
 
 - **V1.2–V1.5：** 可控性、恢复、质检交付、稳定性、制作效率与成片精修，详见下方各版本记录。
 - **V1.6 — 长项目渲染可靠性：** 增加渲染前估算、片段缓存与增量渲染、阶段日志、中断恢复和任务中心集中查看。
@@ -82,6 +82,7 @@
 - **V1.6.6 — 品牌主题补齐、全局 Logo 与项目应用 API：** SceneView 完整使用品牌颜色/字体（含 serif/sans fallback），HTML 场景外层采用品牌主题；新增视频根层 Logo Overlay（四角/大小/透明度/边距/字幕安全区），Logo 文件缺失时由服务端 preflight 给出 warning；新增项目级应用、重新应用、移除 Brand Kit API，只更新品牌快照，不触碰场景与音频；测试包含 1080p 全尺寸关键像素基线。
 - **V1.6.7 — 品牌设置页、项目品牌选择与交付检查：** 新增设置页品牌套件管理界面（列表/新建/编辑/复制/默认/删除、Logo 上传/替换、六色与字体、静态实时预览）；新建视频独立选择品牌（默认品牌预选、可选无品牌），项目编辑器可更换/重新应用/移除品牌，pending 品牌在首次 storyboard 生成时注入独立快照；品牌切换只影响视觉，不触发 Ollama/TTS。服务端 preflight 新增 Logo 缺失、与同侧字幕安全区冲突和竖屏超大尺寸检查，品牌渲染几何抽到 `@m2v/schema` 由渲染器与检查共用。
 - **V1.6.8 — 代码讲解场景：** Markdown fenced code 保留为结构化 codeBlocks（语言/源码原样，正文不混入源码）；Ollama 可为含关键代码的章节生成 `code` 场景与聚焦 beats，逐字来源校验拒绝幻觉代码，旁白复述源码自动回退；新增纯函数 beat 时间轴（wordTimings → subtitleCues → 均匀分配）与 viewport/滚动计算；Standard 模式新增 IDE 风格 CodeScene 渲染器（行号、beat 高亮、非重点行 0.38 弱化、5 套风格）；横屏 12–16 行 / 竖屏 7–11 行专用布局，beat 说明卡避让字幕；Standard 与 HTML 模式共用同一份结构化 visual。
+- **V1.6.9 — HTML 动态代码场景、受控代码样式与主题化语法高亮：** HTML 生成模式的 `code` 场景改为按 frame 动态渲染 active beat、viewport/滚动与真实源码，与 Standard 共用同一份 `CodeVisual`/时间轴/布局；`sanitizeSceneHtml` 增加代码布局所需受控样式与逐属性校验（拒 `url()`/`expression()` 等），长代码分块 sanitize 不截断；新增离线 tokenizer 与 5 套主题 token 调色板（≥3:1 对比度、缓存复用），Standard/HTML 共用 token 数据，支持关闭高亮且不影响行焦点/viewport。
 
 ### V1.2 可控性与恢复
 
@@ -190,6 +191,13 @@
 - 项目编辑器新增项目级品牌栏：显示当前品牌，提供「更换 / 重新应用 / 移除」；选择器列出 Logo、名称、简化色板、base Style 和默认标记，确认框逐项列出「将更新：品牌颜色、标题/正文字体、Logo」与「不会修改：旁白、分镜内容、配音、语速/停顿、字幕时间、场景时长、制作方案」。切换/重新应用/移除只改品牌快照，不触发 Ollama/TTS、不创建任务；来源套件删除后显示「来源套件已删除」，项目仍可预览/导出；项目锁定或忙碌时按钮禁用并显示错误。
 - 品牌渲染几何（`rendererScale`、`captionSafeArea`、`brandLogoPlacement` 与字幕安全区常量）迁到 `@m2v/schema`，渲染器改为兼容 re-export，preflight 复用同一纯函数。新增项目级检查：启用但 Logo 文件缺失（warning，不阻断导出，修复入口「打开品牌套件」）、Logo 与同侧字幕安全区冲突（仅当某场景字幕实际超过预留下的 2 行，或按保守高度估计被抬高后超出画面时提示）、竖屏 Logo 宽度超过设计画布 30%。同侧但布局安全不误报，多场景只报一次，无 Brand 项目行为不变。
 - 验证：`pnpm typecheck`、`pnpm test:v16`（133 项）、`pnpm test:v16:integration`、`pnpm test:v15`、`pnpm test:v12`、`pnpm test:v17`（42 项 + 2 段静态渲染）、`pnpm test:v17:integration`（5/5）、`pnpm test:v16:render`（22 帧，含 1080p 像素基线）全部通过。
+
+### V1.6.9 HTML 动态代码场景、受控代码样式与主题化语法高亮
+
+- HTML 模式代码场景：新增 `CodeHtmlScene` / `CodeHtmlSceneView` / `renderCodeHtmlScene`，按 Remotion frame 动态解析 active beat、viewport 与滚动，逐行渲染源码、行号、高亮/弱化和 beat 说明卡；`scene.type` 仍为 `code`，与 Standard 共用 `CodeVisual`、beat 时间轴、横竖屏布局和字幕安全区。静态 `visual.html` 仅作为 HTML 生成模式标记，不再覆盖代码内容；Standard 与 legacy 路径保持原行为。
+- 样式白名单：`sanitizeSceneHtml` 新增 `overflow-x`、`overflow-y`、`transform`、`transform-origin` 及 CodeScene 布局所需的 `min-height`/`margin-left`，并为 `font-family`、`transform`、`transform-origin`、`overflow*`、`opacity`、`white-space` 增加逐属性校验；全局拒绝 `url()`、`expression()`、`data:`/`javascript:`、反斜杠转义与事件属性。长代码按完整片段分块 sanitize，单次 20000 字符上限不变且不会截断源码行。
+- 语法高亮：新增确定性 tokenizer（TS/JS/TSX/JSX、Python、JSON；未知语言回退纯文本；跨行注释/模板字符串/三引号安全；64 项 FIFO 缓存）与主题化调色板（5 套 style 均保证与代码窗口背景 ≥3:1 对比度，支持 brand 调色板）。Standard 与 HTML 两种 renderer 复用同一 token 数据与颜色，function 加粗；`syntaxHighlight=false` 或分词失败时按纯文本渲染，行焦点、viewport 与行号不受影响。
+- 验证：`pnpm typecheck`、`pnpm test:v19`（68 个用例覆盖 27 项测试要求）、`pnpm test:v18`（61）、pipeline-p0/p1/fallback-chapter（41）、`pnpm test:v12`（66 项 + 2 段静态渲染）、`pnpm test:v16`（109+18+6）、`pnpm test:v17`（24+18+2 段静态渲染）全部 exit 0；17 项验收标准全部通过。逐项结果见 `doc/V1.6.9_test_report.md` 与 `doc/V1.6.9_acceptance_report.md`。
 
 ### V1.6.8 代码讲解场景、结构化代码块与横竖屏布局
 
@@ -455,6 +463,7 @@ pnpm test:v16:render  # V1.6.5/V1.6.6 Remotion 实际渲染验证（品牌快照
 pnpm test:v17     # V1.6.7 品牌设置页、项目品牌选择与 preflight 品牌检查测试
 pnpm test:v17:integration  # V1.6.7 集成测试（品牌库 CRUD/Logo、pending 品牌注入、项目切换/移除、preflight 接线）
 pnpm test:v18     # V1.6.8 代码讲解场景测试（codeBlocks、CodeVisual 校验、beat 时间轴、viewport 滚动、CodeScene 渲染与横竖屏布局）
+pnpm test:v19     # V1.6.9 HTML 动态代码场景、sanitizer 受控样式与语法高亮测试
 pnpm db:migrate:v16  # 只补 V1.6 新增的可空列，旧库可平滑升级
 pnpm db:generate  # 生成 Prisma Client
 pnpm db:push      # 同步 SQLite 数据库结构

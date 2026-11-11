@@ -99,3 +99,5 @@ export function resolveStyle(id: StyleId, override?: Record<string, unknown>) {
   const base = styles[id];
   return override ? { ...base, ...override } : base;
 }
+
+export { contrastRatio, resolveCodeTokenColors } from './code-token-colors';
