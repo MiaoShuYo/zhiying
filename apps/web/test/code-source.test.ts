@@ -251,8 +251,8 @@ test('#16-1 buildStoryboardPrompt 允许 type=code 并含保真约束，保留�
   assert.match(prompt, /源码|代码原文/, 'prompt 提到源码边界');
 });
 
-// ── #16-2 modelVisualSchema('code') 结构 ────────────────────────────────────────
-test('#16-2 modelVisualSchema(code) 输出 code/language/filename/mode/beats 且 additionalProperties=false', () => {
+// ── #16-2 modelVisualSchema('code') 结构（V1.7.0 起含 build/diff/trace 新字段）────────
+test('#16-2 modelVisualSchema(code) 输出 code/language/filename/mode/beats 与新字段且 additionalProperties=false', () => {
   type JsonObject = { [key: string]: any };
   const schema = storyboardOutputSchema(1) as JsonObject;
   const oneOf = schema.properties.scenes.items.oneOf as JsonObject[];
@@ -261,14 +261,28 @@ test('#16-2 modelVisualSchema(code) 输出 code/language/filename/mode/beats 且
   assert.ok(codeScene, '9 类中含 code');
   const visual = codeScene!.properties.visual as JsonObject;
   assert.equal(visual.additionalProperties, false);
-  assert.deepEqual(Object.keys(visual.properties).sort(), ['beats', 'code', 'filename', 'language', 'mode']);
+  assert.deepEqual(
+    Object.keys(visual.properties).sort(),
+    ['afterCode', 'beats', 'beforeCode', 'buildSteps', 'code', 'diffBeats', 'filename', 'language', 'mode', 'traceSteps'],
+    'V1.7.0 code 模型 schema 字段集合（新增 beforeCode/afterCode/buildSteps/diffBeats/traceSteps）',
+  );
   assert.equal(visual.properties.code.type, 'string');
   const required: string[] = visual.required ?? [];
   assert.ok(required.includes('code'), 'code 必填');
-  for (const optional of ['language', 'filename', 'mode', 'beats']) {
+  for (const optional of ['language', 'filename', 'mode', 'beats', 'beforeCode', 'afterCode', 'buildSteps', 'diffBeats', 'traceSteps']) {
     assert.equal(required.includes(optional), false, `${optional} 可选`);
   }
   assert.deepEqual(visual.properties.mode.enum, ['focus', 'build', 'diff', 'trace']);
+  for (const key of ['beforeCode', 'afterCode']) {
+    assert.equal(visual.properties[key].type, 'string', `${key} 为 string`);
+    assert.equal(visual.properties[key].maxLength, 8000);
+  }
+  assert.equal(visual.properties.buildSteps.maxItems, 12, 'buildSteps ≤12');
+  assert.equal(visual.properties.buildSteps.items.additionalProperties, false);
+  assert.equal(visual.properties.diffBeats.maxItems, 10, 'diffBeats ≤10');
+  assert.equal(visual.properties.diffBeats.items.additionalProperties, false);
+  assert.equal(visual.properties.traceSteps.maxItems, 20, 'traceSteps ≤20');
+  assert.equal(visual.properties.traceSteps.items.additionalProperties, false);
   const beats = visual.properties.beats as JsonObject;
   assert.equal(beats.type, 'array');
   assert.equal(beats.maxItems, 10);

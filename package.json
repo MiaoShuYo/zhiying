@@ -28,7 +28,8 @@
     "test:v17:integration": "tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-brand-creation.integration.ts && tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-brand-kit-api.integration.ts && tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-brand-pending.integration.ts && tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-brand-project.integration.ts && tsx --tsconfig apps/web/tsconfig.json apps/web/test/v17-preflight.integration.ts",
     "test:v18": "tsx --test packages/schema/test/code-visual.test.ts packages/schema/test/code-timeline.test.ts packages/schema/test/code-viewport.test.ts packages/video/test/code-scene.test.ts apps/web/test/code-source.test.ts",
     "test:v19": "tsx --test packages/schema/test/code-tokens.test.ts packages/schema/test/scene-html-sanitizer.test.ts packages/styles/test/code-token-colors.test.ts packages/video/test/code-html-scene.test.ts packages/video/test/code-scene.test.ts apps/web/test/code-source.test.ts",
-    "test:v11:render": "tsx apps/worker/test/render-v11.ts"
+    "test:v11:render": "tsx apps/worker/test/render-v11.ts",
+    "test:v20": "tsx --test packages/schema/test/code-mode.test.ts packages/schema/test/code-diff.test.ts packages/schema/test/code-step-timeline.test.ts packages/styles/test/code-diff-colors.test.ts packages/video/test/code-build-scene.test.ts packages/video/test/code-diff-scene.test.ts packages/video/test/code-trace-scene.test.ts packages/video/test/code-scene.test.ts packages/video/test/code-html-scene.test.ts apps/web/test/code-modes.test.ts apps/web/test/code-source.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.7.3",
