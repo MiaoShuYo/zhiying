@@ -109,36 +109,6 @@ export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
   }
 });
 
-/** Restrict generated scene markup to inert presentation HTML and inline styles. */
-export function sanitizeSceneHtml(input: string): string {
-  let html = input.slice(0, 20000)
-    .replace(/<(script|style|iframe|object|embed|form|video|audio|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
-    .replace(/<(script|style|iframe|object|embed|form|video|audio|svg|math)\b[^>]*\/?>/gi, '');
-  const tags = new Set(['div', 'span', 'p', 'h1', 'h2', 'h3', 'strong', 'b', 'em', 'i', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'br', 'hr', 'pre', 'code']);
-  html = html.replace(/<\/?([a-z][a-z0-9-]*)\b([^>]*)>/gi, (whole, rawName: string, rawAttrs: string) => {
-    const name = rawName.toLowerCase();
-    if (!tags.has(name)) return '';
-    if (whole.startsWith('</')) return `</${name}>`;
-    const attrs: string[] = [];
-    const className = /\bclass\s*=\s*(["'])(.*?)\1/i.exec(rawAttrs)?.[2];
-    if (className && /^[\w\s-]{1,120}$/.test(className)) attrs.push(`class="${className}"`);
-    const style = /\bstyle\s*=\s*(["'])(.*?)\1/i.exec(rawAttrs)?.[2];
-    if (style) {
-      const allowed = new Set(['color', 'background', 'background-color', 'font-size', 'font-weight', 'text-align', 'line-height', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin', 'border', 'border-top', 'border-radius', 'display', 'flex', 'flex-direction', 'flex-wrap', 'gap', 'align-items', 'justify-content', 'width', 'min-width', 'max-width', 'height', 'grid-template-columns', 'box-shadow', 'box-sizing', 'border-collapse', 'font-family', 'white-space', 'opacity', 'overflow', 'letter-spacing', 'text-overflow']);
-      const declarations = style.split(';').flatMap(rule => {
-        const colon = rule.indexOf(':');
-        if (colon < 1) return [];
-        const property = rule.slice(0, colon).trim().toLowerCase();
-        const value = rule.slice(colon + 1).trim();
-        return allowed.has(property) && value.length <= 100 && /^[\w\s#(),.%/-]+$/.test(value) ? [`${property}:${value}`] : [];
-      });
-      if (declarations.length) attrs.push(`style="${declarations.join(';')}"`);
-    }
-    return `<${name}${attrs.length ? ` ${attrs.join(' ')}` : ''}>`;
-  });
-  return html;
-}
-
 /** Basic delivery frame: a title card before the first scene or after the last one. */
 export type FrameCard = z.infer<typeof FrameCardSchema>;
 
@@ -189,6 +159,7 @@ export * from "./brand-kit";
 export * from "./brand-layout";
 export * from "./captions";
 export * from "./code-timeline";
+export * from "./code-tokens";
 export * from "./code-viewport";
 export * from "./code-visual";
 export * from "./delivery";
@@ -201,4 +172,5 @@ export * from "./production-template";
 export * from "./qc";
 export * from "./render-plan";
 export * from "./render-validation";
+export * from "./scene-html";
 export * from "./timeline";

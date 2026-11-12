@@ -8,8 +8,10 @@ import { captionDuration, captionAt, resolveCaptionCues } from './captions';
 import { rendererScale, CAPTION_EDGE_RATIO, CAPTION_LINE_HEIGHT, CAPTION_PADDING_Y, captionSafeArea } from './safe-area';
 import { brandLogoPlacement } from './brand-overlay';
 import { CodeScene } from './code-scene';
+import { CodeHtmlScene } from './code-html-scene';
 
 export * from './code-scene';
+export * from './code-html-scene';
 
 function FitContent({ children, signature, onOverflow }: { children: React.ReactNode; signature: string; onOverflow?: (overflowing: boolean) => void }) {
   const outer = useRef<HTMLDivElement>(null), inner = useRef<HTMLDivElement>(null);
@@ -75,7 +77,11 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
   const box: React.CSSProperties = { borderRadius: style.layout.cardStyle === 'none' ? 0 : style.layout.borderRadius, padding: style.layout.cardStyle === 'none' ? '20px 0' : 32, background: style.layout.cardStyle === 'soft' ? colors.card : 'transparent', border: style.layout.cardStyle === 'soft' ? `1px solid ${colors.accent}55` : 'none', boxShadow: styleId === 'social-short' ? `10px 10px 0 ${colors.secondary}` : 'none' };
   const title = <h1 style={{ fontFamily: theme.fontFamilies.heading, fontSize: 55 * scale * style.typography.titleScale * ((scene.title?.length ?? 0) > 24 ? .8 : 1), lineHeight: 1.08, margin: `0 0 ${24 * scale}px`, color: colors.fg, letterSpacing: styleId === 'social-short' ? -2 * scale : 0, textAlign: centered ? 'center' : 'left' }}>{scene.title ?? scene.type.toUpperCase()}</h1>;
   let content: React.ReactNode;
-  switch (typeof scene.visual.html === 'string' && scene.type !== 'media' ? 'html' : scene.type) {
+  // Structured code scenes always use the dynamic renderer; a static `visual.html` on such a scene
+  // only means "HTML generation mode" and must not replace the code window with stale markup.
+  const structuredCode = scene.type === 'code' && codeVisualOf(scene.visual) !== null;
+  const staticHtmlScene = typeof scene.visual.html === 'string' && scene.type !== 'media' && !structuredCode;
+  switch (staticHtmlScene ? 'html' : scene.type) {
     case 'title': content = <div style={{ textAlign: 'center' }}>{title}<p style={{ color: colors.muted, fontSize: 32 * scale * style.typography.bodyScale }}>{scene.narration}</p></div>; break;
     case 'text': content = <div>{title}<p style={{ color: colors.fg, fontSize: 34 * scale * style.typography.bodyScale, lineHeight: 1.55, whiteSpace: 'pre-wrap', textAlign: centered ? 'center' : 'left' }}>{String(scene.visual.text ?? scene.narration)}</p></div>; break;
     case 'bullets': { const items = (scene.visual.items as (string | { text: string; children?: string[] })[] | undefined) ?? []; content = <div>{title}<ul style={{ color: colors.fg, fontSize: 34 * scale * style.typography.bodyScale, lineHeight: styleId === 'academic' ? 1.45 : 1.65, paddingLeft: centered ? 38 * scale : undefined }}>{items.map((item, i) => { const text = typeof item === 'string' ? item : item.text; const children = typeof item === 'string' ? [] : item.children ?? []; return <li key={i} style={{ padding: `${5 * scale}px 0` }}>{text}{children.length > 0 && <ul style={{ fontSize: '0.78em', lineHeight: 1.45, paddingLeft: 30 * scale, marginTop: 4 * scale }}>{children.map((child, childIndex) => <li key={childIndex} style={{ padding: `${2 * scale}px 0` }}>{child}</li>)}</ul>}</li>; })}</ul></div>; break; }
@@ -131,12 +137,15 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
       // part of the generic content-fitting pass.
       if (codeVisualOf(scene.visual)) {
         // Reserve the real caption band (live subtitle size/position) so the beat card cannot
-        // overlap the subtitles in either aspect ratio.
+        // overlap the subtitles in either aspect ratio. Both rendering modes use the same visual.
         const captionReservedPx = subtitle.enabled && subtitle.position === 'bottom'
           ? captionSafeArea({ videoHeight: height, fontSize: subtitle.fontSize, scale, lines: 2 }).total
           : 0;
+        const htmlMode = typeof scene.visual.html === 'string';
         return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, backgroundSize: styleId === 'minimal-tech' ? '42px 42px, 42px 42px, cover' : 'cover', overflow: 'hidden' }}>
-          <CodeScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} />
+          {htmlMode
+            ? <CodeHtmlScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} />
+            : <CodeScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} />}
           {caption && <div style={captionStyle}>{caption}</div>}
           {scene.audioSrc && <Audio src={staticFile(scene.audioSrc)} />}
         </AbsoluteFill>;
