@@ -203,6 +203,13 @@ section { padding: 72px 0; }
 .code-line { display: flex; gap: 14px; padding: 0 16px; color: #32415c; }
 .code-line .ln { flex: none; width: 20px; text-align: right; color: #46566f; user-select: none; }
 .code-line .lc { white-space: pre; }
+.code-line .tok-keyword { color: #c792ea; }
+.code-line .tok-string { color: #a5d6a7; }
+.code-line .tok-comment { color: #7d8ca3; font-style: italic; }
+.code-line .tok-number { color: #f0b46b; }
+.code-line .tok-function { color: #82aaff; }
+.code-line .tok-variable { color: #e6edf7; }
+.code-line .tok-punctuation { color: #8ea3bd; }
 .code-line.active { color: var(--fg); background: rgba(80, 227, 194, .10); box-shadow: inset 2px 0 0 var(--accent); }
 .code-line.active .ln { color: var(--accent); }
 .code-beat {

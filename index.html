@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>知影 · 本地 AI 讲解视频工作室</title>
-  <meta name="description" content="知影（Local Studio）是一个运行在本机的 AI 讲解视频工作室：把 PDF、Markdown、PowerPoint 或文章整理成分镜（含代码讲解场景），用本地模型生成旁白、字幕与成片。资料不上传云端。">
-  <meta name="keywords" content="知影, Local Studio, AI 讲解视频, 本地 AI, 代码讲解, Code Scene, Markdown 代码, Remotion, F5-TTS, Ollama, 视频生成">
+  <meta name="description" content="知影（Local Studio）是一个运行在本机的 AI 讲解视频工作室：把 PDF、Markdown、PowerPoint 或文章整理成分镜（含 HTML 动态代码场景与语法高亮），用本地模型生成旁白、字幕与成片。资料不上传云端。">
+  <meta name="keywords" content="知影, Local Studio, AI 讲解视频, 本地 AI, 代码讲解, Code Scene, HTML CodeScene, 语法高亮, 代码高亮, Markdown 代码, Remotion, F5-TTS, Ollama, 视频生成">
   <meta property="og:type" content="website">
   <meta property="og:title" content="知影 · 本地 AI 讲解视频工作室">
   <meta property="og:description" content="从资料到分镜、旁白、字幕与成片，全部在你的电脑上完成。">
@@ -55,7 +55,7 @@
             <span><i class="dot"></i>全部本地运行</span>
             <span><i class="dot"></i>MIT License</span>
             <span><i class="dot"></i>Windows 10 / 11</span>
-            <span><i class="dot"></i>最新版本 V1.6.8</span>
+            <span><i class="dot"></i>最新版本 V1.6.9</span>
           </div>
         </div>
 
@@ -67,7 +67,7 @@
               <ul>
                 <li>资料自动整理成故事板</li>
                 <li>本地生成旁白与逐词字幕</li>
-                <li>代码讲解场景，逐行聚焦</li>
+                <li>代码讲解场景，逐行聚焦与语法高亮</li>
                 <li>一键导出 16:9 / 9:16 成片</li>
               </ul>
             </div>
@@ -135,11 +135,11 @@
             <p>项目数据库、素材、音频与成片都保存在本地；除你主动发起的网页抓取外不访问云端。</p>
           </article>
           <article class="card wide">
-            <div class="tag">V1.6.8</div>
+            <div class="tag">V1.6.9</div>
             <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6M13.5 4l-3 16"/></svg></div>
             <div class="wide-body">
-              <h3>代码讲解场景（Code Scene）</h3>
-              <p>Markdown 代码块保留为结构化源码；模型按旁白给代码行分段，画面高亮当前讲解行、弱化其余行，长代码自动滚动。横屏 16:9 与竖屏 9:16 各有专用布局，源码逐字保留、不由模型改写。</p>
+              <h3>代码讲解场景（Code Scene）＋ 语法高亮</h3>
+              <p>Markdown 代码块保留为结构化源码；模型按旁白给代码行分段，画面高亮当前讲解行、弱化其余行，长代码自动滚动。V1.6.9 起 HTML 生成模式也按帧动态渲染同一份代码数据，并加入主题化 token 语法高亮：TypeScript / JavaScript / Python / JSON 清晰可辨，5 套风格自动保证对比度，Standard 与 HTML 共用同一份 token 数据。</p>
             </div>
           </article>
         </div>
@@ -167,25 +167,25 @@
     <section id="code">
       <div class="container">
         <div class="section-head">
-          <p class="eyebrow">CODE SCENE · V1.6.8</p>
+          <p class="eyebrow">CODE SCENE · V1.6.9</p>
           <h2>代码讲解，也能一屏看懂</h2>
-          <p>Markdown 里的 fenced code 会被保留成结构化代码块；模型为每段旁白挑选要聚焦的代码行，画面按节拍高亮、弱化其余行，长代码自动滚动查看。源码逐字保留，不由模型改写。</p>
+          <p>Markdown 里的 fenced code 会被保留成结构化代码块；模型为每段旁白挑选要聚焦的代码行，画面按节拍高亮、弱化其余行，长代码自动滚动。V1.6.9 进一步让 HTML 生成模式按 frame 动态渲染代码窗口，并用主题化 token 调色板做语法高亮——源码逐字保留，Standard 与 HTML 两种渲染方式共用同一份数据。</p>
         </div>
 
         <div class="brand-split">
           <div class="panel" aria-label="Code Scene 聚焦渲染示意">
             <div class="panel-head">
               <b class="code-file">cache.ts</b>
-              <span class="pill">TypeScript</span>
+              <span class="pill">TypeScript · 语法高亮</span>
             </div>
             <div class="code-window" role="img" aria-label="代码讲解场景：高亮命中缓存并直接返回的两行">
-              <div class="code-line"><span class="ln">1</span><span class="lc">const cache = new Map();</span></div>
-              <div class="code-line"><span class="ln">2</span><span class="lc"></span></div>
-              <div class="code-line"><span class="ln">3</span><span class="lc">async function getUser(id) {</span></div>
-              <div class="code-line active"><span class="ln">4</span><span class="lc">  if (cache.has(id)) {</span></div>
-              <div class="code-line active"><span class="ln">5</span><span class="lc">    return cache.get(id);</span></div>
+              <div class="code-line"><span class="ln">1</span><span class="lc"><span class="tok-keyword">const</span> cache = <span class="tok-keyword">new</span> <span class="tok-function">Map</span>();</span></div>
+              <div class="code-line"><span class="ln">2</span><span class="lc"><span class="tok-comment">// 命中缓存后直接返回</span></span></div>
+              <div class="code-line"><span class="ln">3</span><span class="lc"><span class="tok-keyword">async</span> <span class="tok-keyword">function</span> <span class="tok-function">getUser</span>(id) {</span></div>
+              <div class="code-line active"><span class="ln">4</span><span class="lc">  <span class="tok-keyword">if</span> (cache.<span class="tok-function">has</span>(id)) {</span></div>
+              <div class="code-line active"><span class="ln">5</span><span class="lc">    <span class="tok-keyword">return</span> cache.<span class="tok-function">get</span>(id);</span></div>
               <div class="code-line"><span class="ln">6</span><span class="lc">  }</span></div>
-              <div class="code-line"><span class="ln">7</span><span class="lc">  return fetchUser(id);</span></div>
+              <div class="code-line"><span class="ln">7</span><span class="lc">  <span class="tok-keyword">return</span> <span class="tok-function">fetchUser</span>(id);</span></div>
               <div class="code-line"><span class="ln">8</span><span class="lc">}</span></div>
               <div class="code-beat"><i class="pulse"></i>命中后直接返回</div>
             </div>
@@ -206,14 +206,18 @@
               <li>横屏代码区 ≥68%、说明卡在右列；竖屏上下布局，beat 提示卡不遮挡字幕</li>
               <li>源码保真：visual.code 必须逐字来自输入源码，幻觉代码或旁白复述源码会自动回退到安全分镜</li>
               <li>Standard 与 HTML 两种生成模式共用同一份结构化 visual，预览与成片表现一致</li>
+              <li>V1.6.9：HTML 模式不再注入静态代码 HTML，改为按 Remotion frame 动态解析 active beat 与 viewport，与 Standard 共用同一份 CodeVisual 和布局</li>
+              <li>主题化语法高亮：TypeScript / JavaScript / TSX / JSX、Python、JSON 可辨识；未知语言自动回退纯文本；5 套风格与品牌调色板保证 ≥3:1 对比度</li>
+              <li>token 结果按 scene 缓存复用，Standard / HTML 共用；关闭高亮或分词失败不影响行焦点、行号与 viewport</li>
+              <li>sanitizer 只放行受控代码样式（transform / overflow / 字体等），拒绝 url() 与 expression()；长代码分块处理，不因单次 20000 上限丢行</li>
             </ul>
           </div>
         </div>
 
         <div style="height:18px"></div>
         <div class="version">
-          <b>最新版本 V1.6.8</b>
-          <span>代码讲解场景（Code Scene）· 结构化代码块 · 聚焦 beats 与字幕时间对齐 · 横屏/竖屏布局与自动滚动</span>
+          <b>最新版本 V1.6.9</b>
+          <span>HTML 动态代码场景 · 主题化语法高亮 · 受控代码样式 sanitizer · 5 套风格与品牌调色板 ≥3:1 对比度 · token 缓存复用</span>
           <a class="pill" href="https://github.com/MiaoShuYo/zhiying#readme" target="_blank" rel="noopener">阅读更新记录 ↗</a>
         </div>
       </div>
@@ -384,7 +388,7 @@ pnpm db:push
           </details>
           <details>
             <summary>代码讲解是怎么做的？</summary>
-            <p>V1.6.8 把 Markdown 里的 fenced code 保留为结构化源码块。生成分镜时，模型只为每段旁白选择要聚焦的代码行和一句简短提示，画面据此高亮当前行、弱化其余行，长代码按 viewport 自动平滑滚动。源码必须逐字来自你的资料，模型不能改写或补全代码；16:9 与 9:16 有各自布局，字幕继续遵循项目字幕设置。</p>
+            <p>V1.6.8 把 Markdown 里的 fenced code 保留为结构化源码块。生成分镜时，模型只为每段旁白选择要聚焦的代码行和一句简短提示，画面据此高亮当前行、弱化其余行，长代码按 viewport 自动平滑滚动。V1.6.9 起 HTML 生成模式也按 frame 动态渲染同一份代码数据，并加入主题化语法高亮（TypeScript / JavaScript / Python / JSON，5 套风格自动保证对比度，未知语言回退纯文本），Standard 与 HTML 共用同一份 token 数据。源码必须逐字来自你的资料，模型不能改写或补全代码；16:9 与 9:16 有各自布局，字幕继续遵循项目字幕设置。</p>
           </details>
           <details>
             <summary>旧项目还能打开吗？</summary>
