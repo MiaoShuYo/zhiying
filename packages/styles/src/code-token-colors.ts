@@ -96,8 +96,10 @@ function safeHex(value: unknown, fallback: string): string {
  * Mixing goes toward white on dark backgrounds and toward black on light backgrounds, one tenth at
  * a time (at most 10 steps). If that still fails, `fallback` (the palette foreground) is used, and
  * finally pure black/white — whichever contrasts more — so the result is always a valid `#rrggbb`.
+ *
+ * Exported so the diff palette (`code-diff-colors.ts`) reuses the exact same deterministic mixing.
  */
-function ensureContrast(color: string, background: string, fallback: string): string {
+export function ensureContrast(color: string, background: string, fallback: string): string {
   const backgroundRgb = parseHex(background);
   if (!backgroundRgb) return safeHex(color, FALLBACK_FOREGROUND);
   if (contrastRatio(color, background) >= MIN_CONTRAST) return safeHex(color, FALLBACK_FOREGROUND);
@@ -113,13 +115,20 @@ function ensureContrast(color: string, background: string, fallback: string): st
   return contrastRatio('#ffffff', background) >= contrastRatio('#000000', background) ? '#ffffff' : '#000000';
 }
 
+/** Normalize any palette entry to a safe `#rrggbb` value (exported for the diff palette). */
+export function normalizePaletteHex(value: unknown, fallback: string): string {
+  return safeHex(value, fallback);
+}
+
 /**
  * Pick a deterministic color that differs from every already-used color while still meeting the
  * contrast minimum. Used only when two palette roles resolve to the same visible color (for example
  * a brand palette whose accent/secondary/muted entries are identical): the first color is kept and
  * the next one is nudged along the same black/white mixing axis, never below 3:1.
+ *
+ * Exported so the diff palette can keep add/remove/context distinguishable.
  */
-function distinctColor(color: string, background: string, taken: Set<string>): string {
+export function distinctColor(color: string, background: string, taken: Set<string>): string {
   const backgroundRgb = parseHex(background);
   const rgb = parseHex(color);
   const target = backgroundRgb && luminance(backgroundRgb) < 0.5 ? 255 : 0;

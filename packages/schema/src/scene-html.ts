@@ -35,11 +35,16 @@ const ALLOWED_PROPERTIES = new Set([
   'align-items', 'justify-content', 'width', 'min-width', 'max-width', 'height', 'min-height',
   'grid-template-columns', 'box-shadow', 'box-sizing', 'border-collapse', 'font-family',
   'white-space', 'opacity', 'overflow', 'overflow-x', 'overflow-y', 'letter-spacing',
-  'text-overflow', 'transform', 'transform-origin',
+  'text-overflow', 'transform', 'transform-origin', 'visibility',
 ]);
 
 const OVERFLOW_VALUES = new Set(['visible', 'hidden', 'auto', 'scroll', 'clip']);
 const WHITE_SPACE_VALUES = new Set(['normal', 'nowrap', 'pre', 'pre-wrap', 'pre-line', 'break-spaces']);
+/**
+ * `visibility` is only used by the build-mode code renderer to hide lines that have not been
+ * revealed yet; the value is a strict enum so no other keyword can leak through.
+ */
+const VISIBILITY_VALUES = new Set(['visible', 'hidden']);
 
 /** Values that must never reach a browser style attribute, whatever the property is. */
 const DANGEROUS_STYLE_VALUE = /url\s*\(|expression\s*\(|@import|javascript\s*:|vbscript\s*:|data\s*:|-moz-binding|behavior\s*:|\\|[<>]|[\u0000-\u001f\u007f]/i;
@@ -127,6 +132,7 @@ function sanitizeDeclaration(property: string, value: string): string | null {
     case 'overflow-y': return OVERFLOW_VALUES.has(value) ? `${property}:${value}` : null;
     case 'opacity': return sanitizeOpacity(value);
     case 'white-space': return WHITE_SPACE_VALUES.has(value) ? `${property}:${value}` : null;
+    case 'visibility': return VISIBILITY_VALUES.has(value) ? `${property}:${value}` : null;
     default:
       // Every other property keeps the original conservative character whitelist and 100 char cap.
       if (value.length > MAX_DECLARATION_LENGTH) return null;

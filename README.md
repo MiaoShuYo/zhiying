@@ -37,6 +37,10 @@
 - 长代码可读字号保护：50+ 行代码不会被整体缩小，改为 viewport 自动滚动（横屏 12–16 行、竖屏 7–11 行，8–15 帧平滑过渡）；相邻 beat 位于同一 viewport 时不滚动，首尾行正确 clamp。
 - 横竖屏专用布局：16:9 代码区至少 68%、当前 beat 说明卡在右列；9:16 使用上下布局，说明卡放在代码下方并避让字幕安全区；超长 filename/language/title 自动省略。
 - Standard 与 HTML 两种生成模式共用同一份结构化 code visual；HTML 模式同样输出代码窗口、行号与 beat 高亮。
+- 代码场景支持四种讲解模式：`focus`（默认，聚焦现有代码）、`build`（按语义步骤逐步构建最终源码）、`diff`（由真实 before/after 计算 unified 差异，展示增删改）、`trace`（代码行与执行状态/输出同步切换）。模式由模型按资料语义选择，只有资料明确支持时才使用高级模式，条件不足自动回退 `focus`；任何非法结构化数据都会被安全降级，不会输出不可渲染场景。
+- build 模式按步骤逐段显示：第一步只出现已构建代码，后续步骤新增行整行出现（不做逐字符打字机），已出现旧行保持稳定、当前步骤聚焦行高亮、其余已出现行弱化；步骤时间由旁白词级时间轴/字幕 cue 推导，缺失时按顺序均匀分配，并保证每步最小展示时长。
+- diff 模式优先保存真实 `beforeCode`/`afterCode` 并由系统计算 diff（模型不生成 `+/-` 文本）：unified 行区分 add/remove/context，旧/新行号成对显示，当前讲解 hunk 保持权重、其余弱化；颜色跟随主题（5 套 style 与品牌调色板均 ≥3:1 对比度，不写死 GitHub 配色）。只有最终代码、无法追溯修改前版本时不会臆造 diff。
+- trace 模式在代码行焦点之外同步展示可验证的执行状态：Variables 名称/值与 Output 随 step 切换，`changed` 变量有克制的强调（主题色 + `←` 标记），未变化变量保持稳定；横屏状态卡在右侧、竖屏在代码下方整行排列，不做过窄左右分栏，长代码仍复用 viewport 自动滚动。
 
 ### 旁白、节奏与字幕
 
@@ -74,7 +78,7 @@
 - 新建项目时可独立选择视觉风格和品牌套件（默认品牌自动预选，也可选「无品牌」）；项目编辑器可更换、重新应用或移除品牌，切换前逐项说明影响范围，且只更新品牌快照，不重新生成旁白、不重跑 TTS、不改字幕时间与场景时长。
 - 导出前检查新增品牌 Logo 交付检查：启用但文件缺失、与同侧字幕安全区冲突、竖屏 Logo 宽度超过设计画布 30% 时给出项目级 warning，并提供「打开品牌套件」修复入口；无品牌项目行为不变。
 
-### V1.2–V1.6.9 版本摘要
+### V1.2–V1.7.0 版本摘要
 
 - **V1.2–V1.5：** 可控性、恢复、质检交付、稳定性、制作效率与成片精修，详见下方各版本记录。
 - **V1.6 — 长项目渲染可靠性：** 增加渲染前估算、片段缓存与增量渲染、阶段日志、中断恢复和任务中心集中查看。
@@ -83,6 +87,7 @@
 - **V1.6.7 — 品牌设置页、项目品牌选择与交付检查：** 新增设置页品牌套件管理界面（列表/新建/编辑/复制/默认/删除、Logo 上传/替换、六色与字体、静态实时预览）；新建视频独立选择品牌（默认品牌预选、可选无品牌），项目编辑器可更换/重新应用/移除品牌，pending 品牌在首次 storyboard 生成时注入独立快照；品牌切换只影响视觉，不触发 Ollama/TTS。服务端 preflight 新增 Logo 缺失、与同侧字幕安全区冲突和竖屏超大尺寸检查，品牌渲染几何抽到 `@m2v/schema` 由渲染器与检查共用。
 - **V1.6.8 — 代码讲解场景：** Markdown fenced code 保留为结构化 codeBlocks（语言/源码原样，正文不混入源码）；Ollama 可为含关键代码的章节生成 `code` 场景与聚焦 beats，逐字来源校验拒绝幻觉代码，旁白复述源码自动回退；新增纯函数 beat 时间轴（wordTimings → subtitleCues → 均匀分配）与 viewport/滚动计算；Standard 模式新增 IDE 风格 CodeScene 渲染器（行号、beat 高亮、非重点行 0.38 弱化、5 套风格）；横屏 12–16 行 / 竖屏 7–11 行专用布局，beat 说明卡避让字幕；Standard 与 HTML 模式共用同一份结构化 visual。
 - **V1.6.9 — HTML 动态代码场景、受控代码样式与主题化语法高亮：** HTML 生成模式的 `code` 场景改为按 frame 动态渲染 active beat、viewport/滚动与真实源码，与 Standard 共用同一份 `CodeVisual`/时间轴/布局；`sanitizeSceneHtml` 增加代码布局所需受控样式与逐属性校验（拒 `url()`/`expression()` 等），长代码分块 sanitize 不截断；新增离线 tokenizer 与 5 套主题 token 调色板（≥3:1 对比度、缓存复用），Standard/HTML 共用 token 数据，支持关闭高亮且不影响行焦点/viewport。
+- **V1.7.0 — 代码讲解四模式：** 为 `code` 场景补齐 `focus/build/diff/trace` 模式选择策略与结构化数据（`buildSteps`/`beforeCode`+`afterCode`+`diffBeats`/`traceSteps`）：模型默认 `focus`，只有资料明确支持时才选择高级模式，结构非法或不完整时稳定回退 `focus`；build 按语义步骤逐段显示最终源码并与旁白/字幕时间轴对齐，diff 由系统对真实 before/after 做确定性 LCS 计算 unified 差异（add/remove/context 双行号、hunk 高亮、主题色），trace 同步展示代码行与可验证的变量/输出状态（`changed` 强调、横竖屏专用布局）；Standard 与 HTML 两种渲染器共享同一份模式数据、步骤顺序与状态，长代码统一复用 viewport 自动滚动。
 
 ### V1.2 可控性与恢复
 
@@ -191,6 +196,15 @@
 - 项目编辑器新增项目级品牌栏：显示当前品牌，提供「更换 / 重新应用 / 移除」；选择器列出 Logo、名称、简化色板、base Style 和默认标记，确认框逐项列出「将更新：品牌颜色、标题/正文字体、Logo」与「不会修改：旁白、分镜内容、配音、语速/停顿、字幕时间、场景时长、制作方案」。切换/重新应用/移除只改品牌快照，不触发 Ollama/TTS、不创建任务；来源套件删除后显示「来源套件已删除」，项目仍可预览/导出；项目锁定或忙碌时按钮禁用并显示错误。
 - 品牌渲染几何（`rendererScale`、`captionSafeArea`、`brandLogoPlacement` 与字幕安全区常量）迁到 `@m2v/schema`，渲染器改为兼容 re-export，preflight 复用同一纯函数。新增项目级检查：启用但 Logo 文件缺失（warning，不阻断导出，修复入口「打开品牌套件」）、Logo 与同侧字幕安全区冲突（仅当某场景字幕实际超过预留下的 2 行，或按保守高度估计被抬高后超出画面时提示）、竖屏 Logo 宽度超过设计画布 30%。同侧但布局安全不误报，多场景只报一次，无 Brand 项目行为不变。
 - 验证：`pnpm typecheck`、`pnpm test:v16`（133 项）、`pnpm test:v16:integration`、`pnpm test:v15`、`pnpm test:v12`、`pnpm test:v17`（42 项 + 2 段静态渲染）、`pnpm test:v17:integration`（5/5）、`pnpm test:v16:render`（22 帧，含 1080p 像素基线）全部通过。
+
+### V1.7.0 代码讲解四模式（build / diff / trace）与模式选择策略
+
+- Schema：`CodeVisual` 新增 `buildSteps`（`revealLines`/`focusLines`/`label`/`narrationText`，≤12 步且 reveal 覆盖全部源码行）、`beforeCode`/`afterCode`（diff 双版本，`code` 必须等于 `afterCode`）与 `diffBeats`（`hunkIds` 选择要讲解的 hunk）、`traceSteps`（代码行、`state`、`output`、`callDepth`）；`codeVisualOf` 在高级数据非法时安全恢复为 focus 形状，`resolveCodeSceneMode`/`normalizeCodeVisualInput` 保证非法/不完整的高级模式稳定回退 `focus`。
+- 分镜生成：prompt 增加 mode 选择策略（默认 `focus`，仅当资料明确描述逐步构建、同时提供修改前后代码、或明确包含执行步骤与状态变化时才使用 build/diff/trace；禁止为视觉效果臆造数据，`beforeCode`/`afterCode` 必须逐字来自输入 codeBlocks，trace `state` 只能来自资料）；`modelVisualSchema('code')` 同步新增结构化字段；pipeline 在生成期归一化 visual，并对 diff 的 `beforeCode` 做来源追溯校验，不可验证时降级 `focus` 且保留旁白与源码。
+- build 渲染：按步骤控制可见行（未出现行 `visibility:hidden` 占位保持行号/布局稳定），当前步骤聚焦行高亮、已出现非聚焦行 opacity 0.38 弱化，不做逐字符打字机；步骤时间复用 wordTimings → subtitleCues → 均匀分配与最小 0.6s，长代码复用 viewport 滚动。
+- diff 渲染：`@m2v/schema` 新增确定性行级 LCS diff 与 hunk 分组（32 项 FIFO 缓存），`@m2v/styles` 新增主题化 diff 调色板（add←accent/remove←secondary/context←fg，与代码窗口背景 ≥3:1、三者可区分）；Standard/HTML 输出统一的 unified 行、旧/新行号、marker 与 token span，当前 hunk 高亮、其余弱化，长 diff 自动滚动，9:16 保持单列可读。
+- trace 渲染：Standard/HTML 使用同一 `activeTraceStep` 解析，代码行高亮与 Variables/Output 状态卡同步切换；`changed` 变量使用主题色加粗并带 `←` 标记（无持续闪烁），未变化变量保持稳定；16:9 面板宽 28–34% 在右侧，9:16 面板在代码下方整行排列，面板底边避让字幕安全区。
+- 验证：`pnpm typecheck` exit 0、`pnpm test:v20`（107 个用例覆盖 40 项测试要求）、`pnpm test:v19`（68）、`pnpm test:v18`（61）、pipeline-p0/p1/fallback-chapter（41）、`pnpm test:v12`（66 项 + 2 段静态渲染）、`pnpm test:v16`（109+18+6）、`pnpm test:v17`（24+18）全部通过；31 项验收标准全部通过。逐项结果见 `doc/V1.7.0_test_report.md` 与 `doc/V1.7.0_acceptance_report.md`。
 
 ### V1.6.9 HTML 动态代码场景、受控代码样式与主题化语法高亮
 
@@ -464,6 +478,7 @@ pnpm test:v17     # V1.6.7 品牌设置页、项目品牌选择与 preflight 品
 pnpm test:v17:integration  # V1.6.7 集成测试（品牌库 CRUD/Logo、pending 品牌注入、项目切换/移除、preflight 接线）
 pnpm test:v18     # V1.6.8 代码讲解场景测试（codeBlocks、CodeVisual 校验、beat 时间轴、viewport 滚动、CodeScene 渲染与横竖屏布局）
 pnpm test:v19     # V1.6.9 HTML 动态代码场景、sanitizer 受控样式与语法高亮测试
+pnpm test:v20     # V1.7.0 代码讲解四模式（mode 选择、build 逐步构建、diff 前后差异、trace 执行状态）测试
 pnpm db:migrate:v16  # 只补 V1.6 新增的可空列，旧库可平滑升级
 pnpm db:generate  # 生成 Prisma Client
 pnpm db:push      # 同步 SQLite 数据库结构

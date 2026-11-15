@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, codeLines, codeVisualOf, type Scene, type Storyboard } from '@m2v/schema';
+import { sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, codeLines, codeVisualOf, normalizeCodeVisualInput, resolveCodeSceneMode, type Scene, type Storyboard } from '@m2v/schema';
 import { db } from './db';
 import { copyBrandLogoToProject } from './brand-kit-logo-files';
 import { applyPendingBrandSnapshot, consumePendingBrandKitId, readImportSettings, resolveCreationBrandKitId, writeImportSettings } from './brand-kit-pending';
@@ -329,6 +329,20 @@ export function logSceneSourceResolution(sceneId: string, context: SceneSourceCo
   log(`[storyboard][regenerate] scene=${sceneId} source_strategy=${context.strategy} source_chars=${[...context.text].length}`);
 }
 
+/**
+ * Code scene mode selection rules (#24), shared by the storyboard and regenerate prompts.
+ *
+ * The model must keep `focus` unless the source material clearly supports an advanced mode; it
+ * never invents structured data. Keep the V1.6.8 fidelity substrings (`type=code`, `codeBlocks`,
+ * `beats`, `narrationText`, `visual.code`, …) in the storyboard rule itself — this block only adds
+ * the mode policy.
+ */
+const CODE_MODE_RULE = 'code.mode 默认使用 focus；只有资料有明确语义依据时才选择 build/diff/trace，不允许仅为视觉效果选择高级模式，条件不足必须使用 focus。'
+  + 'build：仅当资料明确描述“逐步构建代码”（旁白按步骤添加代码、后一步建立在前一步结果上）时使用，输出 buildSteps，revealLines 必须指向 visual.code 中真实存在的行号，不允许逐字符 typing；无法验证时使用 focus。'
+  + 'diff：仅当资料同时提供修改前后两个真实代码版本（或明确变更）时使用，必须逐字输出 beforeCode/afterCode（逐字来自 codeBlocks），code = afterCode；diff 由系统计算，禁止模型输出带 +/- 的最终 diff 文本；只有最终代码时禁止臆造 beforeCode，回退 focus 或 build；diffBeats[].hunkIds 只能引用系统生成的 hunk 编号。'
+  + 'trace：仅当资料明确包含示例输入、执行步骤与状态变化时使用，输出 traceSteps；traceSteps[].state 的值只能来自资料，不得猜测；无法验证状态时回退 focus；不要求、也不允许本轮自动执行用户代码。'
+  + 'Standard/HTML 使用相同 mode 与同一份结构化 visual 数据；HTML 模式不输出最终代码/diff/状态卡 HTML。';
+
 export function buildRegenerateScenePrompt(input: {
   scene: Scene;
   sceneTypeRule: string;
@@ -351,12 +365,14 @@ export function buildRegenerateScenePrompt(input: {
     : '';
   const reference = `旧场景：${oldScene}\n对应章节参考资料（定位策略：${sourceContext.strategy}）：${sourceNarration(sourceContext.text) || sourceContext.text}${codeReference}${input.table ? `\n原表数据：${JSON.stringify(input.table)}` : ''}${input.related?.length ? `\n相邻章节参考（用于理解当前章节提及的对象）：${JSON.stringify(input.related)}` : ''}\n/no_think`;
   const chooseType = input.chooseType ?? (scene.type === 'html' || typeof scene.visual.html === 'string');
+  // A fixed/optional code scene must follow the same mode selection policy as storyboard generation.
+  const modeRule = scene.type === 'code' || chooseType ? CODE_MODE_RULE : '';
   const modelFields = `narration${chooseType ? ',type' : ''}${keepMediaVisual || keepTableVisual || input.table ? '' : ',visual'}`;
   const contentRules = `${NARRATION_RULE} ${input.table || keepTableVisual ? TABLE_NARRATION_RULE : keepMediaVisual ? '' : VISUAL_RULE}${brief ? ' layoutHint 仅用于识别原先需要的图示类型和对象，不是事实来源；把能用资料支持的内容转换为实际图示。' : ''}`;
   if (input.retry) {
-    return `上一次输出未通过校验${input.retryReason ? `（${input.retryReason}）` : ''}。请重新生成并严格输出一个完整、可解析的 JSON 对象，不要解释或使用 Markdown。只包含 ${modelFields}；${sceneTypeRule}。${htmlRequirement}${contentRules} ${reference}`;
+    return `上一次输出未通过校验${input.retryReason ? `（${input.retryReason}）` : ''}。请重新生成并严格输出一个完整、可解析的 JSON 对象，不要解释或使用 Markdown。只包含 ${modelFields}；${sceneTypeRule}。${htmlRequirement}${contentRules}${modeRule} ${reference}`;
   }
-  return `请重新设计这一个讲解视频场景，只返回 JSON，不要 Markdown。JSON 对象只包含 ${modelFields}；字段约束 ${sceneTypeRule}。不要输出 id、title、duration，这些字段由系统生成${keepMediaVisual ? '；媒体 visual 由系统保留' : keepTableVisual || input.table ? '；表格 visual 由系统从原表格准确保留' : ''}。${htmlRequirement}${contentRules} ${reference}`;
+  return `请重新设计这一个讲解视频场景，只返回 JSON，不要 Markdown。JSON 对象只包含 ${modelFields}；字段约束 ${sceneTypeRule}。不要输出 id、title、duration，这些字段由系统生成${keepMediaVisual ? '；媒体 visual 由系统保留' : keepTableVisual || input.table ? '；表格 visual 由系统从原表格准确保留' : ''}。${htmlRequirement}${contentRules}${modeRule} ${reference}`;
 }
 
 function addSceneSourceRef(scene: Scene, chapter: Chapter, chapterIndex: number): Scene {
@@ -787,6 +803,43 @@ export function modelVisualSchema(type: ModelSceneType): JsonSchema {
           narrationText: { type: 'string', minLength: 1, maxLength: 200 },
         }, ['lines']),
       },
+      beforeCode: { type: 'string', minLength: 1, maxLength: 8000 },
+      afterCode: { type: 'string', minLength: 1, maxLength: 8000 },
+      buildSteps: {
+        type: 'array', minItems: 1, maxItems: 12,
+        items: strictObject({
+          revealLines: { type: 'array', minItems: 1, maxItems: 200, items: { type: 'integer', minimum: 1 } },
+          focusLines: { type: 'array', minItems: 1, maxItems: 200, items: { type: 'integer', minimum: 1 } },
+          label: { type: 'string', minLength: 1, maxLength: 30 },
+          narrationText: { type: 'string', minLength: 1, maxLength: 200 },
+        }, ['revealLines']),
+      },
+      diffBeats: {
+        type: 'array', maxItems: 10,
+        items: strictObject({
+          hunkIds: { type: 'array', minItems: 1, maxItems: 10, items: { type: 'string', pattern: '^h[1-9][0-9]*$' } },
+          label: { type: 'string', minLength: 1, maxLength: 30 },
+          narrationText: { type: 'string', minLength: 1, maxLength: 200 },
+        }, ['hunkIds']),
+      },
+      traceSteps: {
+        type: 'array', maxItems: 20,
+        items: strictObject({
+          lines: { type: 'array', minItems: 1, maxItems: 200, items: { type: 'integer', minimum: 1 } },
+          label: { type: 'string', minLength: 1, maxLength: 30 },
+          narrationText: { type: 'string', minLength: 1, maxLength: 200 },
+          state: {
+            type: 'array', maxItems: 12,
+            items: strictObject({
+              name: { type: 'string', minLength: 1, maxLength: 40 },
+              value: { type: 'string', maxLength: 160 },
+              changed: { type: 'boolean' },
+            }, ['name', 'value']),
+          },
+          output: { type: 'string', maxLength: 200 },
+          callDepth: { type: 'integer', minimum: 0, maximum: 20 },
+        }, ['lines']),
+      },
     }, ['code']);
     case 'timeline': return strictObject({ items: { type: 'array', minItems: 2, items: strictObject({ date: { type: 'string' }, label: { type: 'string' } }) } });
     case 'math': return strictObject({ formula: { type: 'string' }, explanation: { type: 'string' } }, ['formula']);
@@ -1205,7 +1258,7 @@ export function buildStoryboardPrompt(title: string, chapters: Chapter[], genera
   }
   const htmlDesignBrief = generationMode === 'html' ? 'HTML 是画面渲染方式，不是场景语义类型。必须按内容选择真实场景类型并输出对应的结构化 visual 数据；不要输出 HTML 字符串，画面 HTML 会由系统生成。充分覆盖关键概念、关系、步骤、证据和结论，不要压缩成少数标签，也不要捏造资料没有的事实。' : '';
   const codeRule = hasCodeBlocks
-    ? '章节资料含 codeBlocks 时：当代码对理解核心内容重要，可选择 type=code，此时 visual.code 必须逐字取自输入 codeBlocks（不得改写、补全、优化或创造源码），可另给 language、filename 与 mode=focus；beats 最多 10 个，每个 beats[].lines 为 1 起始的代码行号（不得重复或超出该段代码行数），label 简短，narrationText 用于旁白时间对齐；narration 不朗读、不复述整段源码。代码只是附带示例时仍可选择 text/bullets/chart。'
+    ? `章节资料含 codeBlocks 时：当代码对理解核心内容重要，可选择 type=code，此时 visual.code 必须逐字取自输入 codeBlocks（不得改写、补全、优化或创造源码），可另给 language、filename 与 mode；beats 最多 10 个，每个 beats[].lines 为 1 起始的代码行号（不得重复或超出该段代码行数），label 简短，narrationText 用于旁白时间对齐；narration 不朗读、不复述整段源码。代码只是附带示例时仍可选择 text/bullets/chart。${CODE_MODE_RULE}`
     : '';
   return `${htmlDesignBrief}${codeRule}按输入顺序每章生成一个知识视频分镜。只返回 JSON {"scenes":[...]}；每项只含 type,narration,visual，不含 id/title/duration，visual 遵守 JSON Schema。${NARRATION_RULE}${VISUAL_RULE}有 markdownTable 时，${TABLE_NARRATION_RULE}清单逐项保留，有演讲者备注时优先参考。主题：${title}\n章节资料：${JSON.stringify(chapterInput)}\n/no_think`;
 }
@@ -1254,13 +1307,17 @@ export function buildModelStoryboardScene(chapter: Chapter, rawOutput: unknown, 
     if (tableNarrationIssue(narration, table)) narration = safeTableNarration(table) || chapter.title;
     output = { id: randomUUID(), type: 'table', title: chapter.title.slice(0, 50), narration, duration: Math.max(12, [...narration].length / 5), visual: table, ...(chapter.page ? { sourcePage: chapter.page } : {}) };
   } else {
-    const visual = record.visual && typeof record.visual === 'object' && !Array.isArray(record.visual) ? record.visual : {};
-    output = { id: randomUUID(), type: record.type, title: chapter.title.slice(0, 50), narration, duration: Math.max(12, [...narration].length / 5), visual, ...(chapter.page ? { sourcePage: chapter.page } : {}) };
+    const visual = record.visual && typeof record.visual === 'object' && !Array.isArray(record.visual) ? record.visual as Record<string, unknown> : {};
+    // Code visuals are normalised at generation time (#24): a valid advanced mode keeps only its
+    // structured data, while invalid/unsupported data degrades to a plain focus visual instead of
+    // producing an unrenderable scene.
+    const normalizedVisual = record.type === 'code' ? normalizeCodeVisualInput(visual) : visual;
+    output = { id: randomUUID(), type: record.type, title: chapter.title.slice(0, 50), narration, duration: Math.max(12, [...narration].length / 5), visual: normalizedVisual, ...(chapter.page ? { sourcePage: chapter.page } : {}) };
   }
   return SceneSchemaForPipeline.safeParse(output);
 }
 
-export function buildStoryboardSceneOrFallback(chapter: Chapter, rawOutput: unknown, narrationOnly = false, generationMode: 'standard' | 'html' = 'standard'): { scene: Scene; fallbackUsed: boolean; validationError?: string } {
+export function buildStoryboardSceneOrFallback(chapter: Chapter, rawOutput: unknown, narrationOnly = false, generationMode: 'standard' | 'html' = 'standard'): { scene: Scene; fallbackUsed: boolean; validationError?: string; modeFallback?: string } {
   const fallback = (validationError: string) => ({
     scene: generationMode === 'html' ? htmlFallbackScene(chapter) : fallbackChapter(chapter),
     fallbackUsed: true,
@@ -1294,6 +1351,23 @@ export function buildStoryboardSceneOrFallback(chapter: Chapter, rawOutput: unkn
     if (!codeBlocks.length) return fallback('代码场景缺少章节 codeBlocks 源码，无法校验 visual.code 的来源');
     if (!visual || !codeTraceableToSource(visual.code, codeBlocks)) {
       return fallback('代码场景的 visual.code 未逐字来自输入 codeBlocks（疑似改写或幻觉代码），已使用安全回退分镜');
+    }
+    // Mode source gate (#24): a diff scene also needs a verifiable pre-change source. When only the
+    // final code exists the model must not invent `beforeCode`; degrade to focus but keep the scene.
+    const mode = resolveCodeSceneMode(visual);
+    if (mode === 'diff') {
+      const beforeCode = visual.beforeCode;
+      if (!beforeCode || !codeTraceableToSource(beforeCode, codeBlocks)) {
+        const downgraded: Record<string, unknown> = { code: visual.code, mode: 'focus' };
+        if (visual.language !== undefined) downgraded.language = visual.language;
+        if (visual.filename !== undefined) downgraded.filename = visual.filename;
+        if (visual.beats !== undefined) downgraded.beats = visual.beats;
+        return {
+          scene: { ...scene, visual: downgraded },
+          fallbackUsed: false,
+          modeFallback: 'diff 模式的 beforeCode 未逐字来自输入 codeBlocks（无法验证修改前版本），已降级为 focus',
+        };
+      }
     }
   }
   if ((chapter.codeBlocks?.length || hasMarkdownCodeExample(chapter.text)) && codeNarrationLeak(scene.narration, chapter)) {

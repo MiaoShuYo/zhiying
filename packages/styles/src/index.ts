@@ -101,3 +101,4 @@ export function resolveStyle(id: StyleId, override?: Record<string, unknown>) {
 }
 
 export { contrastRatio, resolveCodeTokenColors } from './code-token-colors';
+export { resolveCodeDiffColors, type CodeDiffColorSet } from './code-diff-colors';

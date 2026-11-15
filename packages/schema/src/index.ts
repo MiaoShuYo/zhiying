@@ -158,6 +158,8 @@ export * from "./batch";
 export * from "./brand-kit";
 export * from "./brand-layout";
 export * from "./captions";
+export * from "./code-diff";
+export * from "./code-mode";
 export * from "./code-timeline";
 export * from "./code-tokens";
 export * from "./code-viewport";
