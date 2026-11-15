@@ -12,13 +12,16 @@ import {
   resolveInstallLayout,
   validateInstallConfig,
   writeInstallConfig,
+  writeJsonAtomic,
 } from './install-layout.js';
 import type { InstallConfig, InstallLayout, PayloadProfile } from './install-layout.js';
 import {
   assertNoReparseEscape,
   getDiskFreeBytes,
+  probeWritableDirectory,
   validateInstallPath,
 } from './model-paths.js';
+import { loadModelManifest } from './model-manifest.js';
 
 /**
  * #103 Windows 安装器（per-user，控制台向导由 setup-cli/native 承担）。
@@ -355,6 +358,8 @@ interface TemplateDefaults {
   ports?: InstallConfig['ports'];
   managedProcesses?: InstallConfig['managedProcesses'];
   modelManifest?: string;
+  version?: string;
+  payloadProfile?: PayloadProfile;
 }
 
 async function readTemplateDefaults(payloadRoot: string): Promise<TemplateDefaults> {
@@ -370,6 +375,8 @@ async function readTemplateDefaults(payloadRoot: string): Promise<TemplateDefaul
       defaults.managedProcesses = record.managedProcesses as InstallConfig['managedProcesses'];
     }
     if (typeof record.modelManifest === 'string' && record.modelManifest.trim()) defaults.modelManifest = record.modelManifest;
+    if (typeof record.version === 'string' && record.version.trim()) defaults.version = record.version.trim();
+    if (record.payloadProfile === 'lite' || record.payloadProfile === 'full') defaults.payloadProfile = record.payloadProfile;
     return defaults;
   } catch {
     return {};
@@ -403,7 +410,186 @@ function buildInstallConfig(plan: InstallPlan, template: TemplateDefaults, exist
 }
 
 /**
- * 执行安装/升级；所有写入先到 staging，再原子替换程序目录，失败回滚。
+ * 安装后收尾（#103 Inno Setup 路径）：Inno 已把 payload 复制到 `{app}`、创建快捷方式与卸载项，
+ * 这里只负责写/校验 `config/install.json`、创建目录骨架、保留升级用户字段、记录程序/模型版本与安装日志。
+ * 不复制程序文件、不创建快捷方式/注册表、不联网。
+ */
+export interface FinalizeInstallInput {
+  installRoot: string;
+  profile?: PayloadProfile;
+  version?: string;
+  downloadModels?: 'now' | 'later';
+  logPath?: string;
+  now?: () => number;
+}
+
+export interface FinalizeInstallResult {
+  ok: boolean;
+  installRoot: string;
+  version: string;
+  profile: PayloadProfile;
+  upgrade: boolean;
+  logPath: string;
+  modelsDownloadChoice: 'now' | 'later';
+  warnings: string[];
+  errors: string[];
+}
+
+const FINALIZE_RUNTIME_DEFAULTS: InstallConfig['runtime'] = {
+  node: join('runtime', 'node', 'node.exe'),
+  python: join('runtime', 'python', 'python.exe'),
+  ffmpegDir: join('runtime', 'ffmpeg'),
+  ollama: join('runtime', 'ollama', 'ollama.exe'),
+};
+
+export async function finalizeInstall(input: FinalizeInstallInput): Promise<FinalizeInstallResult> {
+  const now = input.now ?? Date.now;
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  let logPath = input.logPath ?? '';
+  const logLines: string[] = [];
+  const addLog = async (line: string): Promise<void> => {
+    logLines.push(`[${new Date(now()).toISOString()}] ${line}`);
+  };
+  let layout: InstallLayout;
+  try {
+    layout = resolveInstallLayout(input.installRoot);
+  } catch (error) {
+    return {
+      ok: false,
+      installRoot: input.installRoot,
+      version: input.version ?? '1.8.0',
+      profile: input.profile ?? 'lite',
+      upgrade: false,
+      logPath,
+      modelsDownloadChoice: input.downloadModels ?? 'later',
+      warnings,
+      errors: [(error as Error).message],
+    };
+  }
+  const resultBase = {
+    installRoot: layout.installRoot,
+    version: input.version ?? '1.8.0',
+    profile: input.profile ?? 'lite',
+    upgrade: false,
+    logPath,
+    modelsDownloadChoice: input.downloadModels ?? 'later',
+  };
+  try {
+    if (!logPath) logPath = join(layout.logs, `setup-${formatTimestamp(new Date(now()))}.log`);
+    await mkdir(dirname(logPath), { recursive: true }).catch(() => undefined);
+    await addLog(`安装后收尾开始：root=${layout.installRoot} profile=${input.profile ?? '（模板）'}`);
+
+    // 目录骨架（Inno [Dirs] 已创建大部分，这里兜底并补 models 子目录）。
+    const directories = [
+      layout.modelsRoot,
+      layout.modelsOllama,
+      layout.modelsF5Tts,
+      layout.modelsVocos,
+      layout.modelsHuggingFace,
+      join(layout.modelsHuggingFace, 'hub'),
+      layout.downloads,
+      layout.data,
+      join(layout.data, 'tmp'),
+      join(layout.data, 'runtime'),
+      join(layout.data, 'backups'),
+      layout.logs,
+      layout.config,
+    ];
+    for (const directory of directories) await mkdir(directory, { recursive: true });
+    await addLog('目录骨架已创建/校验');
+    if (!(await probeWritableDirectory(layout.data))) {
+      throw new Error(`数据目录不可写：${layout.data}。请改用当前用户可写目录重新安装。`);
+    }
+    if (!(await probeWritableDirectory(layout.modelsRoot))) {
+      throw new Error(`模型目录不可写：${layout.modelsRoot}。请检查安装目录权限（不要使用 Program Files 等受保护目录）。`);
+    }
+
+    const template = await readTemplateDefaults(layout.installRoot);
+    let existing: InstallConfig | undefined;
+    try {
+      existing = await loadInstallConfig(layout.installRoot);
+    } catch {
+      existing = undefined;
+    }
+    const version = input.version ?? template.version ?? existing?.version ?? '1.8.0';
+    const profile: PayloadProfile = input.profile ?? template.payloadProfile ?? existing?.payloadProfile ?? 'lite';
+    const downloadModels: 'now' | 'later' = input.downloadModels ?? existing?.modelsDownloadChoice ?? 'later';
+    const config: InstallConfig = {
+      schemaVersion: 1,
+      product: 'zhiying',
+      version,
+      installRoot: layout.installRoot,
+      installedAt: existing?.installedAt ?? new Date(now()).toISOString(),
+      perUser: existing?.perUser ?? true,
+      payloadProfile: profile,
+      runtime: template.runtime ?? existing?.runtime ?? FINALIZE_RUNTIME_DEFAULTS,
+      ports: existing?.ports ?? template.ports ?? { ...DEFAULT_PORTS },
+      managedProcesses: existing?.managedProcesses ?? template.managedProcesses ?? { ollama: true },
+      modelManifest: existing?.modelManifest ?? template.modelManifest ?? join('models', '.downloads', 'manifest.json'),
+      modelsDownloadChoice: downloadModels,
+      firstRunCompleted: false,
+    };
+    if (existing) config.updatedAt = new Date(now()).toISOString();
+    const validation = validateInstallConfig(config);
+    if (!validation.ok) throw new Error(`安装配置生成失败：${validation.errors.join('；')}`);
+    await writeInstallConfig(validation.config);
+    await addLog(`install.json 已写入：version=${version} profile=${profile} upgrade=${Boolean(existing)}`);
+
+    // 模型清单模板（升级保留既有清单，避免覆盖用户已固定的 revision/状态）。
+    const manifestTarget = join(layout.installRoot, config.modelManifest);
+    const manifestSource = join(layout.app, 'desktop', 'model-manifest.default.json');
+    let manifestVersion = 'unknown';
+    if (!existsSync(manifestTarget)) {
+      if (existsSync(manifestSource)) {
+        await mkdir(dirname(manifestTarget), { recursive: true });
+        await cp(manifestSource, manifestTarget, { force: true });
+        await addLog('模型清单模板已写入 models/.downloads/manifest.json');
+      } else {
+        warnings.push(`缺少模型清单模板：${manifestSource}（模型管理器将使用内置默认清单）`);
+      }
+    }
+    try {
+      manifestVersion = (await loadModelManifest(manifestTarget)).version;
+    } catch {
+      manifestVersion = 'unknown';
+    }
+
+    await writeJsonAtomic(join(layout.data, 'runtime', 'versions.json'), {
+      programVersion: version,
+      previousProgramVersion: existing?.version ?? null,
+      modelManifestVersion: manifestVersion,
+      updatedAt: new Date(now()).toISOString(),
+    });
+    await addLog('versions.json 已写入（程序版本/模型清单版本分别记录）');
+    await addLog(`安装后收尾完成：modelsDownloadChoice=${downloadModels} warnings=${warnings.length}`);
+    await appendFile(logPath, `${logLines.join('\n')}\n`, 'utf8');
+    return {
+      ok: true,
+      installRoot: layout.installRoot,
+      version,
+      profile,
+      upgrade: Boolean(existing),
+      logPath,
+      modelsDownloadChoice: downloadModels,
+      warnings,
+      errors: [],
+    };
+  } catch (error) {
+    errors.push((error as Error).message || String(error));
+    await addLog(`安装后收尾失败：${(error as Error).message}`);
+    try {
+      await appendFile(logPath, `${logLines.join('\n')}\n`, 'utf8');
+    } catch {
+      /* 日志写入失败不覆盖原始错误。 */
+    }
+    return { ...resultBase, ok: false, logPath, warnings, errors };
+  }
+}
+
+/**
+ * 执行安装/升级（旧复制/快捷方式/注册表路径，保留给维护 CLI 与单元测试；Setup.exe 已改由 Inno 负责）：
+ * 所有写入先到 staging，再原子替换程序目录，失败回滚。
  */
 export async function executeInstall(plan: InstallPlan, deps: InstallerDeps = {}): Promise<InstallResult> {
   const copyTree = deps.copyTree ?? defaultCopyTree;

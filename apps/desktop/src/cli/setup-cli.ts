@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   defaultPerUserInstallRoot,
   executeInstall,
+  finalizeInstall,
   planInstall,
 } from '../installer.js';
 import type { InstallPlan } from '../installer.js';
@@ -30,6 +31,10 @@ interface SetupOptions {
   writeRegistry: boolean;
   noLaunch: boolean;
   json: boolean;
+  /** Inno Setup 安装后收尾模式（写/校验 install.json、目录骨架、升级字段、日志）。 */
+  postInstall: boolean;
+  profile?: PayloadProfile;
+  logPath?: string;
 }
 
 function isMainModule(): boolean {
@@ -43,7 +48,7 @@ function isMainModule(): boolean {
 }
 
 export function parseSetupOptions(argv: string[]): SetupOptions {
-  const options: SetupOptions = { silent: false, interactive: false, createShortcut: true, writeRegistry: true, noLaunch: false, json: false };
+  const options: SetupOptions = { silent: false, interactive: false, createShortcut: true, writeRegistry: true, noLaunch: false, json: false, postInstall: false };
   for (let index = 0; index < argv.length; index += 1) {
     const raw = argv[index];
     const equals = raw.indexOf('=');
@@ -92,6 +97,19 @@ export function parseSetupOptions(argv: string[]): SetupOptions {
       case '--json':
         options.json = true;
         break;
+      case '--post-install':
+        options.postInstall = true;
+        break;
+      case '--profile': {
+        const value = takeValue();
+        if (value === 'lite' || value === 'full') options.profile = value;
+        break;
+      }
+      case '--log': {
+        const value = takeValue();
+        if (value) options.logPath = value;
+        break;
+      }
       default:
         break;
     }
@@ -218,9 +236,43 @@ async function launchModelManager(installRoot: string, version: string): Promise
   return url;
 }
 
+/** Inno Setup 安装后收尾：只写/校验 install.json、目录骨架、升级字段与日志（不复制程序文件）。 */
+async function runPostInstall(options: SetupOptions): Promise<number> {
+  const target = options.target?.trim();
+  if (!target) {
+    if (options.json) process.stdout.write(`${JSON.stringify({ ok: false, errors: ['缺少 --target <安装目录> 参数'] }, null, 2)}\n`);
+    process.stderr.write('--post-install 需要 --target <安装目录> 参数。\n');
+    return 3;
+  }
+  try {
+    const result = await finalizeInstall({
+      installRoot: target,
+      ...(options.profile ? { profile: options.profile } : {}),
+      ...(options.downloadModels ? { downloadModels: options.downloadModels } : {}),
+      ...(options.logPath ? { logPath: options.logPath } : {}),
+    });
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else if (result.ok) {
+      process.stdout.write(`安装后收尾完成：${result.installRoot}（version ${result.version}，profile ${result.profile}）\n`);
+      process.stdout.write(`模型下载选择：${result.modelsDownloadChoice}\n安装日志：${result.logPath}\n`);
+      for (const warning of result.warnings) process.stdout.write(`警告：${warning}\n`);
+    } else {
+      process.stderr.write(`安装后收尾失败：${result.errors.join('；')}\n安装日志：${result.logPath}\n`);
+    }
+    return result.ok ? 0 : 3;
+  } catch (error) {
+    const message = (error as Error).message || String(error);
+    if (options.json) process.stdout.write(`${JSON.stringify({ ok: false, errors: [message] }, null, 2)}\n`);
+    process.stderr.write(`安装后收尾失败：${message}\n`);
+    return 3;
+  }
+}
+
 /** 供测试直接调用的主流程；返回进程退出码。 */
 export async function runSetupCli(argv: string[]): Promise<number> {
   const options = parseSetupOptions(argv);
+  if (options.postInstall) return runPostInstall(options);
   if (!options.payloadRoot) {
     process.stderr.write('缺少 --payload <安装包目录> 参数。\n');
     return 3;
@@ -299,3 +351,4 @@ if (isMainModule()) {
       process.exit(4);
     });
 }
+

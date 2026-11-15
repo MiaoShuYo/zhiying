@@ -88,7 +88,7 @@
 - **V1.6.8 — 代码讲解场景：** Markdown fenced code 保留为结构化 codeBlocks（语言/源码原样，正文不混入源码）；Ollama 可为含关键代码的章节生成 `code` 场景与聚焦 beats，逐字来源校验拒绝幻觉代码，旁白复述源码自动回退；新增纯函数 beat 时间轴（wordTimings → subtitleCues → 均匀分配）与 viewport/滚动计算；Standard 模式新增 IDE 风格 CodeScene 渲染器（行号、beat 高亮、非重点行 0.38 弱化、5 套风格）；横屏 12–16 行 / 竖屏 7–11 行专用布局，beat 说明卡避让字幕；Standard 与 HTML 模式共用同一份结构化 visual。
 - **V1.6.9 — HTML 动态代码场景、受控代码样式与主题化语法高亮：** HTML 生成模式的 `code` 场景改为按 frame 动态渲染 active beat、viewport/滚动与真实源码，与 Standard 共用同一份 `CodeVisual`/时间轴/布局；`sanitizeSceneHtml` 增加代码布局所需受控样式与逐属性校验（拒 `url()`/`expression()` 等），长代码分块 sanitize 不截断；新增离线 tokenizer 与 5 套主题 token 调色板（≥3:1 对比度、缓存复用），Standard/HTML 共用 token 数据，支持关闭高亮且不影响行焦点/viewport。
 - **V1.7.0 — 代码讲解四模式：** 为 `code` 场景补齐 `focus/build/diff/trace` 模式选择策略与结构化数据（`buildSteps`/`beforeCode`+`afterCode`+`diffBeats`/`traceSteps`）：模型默认 `focus`，只有资料明确支持时才选择高级模式，结构非法或不完整时稳定回退 `focus`；build 按语义步骤逐段显示最终源码并与旁白/字幕时间轴对齐，diff 由系统对真实 before/after 做确定性 LCS 计算 unified 差异（add/remove/context 双行号、hunk 高亮、主题色），trace 同步展示代码行与可验证的变量/输出状态（`changed` 强调、横竖屏专用布局）；Standard 与 HTML 两种渲染器共享同一份模式数据、步骤顺序与状态，长代码统一复用 viewport 自动滚动。
-- **V1.8.0 — Windows 桌面发行版：** 新增可分发独立运行目录与 `Zhiying.exe` 桌面启动器（受管子进程/健康检查/端口冲突与重复启动防护/退出清理，不杀用户已有 Ollama/Node/Python，默认仅绑定 127.0.0.1）；新增单文件 `Zhiying-Setup.exe` 安装向导（默认 per-user 可写目录、路径/权限/空间校验、快捷方式与卸载入口、安装完成“立即下载/稍后下载 AI 模型”）；所有知影管理的模型统一到 `<InstallRoot>\models`（Ollama/Qwen、F5-TTS、Vocos、字幕对齐模型、HF 缓存与临时下载），通过子进程环境注入而不改系统环境变量；新增版本化模型清单与下载管理器（真实进度、暂停/恢复/取消/重试、完整性校验、断点状态恢复、Ollama/HF 源适配、管理器 UI 与“设置 → 模型”入口）；新增首次启动诊断、模型修复、软件升级与安全卸载的数据保留策略；构建脚本产出带版本、SHA-256 的运行目录/安装包与运行时/许可清单。
+- **V1.8.0 — Windows 桌面发行版：** 新增可分发独立运行目录与 `Zhiying.exe` 桌面启动器（受管子进程/健康检查/端口冲突与重复启动防护/退出清理，不杀用户已有 Ollama/Node/Python，默认仅绑定 127.0.0.1）；新增 **Inno Setup 6 标准安装程序** `Zhiying-Setup.exe`（中文图形安装向导、标准卸载器与「应用和功能」入口，默认 per-user 可写目录、路径/权限/空间校验、快捷方式与卸载入口、安装完成“立即下载/稍后下载 AI 模型”）；所有知影管理的模型统一到 `<InstallRoot>\models`（Ollama/Qwen、F5-TTS、Vocos、字幕对齐模型、HF 缓存与临时下载），通过子进程环境注入而不改系统环境变量；新增版本化模型清单与下载管理器（真实进度、暂停/恢复/取消/重试、完整性校验、断点状态恢复、Ollama/HF 源适配、管理器 UI 与“设置 → 模型”入口）；新增首次启动诊断、模型修复、软件升级与安全卸载的数据保留策略；构建脚本产出带版本、SHA-256 的运行目录/安装包与运行时/许可清单。
 
 ### V1.2 可控性与恢复
 
@@ -201,11 +201,11 @@
 ### V1.8.0 Windows 桌面发行版（独立运行目录 / Setup.exe / 统一模型目录 / 模型下载 / 维护）
 
 - 运行与启动器：新增 `apps/desktop`（`@m2v/desktop`）与薄壳 `Zhiying.exe`，从 `config/install.json` 解析安装根，顺序启动受管的 Python/Web/Worker/受管 Ollama/模型管理器并做健康检查；重复启动返回 `already_running`，端口被外部程序占用时失败并给出占用者与恢复路径且**不会结束其它进程**；退出只停止本实例的进程树，日志/状态/临时数据全部位于安装根内；默认仅监听 `127.0.0.1`。
-- 安装器：`scripts/build-installer.mjs` 构建单文件 `Zhiying-Setup.exe`（嵌入 payload、PE 版本 1.8.0.0、SHA-256 与 release-info）。安装向导支持 per-user 默认目录或自选可写路径（中文/空格/D 盘/长路径），校验受保护目录、路径穿越、可写性与磁盘空间，staging 原子替换、失败回滚、升级保留 `models/data/logs/config`，创建 KnownFolder 桌面快捷方式与 Windows 标准卸载入口；完成页提供“立即下载 / 稍后下载 AI 模型”。
+- 安装器：`scripts/build-installer.mjs` 通过 **Inno Setup 6（ISCC）** 编译标准安装程序 `Zhiying-Setup.exe`（中文图形向导、标准卸载器 `unins000.exe` 与「应用和功能」注册、PE 版本 1.8.0.0、SHA-256 与 release-info；安装后由 `setup-cli --post-install` 写 `install.json`）。安装向导支持 per-user 默认目录或自选可写路径（中文/空格/D 盘/长路径），校验受保护目录、路径穿越、可写性与磁盘空间，staging 原子替换、失败回滚、升级保留 `models/data/logs/config`，创建 KnownFolder 桌面快捷方式与 Windows 标准卸载入口；完成页提供“立即下载 / 稍后下载 AI 模型”。
 - 统一模型目录：`ModelDirectoryResolver` 保证 `<InstallRoot>\models` 为唯一模型根（`ollama/`、`f5-tts/`、`huggingface/`、`.downloads/`）；`buildManagedServiceEnv` 仅向受管子进程注入 `OLLAMA_MODELS`、`HF_HOME/HF_HUB_CACHE`、`F5TTS_MODEL_DIR/F5TTS_VOCODER_DIR`、`M2V_DATA_DIR` 等，不修改系统环境变量；Python 服务新增 `M2V_MODELS_ROOT` 兼容与 `/health` 模型路径字段，开发模式 `start.ps1` 行为不变。
 - 模型下载：版本化 manifest（HF API 生成真实 size/SHA-256 与固定 revision，F5-TTS 标注 CC BY-NC 4.0）驱动下载管理器——按真实字节计算单模型/总体进度（无 Content-Length 不伪造百分比）、Range/If-Range 断点续传、暂停/恢复/取消/重试（429/5xx 受限退避）、磁盘预算、SHA-256/大小校验后原子提交、`state.json` 崩溃恢复、Ollama NDJSON 与 HF cache 结构落盘；另提供 127.0.0.1 上的管理器 HTTP+SSE 服务、自包含 UI 与 web“设置 → 模型”入口。
 - 维护：`maintenance-cli` 提供首次启动诊断（运行时/服务/模型/磁盘/未完成下载）、修复计划与按需模型修复、原地升级（备份 `install.json`/SQLite 后替换程序、保留模型与用户数据、失败回滚）与安全卸载（默认仅移除程序并保留 models/data/logs/config；清理需显式 `--purge-*` 与确认，拒绝删除安装根外或链接目标）。
-- 验证：`pnpm typecheck` exit 0；`pnpm test:v21` 147/147（覆盖 101 项测试要求）、`pnpm test:v21:e2e` 13/13（真实构建→Setup.exe 安装→Zhiying.exe 启动→下载→维护链路）；基线 `test:v20` 107/107、`test:v19` 68/68、`test:v18` 61/61、pipeline 37/37、`test:v12` 66/66、`test:v16` 109+18+6、`test:v17` 18/18 全部通过。独立验收 48 项：40 PASS + 8 项 BLOCKED-ENV（无干净 Windows 测试机 / 无真实大模型权重与推理，均给出净化环境与 fixture 替代证据）；冻结产物 `Zhiying-Setup.exe` SHA-256 为 `60d840e1a97790da1f8de5567a85208787d913623861ab5e08a41d0579d147bc`。逐项结果见 `doc/V1.8.0_test_report.md` 与 `doc/V1.8.0_acceptance_report.md`，安装说明见 `doc/V1.8.0_install.md`。
+- 验证：`pnpm typecheck` exit 0；`pnpm test:v21` desktop 152（151 pass + 1 BLOCKED-ENV skip）+ web 7/7（覆盖 101 项测试要求）、`pnpm test:v21:e2e` 14/14（真实构建→Inno Setup 标准安装程序→Zhiying.exe 启动→下载→维护链路）；基线 `test:v20` 107/107、`test:v19` 68/68、`test:v18` 61/61、pipeline 58/58、`test:v12` 66/66、`test:v16` 109+18+6、`test:v17` 24+18 全部通过。独立验收 48 项：40 PASS + 8 项 BLOCKED-ENV（无干净 Windows 测试机 / 无真实大模型权重与推理，均给出净化环境与 fixture 替代证据）；冻结产物 `Zhiying-Setup.exe` SHA-256 为 `c9fcd8c8178ce38bb1176cf3582ea0d184464ece8ee5f14d0584020d0f3c7d6a`。逐项结果见 `doc/V1.8.0_test_report.md` 与 `doc/V1.8.0_acceptance_report.md`，安装说明见 `doc/V1.8.0_install.md`。
 
 ### V1.7.0 代码讲解四模式（build / diff / trace）与模式选择策略
 
@@ -255,21 +255,31 @@ V1.8.0 起提供普通用户可直接使用的 Windows 桌面发行版：安装�
 
 ### 安装步骤
 
-1. 双击 `Zhiying-Setup.exe`（单文件安装程序）。
-2. 按控制台向导确认产品名称、版本 1.8.0、发行者与安装说明。
-3. 选择安装目录：直接回车使用默认目录，也可输入 `D:\Zhiying` 或含中文/空格的当前用户可写路径；`Program Files`、`Windows`、`System32`、盘符根等受保护位置会被拒绝并提示改用可写目录。
-4. 选择是否创建桌面快捷方式（默认创建），并选择安装完成后是否立即下载 AI 模型（默认“稍后下载”）。
-5. 安装完成页可选择 **立即下载**（启动模型管理器）或 **稍后下载**（直接启动知影，缺少模型时给出补装提示）。
-6. 安装成功后双击 `Zhiying.exe`（或桌面快捷方式）启动，服务健康检查通过后自动打开 `http://127.0.0.1:3000`。
+1. 双击 `Zhiying-Setup.exe`（单文件安装程序），启动**图形安装向导**。
+2. 在欢迎页确认产品名称、版本 1.8.0、发行者与安装说明，点击「下一步」。
+3. 在安装目录页选择目录：默认 `%LOCALAPPDATA%\Programs\Zhiying`，可点击「浏览…」或直接输入 `D:\Zhiying`、含中文/空格的当前用户可写路径；`Program Files`、`Windows`、`System32`、盘符根等受保护位置会被拒绝并提示改用可写目录。
+4. 在安装选项页选择：是否创建桌面快捷方式（默认创建）、是否创建卸载注册表项（默认创建），以及安装完成后「立即下载 AI 模型 / 稍后下载」（默认稍后下载）。
+5. 点击「安装」后，向导显示解压与安装进度、安装日志；点击「取消」会安全退出且不留下半安装。
+6. 完成页可选择 **立即下载 AI 模型**（打开浏览器模型管理器）、**启动知影** 或 **完成**；之后也可双击 `Zhiying.exe`（或桌面快捷方式）启动，服务健康检查通过后自动打开 `http://127.0.0.1:3000`。
 
-静默安装（自动化/企业部署）：
+安装向导页面示例：
+
+![知影安装向导：选择安装目录](docs/screenshots/v1.8.0-setup-directory.png)
+![知影安装向导：模型下载选择](docs/screenshots/v1.8.0-setup-model-download.png)
+![知影安装向导：附加任务（桌面快捷方式）](docs/screenshots/v1.8.0-setup-tasks.png)
+静默安装（自动化/企业部署，标准 Inno Setup 参数）：
 
 ```powershell
-.\Zhiying-Setup.exe --silent --target "D:\Zhiying" --no-shortcut --no-registry --download-models later
-.\Zhiying-Setup.exe --silent --target "D:\Zhiying" --download-models now --no-launch
+# /VERYSILENT 无界面；/DIR 指定目录；/TASKS="" 不创建桌面快捷方式；/MODELDOWNLOAD=later 稍后下载模型
+.\Zhiying-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="D:\Zhiying" /TASKS="" /MODELDOWNLOAD=later /LOG="%TEMP%\zhiying-setup.log"
+
+# 立即下载模型（完成页会保留“立即下载 AI 模型”入口）
+.\Zhiying-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="D:\Zhiying" /MODELDOWNLOAD=now /LOG="%TEMP%\zhiying-setup.log"
 ```
 
-退出码：`0` 成功、`2` 用户取消、`3` 安装前校验失败、`4` 安装失败；安装日志在 `<InstallRoot>\logs\setup-<时间戳>.log`。
+退出码沿用 Inno 语义：`0` 成功、`1` 初始化失败、`2` 安装前取消、`3` 准备阶段致命错误、`4` 安装阶段致命错误、`5` 安装中取消、`6` 被终止。Inno `/LOG` 记录安装过程；知影收尾日志在 `<InstallRoot>\logs\setup-<时间戳>.log`。
+
+标准卸载：Windows「应用和功能」中的“知影 Zhiying”，或 `<InstallRoot>\unins000.exe`。默认**保留** `models`、`data`、`logs`、`config`；显式清理需 `/PURGEDATA` 或安装目录内维护 CLI（见下文）。
 
 ### 安装后的目录与模型位置
 
@@ -947,3 +957,7 @@ cd services/python
 隔离集成测试使用 Node.js 22.13+ 的 node:sqlite 创建临时数据库，测试备份恢复、快照轮转、保存冲突、取消状态及导入预览；不修改真实项目。渲染冒烟测试位于 apps/worker/test/render-v11.ts，需要本机 Chromium/Edge 与 FFmpeg，可通过 REMOTION_BROWSER_EXECUTABLE 指定浏览器。
 
 竖屏字幕预览受视口高度限制，整幅 1080 × 1920 画面只能缩到约 0.37 倍显示，密集正文在屏幕上仅约 8px。预览工具栏的「1:1 原始尺寸」按钮会按画布原始像素显示并可滚动，字号与成片一致，便于判断阅读效果。
+
+
+
+

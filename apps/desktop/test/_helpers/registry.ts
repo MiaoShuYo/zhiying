@@ -42,8 +42,7 @@ export function keyExists(keyPath = UNINSTALL_KEY): boolean {
 }
 
 /** 读取注册表键的所有值；键不存在返回 null。 */
-export function readRegistryValues(keyPath = UNINSTALL_KEY): Record<string, RegistryValue> | null {
-  const psPath = keyPath.replace(/^HKCU\\/i, 'HKCU:\\').replace(/^HKLM\\/i, 'HKLM:\\');
+export function readRegistryValues(keyPath = UNINSTALL_KEY): Record<string, RegistryValue> | null {  const psPath = keyPath.replace(/^HKCU\\/i, 'HKCU:\\').replace(/^HKLM\\/i, 'HKLM:\\');
   const script = [
     `$key='${psPath.replace(/'/g, "''")}';`,
     'if (Test-Path $key) {',
@@ -141,4 +140,60 @@ export function deleteShortcutIfExists(p: string | null): void {
   } catch {
     /* ignore */
   }
+}
+
+// ---------------------------------------------------------------------------
+// R4 Inno Setup：标准卸载入口（HKCU Uninstall 下的任意 AppId_is1 键）
+// ---------------------------------------------------------------------------
+
+export interface UninstallEntry {
+  /** 注册表路径（HKCU\\Software\\...\\Uninstall\\<key>） */
+  key: string;
+  values: Record<string, RegistryValue>;
+}
+
+/** 枚举 HKCU 下所有卸载项（Apps & Features 同源），供 Inno 标准 `AppId_is1` 键断言。 */
+export function listUninstallEntries(): UninstallEntry[] {
+  const script = [
+    "$root = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall';",
+    'if (-not (Test-Path $root)) { "[]"; exit 0 }',
+    '$items = @();',
+    'foreach ($child in Get-ChildItem $root) {',
+    '  $props = Get-ItemProperty -Path $child.PSPath -ErrorAction SilentlyContinue;',
+    '  if ($null -eq $props) { continue }',
+    '  $values = [ordered]@{};',
+    '  foreach ($prop in $props.PSObject.Properties) {',
+    "    if ($prop.Name -like 'PS*') { continue }",
+    '    $values[$prop.Name] = [string]$prop.Value',
+    '  }',
+    '  $items += [pscustomobject]@{ key = $child.PSChildName; values = $values }',
+    '}',
+    'ConvertTo-Json -InputObject @($items) -Depth 6 -Compress',
+  ].join(' ');
+  const parsed = runPowerShellJson(script);
+  if (!Array.isArray(parsed)) return [];
+  const entries: UninstallEntry[] = [];
+  for (const item of parsed as Array<{ key?: string; values?: Record<string, unknown> }>) {
+    if (!item || typeof item.key !== 'string') continue;
+    const values: Record<string, RegistryValue> = {};
+    for (const [name, value] of Object.entries(item.values ?? {})) {
+      values[name] = { type: 'REG_SZ', value: String(value ?? '') };
+    }
+    entries.push({ key: `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${item.key}`, values });
+  }
+  return entries;
+}
+
+/** 查找 DisplayName/InstallLocation 匹配的卸载项（Inno 用 AppId_is1 键名）。 */
+export function findUninstallEntriesForInstallLocation(installRoot: string): UninstallEntry[] {
+  const target = path.resolve(installRoot).toLowerCase();
+  return listUninstallEntries().filter((entry) => {
+    const location = (entry.values.InstallLocation?.value ?? '').toLowerCase().replace(/[\\/]+$/, '');
+    return location === target || (entry.values.DisplayName?.value ?? '').includes('知影');
+  });
+}
+
+/** 删除某个卸载注册表键（测试清理）。 */
+export function deleteUninstallEntry(keyPath: string): void {
+  runReg(['delete', keyPath, '/f']);
 }

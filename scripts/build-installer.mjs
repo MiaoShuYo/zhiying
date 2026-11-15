@@ -1,32 +1,33 @@
 #!/usr/bin/env node
 /**
- * #103 Zhiying-Setup.exe 构建脚本。
+ * #103 Zhiying-Setup.exe 构建脚本（Inno Setup 6 标准安装程序）。
  *
- * 复用 build-desktop 产物（或 --input 指定已有发行目录），用 PowerShell Compress-Archive
- * 打包 payload.zip，再用系统 csc.exe 编译 native/ZhiyingSetup.cs（嵌入 payload 资源或
- * external payload），输出：
- *   <out>\Zhiying-Setup.exe
- *   <out>\Zhiying-Setup.exe.sha256
- *   <out>\release-info.json
+ * 复用 build-desktop 产物（或 --input 指定发行目录），通过 ISCC.exe 编译
+ * apps/desktop/native/ZhiyingSetup.iss（payload 由 Inno [Files] 直接内嵌，不再生成 payload.zip）。
  *
- * --dry-run 不写盘；EXE 带 1.8.0.0 程序集版本信息。
+ * 输出：dist/Zhiying-Setup.exe + Zhiying-Setup.exe.sha256 + release-info.json
+ * （installer: "inno-setup"、innoVersion、version/profile/sha256/size/components）。
+ *
+ * ISCC 定位顺序：ISCC_PATH → %LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe
+ * → %ProgramFiles(x86)%\Inno Setup 6\ISCC.exe → PATH 中 iscc。
+ * --dry-run 只打印 ISCC 命令与产物计划，不写盘。
  */
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync } from 'node:fs';
-import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { buildDesktop, normalizePeExecutable, parseBuildArgs } from './build-desktop.mjs';
+import { buildDesktop, parseBuildArgs } from './build-desktop.mjs';
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), '..');
-const CSC_PATH = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
 const DEFAULT_VERSION = '1.8.0';
+const ISS_PATH = join(REPO_ROOT, 'apps', 'desktop', 'native', 'ZhiyingSetup.iss');
+const LANGUAGE_PATH = join(REPO_ROOT, 'apps', 'desktop', 'native', 'languages', 'ChineseSimplified.isl');
 
 function parseInstallerArgs(argv) {
   const options = {
@@ -34,16 +35,15 @@ function parseInstallerArgs(argv) {
     outDir: resolve(REPO_ROOT, 'dist'),
     profile: 'lite',
     inputDir: undefined,
-    externalPayload: false,
-    embedPayload: false,
+    isccPath: undefined,
     dryRun: false,
     json: false,
+    help: false,
     buildNode: undefined,
     buildFfmpegDir: undefined,
     buildPythonDir: undefined,
     buildOllamaDir: undefined,
     buildWebStandalone: undefined,
-    help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const raw = argv[index];
@@ -82,12 +82,11 @@ function parseInstallerArgs(argv) {
         if (value) options.inputDir = resolve(process.cwd(), value);
         break;
       }
-      case '--external-payload':
-        options.externalPayload = true;
+      case '--iscc': {
+        const value = takeValue();
+        if (value) options.isccPath = resolve(process.cwd(), value);
         break;
-      case '--embed-payload':
-        options.embedPayload = true;
-        break;
+      }
       case '--node': {
         const value = takeValue();
         if (value) options.buildNode = resolve(process.cwd(), value);
@@ -139,83 +138,74 @@ function assemblyVersion(version) {
   return parts.join('.');
 }
 
+/** 按契约顺序定位 Inno Setup 6 的 ISCC.exe。 */
+function locateIscc(explicitPath) {
+  const candidates = [];
+  if (explicitPath) candidates.push(explicitPath);
+  if (process.env.ISCC_PATH) candidates.push(process.env.ISCC_PATH);
+  const localAppData = process.env.LOCALAPPDATA;
+  if (localAppData) candidates.push(join(localAppData, 'Programs', 'Inno Setup 6', 'ISCC.exe'));
+  const programFilesX86 = process.env['ProgramFiles(x86)'];
+  if (programFilesX86) candidates.push(join(programFilesX86, 'Inno Setup 6', 'ISCC.exe'));
+  const programFiles = process.env.ProgramFiles;
+  if (programFiles) candidates.push(join(programFiles, 'Inno Setup 6', 'ISCC.exe'));
+  const pathValue = process.env.PATH ?? process.env.Path ?? '';
+  for (const directory of pathValue.split(';')) {
+    if (!directory.trim()) continue;
+    candidates.push(join(directory.trim(), 'iscc.exe'));
+    candidates.push(join(directory.trim(), 'ISCC.exe'));
+  }
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) return resolve(candidate);
+  }
+  throw new Error(
+    '未找到 Inno Setup 6 的 ISCC.exe。\n' +
+      '请安装 Inno Setup 6（构建期工具，最终用户无需安装）：\n' +
+      '  winget install -e --id JRSoftware.InnoSetup\n' +
+      '或设置环境变量 ISCC_PATH 指向 ISCC.exe。',
+  );
+}
+
+async function detectInnoVersion() {
+  const script = [
+    "$keys = @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Inno Setup 6_is1',",
+    "'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Inno Setup 6_is1',",
+    "'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Inno Setup 6_is1');",
+    'foreach ($key in $keys) { if (Test-Path $key) { (Get-ItemProperty $key).DisplayVersion; break } }',
+  ].join(' ');
+  try {
+    const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      windowsHide: true,
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const version = stdout.trim().split(/\r?\n/).map(line => line.trim()).filter(Boolean).pop();
+    return version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function readPeSubsystem(path) {
+  const buffer = readFileSync(path);
+  const peOffset = buffer.readUInt32LE(0x3c);
+  return buffer.readUInt16LE(peOffset + 0x5c);
+}
+
 async function sha256File(path) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const hash = createHash('sha256');
-    const stream = createReadStream(path);
-    stream.on('data', chunk => hash.update(chunk));
-    stream.once('error', rejectPromise);
-    stream.once('end', () => resolvePromise(hash.digest('hex')));
+    import('node:fs').then(fs => {
+      const hash = createHash('sha256');
+      const fileStream = fs.createReadStream(path);
+      fileStream.on('data', chunk => hash.update(chunk));
+      fileStream.once('error', rejectPromise);
+      fileStream.once('end', () => resolvePromise(hash.digest('hex')));
+    });
   });
 }
 
-async function makeTempDir() {
-  const directory = join(tmpdir(), `m2v-installer-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
-  await mkdir(directory, { recursive: true });
-  return directory;
-}
-
-async function compressPayload(productDir, zipPath) {
-  await rm(zipPath, { force: true }).catch(() => undefined);
-  const escapedSource = `${productDir.replace(/'/g, "''")}\\*`;
-  const escapedTarget = zipPath.replace(/'/g, "''");
-  const script = `Compress-Archive -Path '${escapedSource}' -DestinationPath '${escapedTarget}' -CompressionLevel Optimal -Force`;
-  try {
-    await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      windowsHide: true,
-      timeout: 600_000,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-  } catch (error) {
-    throw new Error(`payload.zip 压缩失败：${`${error.stdout ?? ''}${error.stderr ?? ''}`.trim() || error.message}`);
-  }
-  if (!existsSync(zipPath)) throw new Error('payload.zip 未生成');
-  return zipPath;
-}
-
-async function compileSetupExe(options, productDir, payloadZip, tempDir) {
-  if (process.platform !== 'win32') throw new Error('Zhiying-Setup.exe 只能在本机 Windows 上通过 csc.exe 构建');
-  if (!existsSync(CSC_PATH)) throw new Error(`未找到 csc.exe：${CSC_PATH}（可通过 CSC_PATH 环境变量指定）`);
-  const nativeSource = join(REPO_ROOT, 'apps', 'desktop', 'native', 'ZhiyingSetup.cs');
-  if (!existsSync(nativeSource)) throw new Error(`缺少 native 源文件：${nativeSource}`);
-  const version = assemblyVersion(options.version);
-  const assemblyInfo = join(tempDir, 'ZhiyingSetup.AssemblyInfo.cs');
-  await writeFile(
-    assemblyInfo,
-    [
-      'using System.Reflection;',
-      `[assembly: AssemblyVersion("${version}")]`,
-      `[assembly: AssemblyFileVersion("${version}")]`,
-      '[assembly: AssemblyTitle("知影 Zhiying Setup")]',
-      '[assembly: AssemblyProduct("知影 Zhiying")]',
-      '[assembly: AssemblyCompany("知影 / Zhiying")]',
-      '[assembly: AssemblyDescription("知影 Windows 安装程序")]',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-  const target = join(options.outDir, 'Zhiying-Setup.exe');
-  const embed = !options.externalPayload || options.embedPayload;
-  const args = [
-    '/nologo',
-    '/target:exe',
-    '/platform:x64',
-    '/optimize+',
-    `/out:${target}`,
-    '/r:System.dll',
-    '/r:System.Core.dll',
-    '/r:System.IO.Compression.FileSystem.dll',
-  ];
-  if (embed) args.push(`/resource:${payloadZip},payload.zip`);
-  args.push(nativeSource, assemblyInfo);
-  try {
-    await execFileAsync(CSC_PATH, args, { windowsHide: true, timeout: 300_000, maxBuffer: 16 * 1024 * 1024 });
-    normalizePeExecutable(target);
-  } catch (error) {
-    const output = `${error.stdout ?? ''}${error.stderr ?? ''}`.trim();
-    throw new Error(`编译 Zhiying-Setup.exe 失败：\n${output || error.message}`);
-  }
-  return target;
+function quoteForDisplay(value) {
+  return /[\s"]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 }
 
 async function readComponents(productDir) {
@@ -226,7 +216,28 @@ async function readComponents(productDir) {
   }
 }
 
-/** 构建安装器；返回摘要。 */
+async function verifySetupExecutable(setupExe, version) {
+  if (!existsSync(setupExe)) throw new Error(`ISCC 未生成安装程序：${setupExe}`);
+  const subsystem = readPeSubsystem(setupExe);
+  if (subsystem !== 2) throw new Error(`Zhiying-Setup.exe 子系统应为 GUI(2)，实际 ${subsystem}`);
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', `(Get-Item '${setupExe.replace(/'/g, "''")}').VersionInfo.FileVersion`],
+      { windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024 },
+    );
+    const fileVersion = stdout.trim();
+    const expectedPrefix = version.split('.').slice(0, 3).join('.');
+    if (fileVersion && !fileVersion.startsWith(expectedPrefix)) {
+      throw new Error(`Zhiying-Setup.exe FileVersion=${fileVersion} 与版本 ${version} 不一致`);
+    }
+  } catch (error) {
+    if (/与版本/.test((error?.message ?? ''))) throw error;
+    /* 版本读取失败不阻塞构建（ISCC 已按 /D 注入版本）。 */
+  }
+}
+
+/** 构建 Inno Setup 安装程序；返回摘要。 */
 export async function buildInstaller(options) {
   let productDir;
   let version = options.version;
@@ -256,96 +267,125 @@ export async function buildInstaller(options) {
     profile = buildSummary.profile;
   }
   version = version ?? DEFAULT_VERSION;
-  const external = options.externalPayload || (profile === 'full' && !options.embedPayload);
-  const embed = !external;
+  for (const required of ['Zhiying.exe', 'app', 'runtime']) {
+    if (!existsSync(join(productDir, required))) {
+      throw new Error(`发行目录不完整：缺少 ${required}（${productDir}）。请先运行 pnpm build:desktop。`);
+    }
+  }
+  if (!existsSync(ISS_PATH)) throw new Error(`缺少 Inno Setup 脚本：${ISS_PATH}`);
+  if (!existsSync(LANGUAGE_PATH)) throw new Error(`缺少中文语言文件：${LANGUAGE_PATH}（来源 Inno 官方 issrc Files/Languages/ChineseSimplified.isl）`);
+
+  const iscc = locateIscc(options.isccPath);
+  const outDir = resolve(options.outDir);
+  const setupExe = join(outDir, 'Zhiying-Setup.exe');
+  const isccArgs = [
+    '/Qp',
+    `/DAppVersion=${version}`,
+    `/DAppVersion4=${assemblyVersion(version)}`,
+    `/DAppProfile=${profile}`,
+    `/DPayloadDir=${resolve(productDir)}`,
+    `/DOutDir=${outDir}`,
+    ISS_PATH,
+  ];
+  const commandLine = [iscc, ...isccArgs].map(quoteForDisplay).join(' ');
   if (options.dryRun) {
     return {
       ok: true,
       dryRun: true,
+      installer: 'inno-setup',
+      iscc,
+      innoVersion: await detectInnoVersion(),
       productDir,
       version,
       profile,
-      embed,
-      setupExe: join(options.outDir, 'Zhiying-Setup.exe'),
-      sha256Path: join(options.outDir, 'Zhiying-Setup.exe.sha256'),
-      releaseInfoPath: join(options.outDir, 'release-info.json'),
+      setupExe,
+      sha256Path: join(outDir, 'Zhiying-Setup.exe.sha256'),
+      releaseInfoPath: join(outDir, 'release-info.json'),
+      command: commandLine,
       planned: [
-        `压缩 payload：${productDir} → payload.zip`,
-        `${embed ? '嵌入' : '外置'} payload 到 Zhiying-Setup.exe（程序集版本 ${assemblyVersion(version)}）`,
-        '生成 Zhiying-Setup.exe.sha256 与 release-info.json',
+        `ISCC 编译：${ISS_PATH}`,
+        `payload 目录：${resolve(productDir)}（由 Inno [Files] 内嵌，排除 models/data/logs/config/install.json）`,
+        `输出：${setupExe}`,
+        '生成 Zhiying-Setup.exe.sha256 与 release-info.json（installer=inno-setup）',
       ],
       build: buildSummary,
     };
   }
-  await mkdir(options.outDir, { recursive: true });
-  const tempDir = await makeTempDir();
+  await mkdir(outDir, { recursive: true });
+  await rm(setupExe, { force: true }).catch(() => undefined);
+  await rm(`${setupExe}.sha256`, { force: true }).catch(() => undefined);
   try {
-    const payloadZip = join(tempDir, 'payload.zip');
-    await compressPayload(productDir, payloadZip);
-    const payloadSha256 = await sha256File(payloadZip);
-    const payloadSizeBytes = (await stat(payloadZip)).size;
-    const setupExe = await compileSetupExe({ ...options, version }, productDir, payloadZip, tempDir);
-    if (!embed) await cp(payloadZip, join(options.outDir, 'payload.zip'), { force: true });
-    const setupSha256 = await sha256File(setupExe);
-    const setupSizeBytes = (await stat(setupExe)).size;
-    await writeFile(join(options.outDir, 'Zhiying-Setup.exe.sha256'), `${setupSha256}  Zhiying-Setup.exe\n`, 'utf8');
-    const components = await readComponents(productDir);
-    const releaseInfo = {
-      schemaVersion: 1,
-      product: 'zhiying',
-      version,
-      profile,
-      assemblyVersion: assemblyVersion(version),
-      setup: {
-        file: 'Zhiying-Setup.exe',
-        sha256: setupSha256,
-        sizeBytes: setupSizeBytes,
-      },
-      payload: {
-        embedded: embed,
-        file: embed ? 'embedded' : 'payload.zip',
-        sha256: payloadSha256,
-        sizeBytes: payloadSizeBytes,
-      },
-      components,
-      createdAt: new Date().toISOString(),
-    };
-    await writeFile(join(options.outDir, 'release-info.json'), `${JSON.stringify(releaseInfo, null, 2)}\n`, 'utf8');
-    return {
-      ok: true,
-      dryRun: false,
-      productDir,
-      version,
-      profile,
-      embed,
-      setupExe,
-      setupSha256,
-      setupSizeBytes,
-      payloadSha256,
-      payloadSizeBytes,
-      sha256Path: join(options.outDir, 'Zhiying-Setup.exe.sha256'),
-      releaseInfoPath: join(options.outDir, 'release-info.json'),
-      build: buildSummary,
-    };
-  } finally {
-    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    await execFileAsync(iscc, isccArgs, {
+      cwd: REPO_ROOT,
+      windowsHide: true,
+      timeout: 1_800_000,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (error) {
+    const output = `${error.stdout ?? ''}${error.stderr ?? ''}`.trim();
+    throw new Error(`ISCC 编译安装程序失败：\n${output || error.message}\n命令：${commandLine}`);
   }
+  await verifySetupExecutable(setupExe, version);
+  const setupSha256 = await sha256File(setupExe);
+  const setupSizeBytes = (await stat(setupExe)).size;
+  await writeFile(join(outDir, 'Zhiying-Setup.exe.sha256'), `${setupSha256}  Zhiying-Setup.exe\n`, 'utf8');
+  const components = await readComponents(productDir);
+  const innoVersion = await detectInnoVersion();
+  const releaseInfo = {
+    schemaVersion: 1,
+    product: 'zhiying',
+    version,
+    profile,
+    installer: 'inno-setup',
+    innoVersion,
+    setup: {
+      file: 'Zhiying-Setup.exe',
+      sha256: setupSha256,
+      sizeBytes: setupSizeBytes,
+    },
+    payload: {
+      embedded: true,
+      mode: 'inno-files',
+      source: `desktop/Zhiying-${version}-${profile}`,
+    },
+    components,
+    createdAt: new Date().toISOString(),
+  };
+  await writeFile(join(outDir, 'release-info.json'), `${JSON.stringify(releaseInfo, null, 2)}\n`, 'utf8');
+  return {
+    ok: true,
+    dryRun: false,
+    installer: 'inno-setup',
+    innoVersion,
+    iscc,
+    productDir,
+    version,
+    profile,
+    setupExe,
+    setupSha256,
+    setupSizeBytes,
+    sha256Path: join(outDir, 'Zhiying-Setup.exe.sha256'),
+    releaseInfoPath: join(outDir, 'release-info.json'),
+    build: buildSummary,
+  };
 }
 
 function printHelp() {
   process.stdout.write(
     [
-      '构建知影 Windows 单文件安装程序 Zhiying-Setup.exe',
+      '构建知影 Windows 标准安装程序（Inno Setup 6）',
       '',
       '用法：node scripts/build-installer.mjs [选项]',
       '  --version <x.y.z>       版本号（默认沿用发行目录/1.8.0）',
       '  --out <dir>             输出目录（默认 dist）',
       '  --profile lite|full     发行 profile（默认 lite）',
-      '  --input <dir>           复用已有发行目录（不重新构建）',
-      '  --external-payload      不嵌入 payload.zip，改为同目录外置文件',
-      '  --embed-payload         full profile 也强制嵌入 payload',
-      '  --dry-run               只打印计划，不写盘',
+      '  --input <dir>           复用已有发行目录（不重新构建 desktop）',
+      '  --iscc <path>           指定 ISCC.exe（默认按契约顺序自动定位）',
+      '  --dry-run               只打印 ISCC 命令与产物计划，不写盘',
       '  --json                  以 JSON 输出摘要',
+      '',
+      'Inno Setup 6 是构建期工具（最终用户无需安装）：',
+      '  winget install -e --id JRSoftware.InnoSetup',
       '',
     ].join('\n'),
   );
@@ -361,12 +401,15 @@ async function main() {
     const result = await buildInstaller(options);
     if (options.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     else if (result.dryRun) {
-      process.stdout.write(`安装器构建计划（dry-run）：\n`);
+      process.stdout.write('安装器构建计划（dry-run，未写盘）：\n');
+      process.stdout.write(`  ISCC：${result.iscc}（Inno Setup ${result.innoVersion}）\n`);
       for (const item of result.planned) process.stdout.write(`  · ${item}\n`);
+      process.stdout.write(`  命令：${result.command}\n`);
     } else {
       process.stdout.write(`安装器构建完成：${result.setupExe}\n`);
       process.stdout.write(`  SHA-256：${result.setupSha256}\n`);
-      process.stdout.write(`  版本：${result.version}  发行 profile：${result.profile}  payload：${result.embed ? '嵌入' : '外置'}\n`);
+      process.stdout.write(`  版本：${result.version}  profile：${result.profile}  Inno Setup：${result.innoVersion}\n`);
+      process.stdout.write(`  大小：${result.setupSizeBytes} 字节\n`);
       process.stdout.write(`  哈希文件：${result.sha256Path}\n发布信息：${result.releaseInfoPath}\n`);
     }
     return 0;
