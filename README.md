@@ -78,7 +78,7 @@
 - 新建项目时可独立选择视觉风格和品牌套件（默认品牌自动预选，也可选「无品牌」）；项目编辑器可更换、重新应用或移除品牌，切换前逐项说明影响范围，且只更新品牌快照，不重新生成旁白、不重跑 TTS、不改字幕时间与场景时长。
 - 导出前检查新增品牌 Logo 交付检查：启用但文件缺失、与同侧字幕安全区冲突、竖屏 Logo 宽度超过设计画布 30% 时给出项目级 warning，并提供「打开品牌套件」修复入口；无品牌项目行为不变。
 
-### V1.2–V1.7.0 版本摘要
+### V1.2–V1.8.0 版本摘要
 
 - **V1.2–V1.5：** 可控性、恢复、质检交付、稳定性、制作效率与成片精修，详见下方各版本记录。
 - **V1.6 — 长项目渲染可靠性：** 增加渲染前估算、片段缓存与增量渲染、阶段日志、中断恢复和任务中心集中查看。
@@ -88,6 +88,7 @@
 - **V1.6.8 — 代码讲解场景：** Markdown fenced code 保留为结构化 codeBlocks（语言/源码原样，正文不混入源码）；Ollama 可为含关键代码的章节生成 `code` 场景与聚焦 beats，逐字来源校验拒绝幻觉代码，旁白复述源码自动回退；新增纯函数 beat 时间轴（wordTimings → subtitleCues → 均匀分配）与 viewport/滚动计算；Standard 模式新增 IDE 风格 CodeScene 渲染器（行号、beat 高亮、非重点行 0.38 弱化、5 套风格）；横屏 12–16 行 / 竖屏 7–11 行专用布局，beat 说明卡避让字幕；Standard 与 HTML 模式共用同一份结构化 visual。
 - **V1.6.9 — HTML 动态代码场景、受控代码样式与主题化语法高亮：** HTML 生成模式的 `code` 场景改为按 frame 动态渲染 active beat、viewport/滚动与真实源码，与 Standard 共用同一份 `CodeVisual`/时间轴/布局；`sanitizeSceneHtml` 增加代码布局所需受控样式与逐属性校验（拒 `url()`/`expression()` 等），长代码分块 sanitize 不截断；新增离线 tokenizer 与 5 套主题 token 调色板（≥3:1 对比度、缓存复用），Standard/HTML 共用 token 数据，支持关闭高亮且不影响行焦点/viewport。
 - **V1.7.0 — 代码讲解四模式：** 为 `code` 场景补齐 `focus/build/diff/trace` 模式选择策略与结构化数据（`buildSteps`/`beforeCode`+`afterCode`+`diffBeats`/`traceSteps`）：模型默认 `focus`，只有资料明确支持时才选择高级模式，结构非法或不完整时稳定回退 `focus`；build 按语义步骤逐段显示最终源码并与旁白/字幕时间轴对齐，diff 由系统对真实 before/after 做确定性 LCS 计算 unified 差异（add/remove/context 双行号、hunk 高亮、主题色），trace 同步展示代码行与可验证的变量/输出状态（`changed` 强调、横竖屏专用布局）；Standard 与 HTML 两种渲染器共享同一份模式数据、步骤顺序与状态，长代码统一复用 viewport 自动滚动。
+- **V1.8.0 — Windows 桌面发行版：** 新增可分发独立运行目录与 `Zhiying.exe` 桌面启动器（受管子进程/健康检查/端口冲突与重复启动防护/退出清理，不杀用户已有 Ollama/Node/Python，默认仅绑定 127.0.0.1）；新增 **Inno Setup 6 标准安装程序** `Zhiying-Setup.exe`（中文图形安装向导、标准卸载器与「应用和功能」入口，默认 per-user 可写目录、路径/权限/空间校验、快捷方式与卸载入口、安装完成“立即下载/稍后下载 AI 模型”）；所有知影管理的模型统一到 `<InstallRoot>\models`（Ollama/Qwen、F5-TTS、Vocos、字幕对齐模型、HF 缓存与临时下载），通过子进程环境注入而不改系统环境变量；新增版本化模型清单与下载管理器（真实进度、暂停/恢复/取消/重试、完整性校验、断点状态恢复、Ollama/HF 源适配、管理器 UI 与“设置 → 模型”入口）；新增首次启动诊断、模型修复、软件升级与安全卸载的数据保留策略；构建脚本产出带版本、SHA-256 的运行目录/安装包与运行时/许可清单。
 
 ### V1.2 可控性与恢复
 
@@ -197,6 +198,15 @@
 - 品牌渲染几何（`rendererScale`、`captionSafeArea`、`brandLogoPlacement` 与字幕安全区常量）迁到 `@m2v/schema`，渲染器改为兼容 re-export，preflight 复用同一纯函数。新增项目级检查：启用但 Logo 文件缺失（warning，不阻断导出，修复入口「打开品牌套件」）、Logo 与同侧字幕安全区冲突（仅当某场景字幕实际超过预留下的 2 行，或按保守高度估计被抬高后超出画面时提示）、竖屏 Logo 宽度超过设计画布 30%。同侧但布局安全不误报，多场景只报一次，无 Brand 项目行为不变。
 - 验证：`pnpm typecheck`、`pnpm test:v16`（133 项）、`pnpm test:v16:integration`、`pnpm test:v15`、`pnpm test:v12`、`pnpm test:v17`（42 项 + 2 段静态渲染）、`pnpm test:v17:integration`（5/5）、`pnpm test:v16:render`（22 帧，含 1080p 像素基线）全部通过。
 
+### V1.8.0 Windows 桌面发行版（独立运行目录 / Setup.exe / 统一模型目录 / 模型下载 / 维护）
+
+- 运行与启动器：新增 `apps/desktop`（`@m2v/desktop`）与薄壳 `Zhiying.exe`，从 `config/install.json` 解析安装根，顺序启动受管的 Python/Web/Worker/受管 Ollama/模型管理器并做健康检查；重复启动返回 `already_running`，端口被外部程序占用时失败并给出占用者与恢复路径且**不会结束其它进程**；退出只停止本实例的进程树，日志/状态/临时数据全部位于安装根内；默认仅监听 `127.0.0.1`。
+- 安装器：`scripts/build-installer.mjs` 通过 **Inno Setup 6（ISCC）** 编译标准安装程序 `Zhiying-Setup.exe`（中文图形向导、标准卸载器 `unins000.exe` 与「应用和功能」注册、PE 版本 1.8.0.0、SHA-256 与 release-info；安装后由 `setup-cli --post-install` 写 `install.json`）。安装向导支持 per-user 默认目录或自选可写路径（中文/空格/D 盘/长路径），校验受保护目录、路径穿越、可写性与磁盘空间，staging 原子替换、失败回滚、升级保留 `models/data/logs/config`，创建 KnownFolder 桌面快捷方式与 Windows 标准卸载入口；完成页提供“立即下载 / 稍后下载 AI 模型”。
+- 统一模型目录：`ModelDirectoryResolver` 保证 `<InstallRoot>\models` 为唯一模型根（`ollama/`、`f5-tts/`、`huggingface/`、`.downloads/`）；`buildManagedServiceEnv` 仅向受管子进程注入 `OLLAMA_MODELS`、`HF_HOME/HF_HUB_CACHE`、`F5TTS_MODEL_DIR/F5TTS_VOCODER_DIR`、`M2V_DATA_DIR` 等，不修改系统环境变量；Python 服务新增 `M2V_MODELS_ROOT` 兼容与 `/health` 模型路径字段，开发模式 `start.ps1` 行为不变。
+- 模型下载：版本化 manifest（HF API 生成真实 size/SHA-256 与固定 revision，F5-TTS 标注 CC BY-NC 4.0）驱动下载管理器——按真实字节计算单模型/总体进度（无 Content-Length 不伪造百分比）、Range/If-Range 断点续传、暂停/恢复/取消/重试（429/5xx 受限退避）、磁盘预算、SHA-256/大小校验后原子提交、`state.json` 崩溃恢复、Ollama NDJSON 与 HF cache 结构落盘；另提供 127.0.0.1 上的管理器 HTTP+SSE 服务、自包含 UI 与 web“设置 → 模型”入口。
+- 维护：`maintenance-cli` 提供首次启动诊断（运行时/服务/模型/磁盘/未完成下载）、修复计划与按需模型修复、原地升级（备份 `install.json`/SQLite 后替换程序、保留模型与用户数据、失败回滚）与安全卸载（默认仅移除程序并保留 models/data/logs/config；清理需显式 `--purge-*` 与确认，拒绝删除安装根外或链接目标）。
+- 验证：`pnpm typecheck` exit 0；`pnpm test:v21` desktop 152（151 pass + 1 BLOCKED-ENV skip）+ web 7/7（覆盖 101 项测试要求）、`pnpm test:v21:e2e` 14/14（真实构建→Inno Setup 标准安装程序→Zhiying.exe 启动→下载→维护链路）；基线 `test:v20` 107/107、`test:v19` 68/68、`test:v18` 61/61、pipeline 58/58、`test:v12` 66/66、`test:v16` 109+18+6、`test:v17` 24+18 全部通过。独立验收 48 项：40 PASS + 8 项 BLOCKED-ENV（无干净 Windows 测试机 / 无真实大模型权重与推理，均给出净化环境与 fixture 替代证据）；冻结产物 `Zhiying-Setup.exe` SHA-256 为 `c9fcd8c8178ce38bb1176cf3582ea0d184464ece8ee5f14d0584020d0f3c7d6a`。逐项结果见 `doc/V1.8.0_test_report.md` 与 `doc/V1.8.0_acceptance_report.md`，安装说明见 `doc/V1.8.0_install.md`。
+
 ### V1.7.0 代码讲解四模式（build / diff / trace）与模式选择策略
 
 - Schema：`CodeVisual` 新增 `buildSteps`（`revealLines`/`focusLines`/`label`/`narrationText`，≤12 步且 reveal 覆盖全部源码行）、`beforeCode`/`afterCode`（diff 双版本，`code` 必须等于 `afterCode`）与 `diffBeats`（`hunkIds` 选择要讲解的 hunk）、`traceSteps`（代码行、`state`、`output`、`callDepth`）；`codeVisualOf` 在高级数据非法时安全恢复为 focus 形状，`resolveCodeSceneMode`/`normalizeCodeVisualInput` 保证非法/不完整的高级模式稳定回退 `focus`。
@@ -228,6 +238,97 @@
 
 应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
 
+## 安装知影（Windows 桌面版，V1.8.0）
+
+V1.8.0 起提供普通用户可直接使用的 Windows 桌面发行版：安装版自带运行环境，**无需预装 Node.js / pnpm / Python / uv / Git，也不需要命令行操作**。开发模式（下文「初始化项目」）仍可继续使用，安装版规则不会破坏开发环境。
+
+### 系统要求
+
+| 项目 | 要求 |
+| --- | --- |
+| 操作系统 | Windows 10 / Windows 11，x64 |
+| 账户权限 | 安装到当前用户可写目录（默认 `%LOCALAPPDATA%\Programs\Zhiying`），**不需要管理员权限** |
+| 磁盘空间 | 程序与运行时约 0.1–1 GB；模型约 5.3 GB；建议预留 ≥ 10 GB |
+| 网络 | 安装本身不需要联网；下载模型需要联网（支持暂停/续传/重试），下载完成后可离线运行 |
+| 依赖 | 无需预装 Node.js / pnpm / Python / uv / Git；安装版自带运行时 |
+| 可选工具 | FFmpeg 8 full-shared（发行包内置）、Tesseract（PDF OCR 可选）、Ollama（发行包内置受管版本） |
+
+### 安装步骤
+
+1. 双击 `Zhiying-Setup.exe`（单文件安装程序），启动**图形安装向导**。
+2. 在欢迎页确认产品名称、版本 1.8.0、发行者与安装说明，点击「下一步」。
+3. 在安装目录页选择目录：默认 `%LOCALAPPDATA%\Programs\Zhiying`，可点击「浏览…」或直接输入 `D:\Zhiying`、含中文/空格的当前用户可写路径；`Program Files`、`Windows`、`System32`、盘符根等受保护位置会被拒绝并提示改用可写目录。
+4. 在安装选项页选择：是否创建桌面快捷方式（默认创建）、是否创建卸载注册表项（默认创建），以及安装完成后「立即下载 AI 模型 / 稍后下载」（默认稍后下载）。
+5. 点击「安装」后，向导显示解压与安装进度、安装日志；点击「取消」会安全退出且不留下半安装。
+6. 完成页可选择 **立即下载 AI 模型**（打开浏览器模型管理器）、**启动知影** 或 **完成**；之后也可双击 `Zhiying.exe`（或桌面快捷方式）启动，服务健康检查通过后自动打开 `http://127.0.0.1:3000`。
+
+安装向导页面示例：
+
+![知影安装向导：选择安装目录](docs/screenshots/v1.8.0-setup-directory.png)
+![知影安装向导：模型下载选择](docs/screenshots/v1.8.0-setup-model-download.png)
+![知影安装向导：附加任务（桌面快捷方式）](docs/screenshots/v1.8.0-setup-tasks.png)
+静默安装（自动化/企业部署，标准 Inno Setup 参数）：
+
+```powershell
+# /VERYSILENT 无界面；/DIR 指定目录；/TASKS="" 不创建桌面快捷方式；/MODELDOWNLOAD=later 稍后下载模型
+.\Zhiying-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="D:\Zhiying" /TASKS="" /MODELDOWNLOAD=later /LOG="%TEMP%\zhiying-setup.log"
+
+# 立即下载模型（完成页会保留“立即下载 AI 模型”入口）
+.\Zhiying-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="D:\Zhiying" /MODELDOWNLOAD=now /LOG="%TEMP%\zhiying-setup.log"
+```
+
+退出码沿用 Inno 语义：`0` 成功、`1` 初始化失败、`2` 安装前取消、`3` 准备阶段致命错误、`4` 安装阶段致命错误、`5` 安装中取消、`6` 被终止。Inno `/LOG` 记录安装过程；知影收尾日志在 `<InstallRoot>\logs\setup-<时间戳>.log`。
+
+标准卸载：Windows「应用和功能」中的“知影 Zhiying”，或 `<InstallRoot>\unins000.exe`。默认**保留** `models`、`data`、`logs`、`config`；显式清理需 `/PURGEDATA` 或安装目录内维护 CLI（见下文）。
+
+### 安装后的目录与模型位置
+
+所有知影管理的模型统一位于 `<InstallRoot>\models`（Ollama/Qwen 在 `models\ollama`，F5-TTS/Vocos 在 `models\f5-tts`，字幕对齐模型在 `models\huggingface`，下载临时文件在 `models\.downloads`）；用户项目与 SQLite 在 `<InstallRoot>\data`；配置与日志分别在 `config\`、`logs\`。升级/重装/卸载默认保留 `models`、`data`、`logs`、`config`。
+
+### 启动与停止
+
+- 双击 `Zhiying.exe`：按顺序启动受管组件（Python → 受管 Ollama → Web → Worker → 模型管理器），全部通过健康检查后才打开浏览器；重复双击会复用已运行实例，不会启动第二套服务。
+- 端口被其他程序占用时给出可读冲突信息（含进程 PID/名称）与恢复路径，**不会结束外部进程**；用户自己运行的 Ollama/Node/Python 不受影响。
+- 关闭启动器窗口或执行 `Zhiying.exe --stop` 只结束本次知影启动的进程树；日志在 `<InstallRoot>\logs\<服务>-<时间戳>.out/.err.log`。
+- 常用命令：`Zhiying.exe --status --json`、`Zhiying.exe --stop --json`、`Zhiying.exe --no-browser`。
+
+### 模型下载与管理
+
+- 入口：安装完成页「立即下载」、知影界面 **设置 → 模型**，或模型管理器 `http://127.0.0.1:8790`（仅本机回环）。
+- 进度：按真实字节显示单模型与总进度、速度、预计剩余时间；源站不返回 `Content-Length` 时显示不确定进度，不伪造百分比。
+- 暂停/恢复/取消/重试：HTTP 下载使用 `Range`/`If-Range` 断点续传，Ollama 使用官方 `ollama pull` 流式状态与可复用层；429/5xx/超时按受限退避自动重试（最多 3 次），403/404/许可错误直接给出可读错误。
+- 完整性：所有文件校验（SHA-256/大小）通过后才原子写入 `models`；校验失败标记 `corrupted`、保留临时文件且不覆盖已通过校验的旧模型；下载状态持久化，关闭/崩溃后重开可恢复。
+- 默认模型（版本/哈希/许可以安装目录内清单为准）：Qwen3 4B（Ollama `qwen3:4b`，Apache-2.0）、F5-TTS v1 Base（1.35 GB，**CC BY-NC 4.0 非商业**）、Vocos Mel 24kHz（54 MB，MIT）、中文字幕对齐 Wav2Vec2 XLSR-53（1.28 GB，Apache-2.0）。
+
+> **许可提示**：F5-TTS 权重按上游模型卡标注为 CC BY-NC 4.0（非商业）。商用前请自行核实并取得授权；知影不代为授予任何模型许可。
+
+### 诊断、修复、升级与卸载
+
+- 首次启动会在 `<InstallRoot>\logs\first-run-<时间戳>.log` 记录安装来源、版本、安装目录、模型根目录与未完成下载任务数（不阻塞启动）。
+- 诊断/修复：`maintenance-cli.mjs --install-root "<InstallRoot>" --diagnostics`，修复加 `--repair --yes`（只重下缺失/损坏模型，保留已校验模型）。
+- 升级/重装：运行新版本 `Zhiying-Setup.exe` 并选择同一目录即进入升级模式，替换程序与运行时，保留模型与用户数据；升级前自动备份 `config\install.json` 与 `data\m2v.db`，失败回滚；服务运行中会拒绝升级并提示先停止。
+- 卸载：Windows「应用和功能」中的“知影 Zhiying”，或 `maintenance-cli.mjs --uninstall`。默认**只移除程序**，保留模型/数据/日志/配置；仅在显式指定 `--purge-models`/`--purge-data` 且 `--yes` 二次确认时才删除对应数据，且拒绝删除安装目录外或链接目标。
+
+### 离线与网络限制
+
+- 安装过程不联网、不执行 `pnpm install`/`uv sync`/`git clone`，也不从非可信源下载开发工具。
+- 模型下载是唯一需要联网的环节；下载完成后本地模型与已安装应用可离线运行（本版本不联网检查更新）。
+- 断网/中断后再次打开模型管理器可继续（HTTP Range 续传或 Ollama 官方层复用）。
+
+### 常见问题
+
+| 现象 | 处理 |
+| --- | --- |
+| 双击 `Zhiying.exe` 无反应/立即退出 | 查看 `<InstallRoot>\logs` 下启动器与对应服务日志，运行维护 CLI `--diagnostics` |
+| 端口 3000/8000/11434 被占用 | 启动器会给出占用进程且不结束外部进程；关闭占用程序，或修改 `config\install.json` 中 `ports` 后重启 |
+| 模型下载失败/中断 | 在「设置 → 模型」或模型管理器继续/重试；`models\.downloads` 中临时片段会保留 |
+| 磁盘空间不足 | 清理磁盘或更换安装目录；下载前会显示所需与可用空间 |
+| 安装目录不可写 | 改用 `%LOCALAPPDATA%\Programs\Zhiying` 或 D 盘自建目录，不要使用 Program Files |
+| 想彻底清理 | `maintenance-cli.mjs --uninstall --purge-models --purge-data --yes`（列出路径与占用后确认） |
+| 开发模式 | 继续使用仓库 `start.ps1` + `pnpm dev`；安装版规则不影响开发环境 |
+
+> 完整安装/维护说明、BLOCKED-ENV 与发布校验命令见 `doc/V1.8.0_install.md`；版本测试与验收记录见 `doc/V1.8.0_test_report.md`、`doc/V1.8.0_acceptance_report.md`。
+
 ## 基本使用流程
 
 1. 新建项目，导入资料或粘贴文本，检查并编辑抽取结果；选择画幅、视觉风格、品牌套件（可选）及 PPTX 处理方式。
@@ -253,6 +354,8 @@
 当前 Python 依赖锁定 PyTorch XPU 版本，语音加速路径针对 Intel XPU。NVIDIA 或 AMD 显卡不会启用此 XPU 路径，语音服务会按 CPU 路径运行。Ollama 是否能使用图形设备由 Ollama 和对应驱动决定。
 
 ## 所需软件
+
+> 下表为**开发模式**（从源码运行）的要求；使用 V1.8.0 桌面安装版的普通用户无需预装这些工具，安装版自带运行时。
 
 | 软件 | 版本/用途 |
 | --- | --- |
@@ -854,3 +957,7 @@ cd services/python
 隔离集成测试使用 Node.js 22.13+ 的 node:sqlite 创建临时数据库，测试备份恢复、快照轮转、保存冲突、取消状态及导入预览；不修改真实项目。渲染冒烟测试位于 apps/worker/test/render-v11.ts，需要本机 Chromium/Edge 与 FFmpeg，可通过 REMOTION_BROWSER_EXECUTABLE 指定浏览器。
 
 竖屏字幕预览受视口高度限制，整幅 1080 × 1920 画面只能缩到约 0.37 倍显示，密集正文在屏幕上仅约 8px。预览工具栏的「1:1 原始尺寸」按钮会按画布原始像素显示并可滚动，字号与成片一致，便于判断阅读效果。
+
+
+
+

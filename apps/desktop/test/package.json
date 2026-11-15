@@ -1,0 +1,5 @@
+{
+  "name": "@m2v/desktop-tests",
+  "private": true,
+  "type": "module"
+}

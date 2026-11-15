@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "version": "1.8.0",
+  "generatedAt": "2026-11-15T05:43:21.664Z",
+  "models": [
+    {
+      "id": "qwen3-4b",
+      "name": "Qwen3 4B（Ollama 本地模型）",
+      "purpose": "llm",
+      "required": true,
+      "source": {
+        "kind": "ollama",
+        "ollamaModel": "qwen3:4b"
+      },
+      "installDir": "ollama",
+      "integrity": "ollama-digest",
+      "files": [],
+      "totalBytes": 2600000000,
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://huggingface.co/Qwen/Qwen3-4B",
+        "notes": "模型体积为估算值（实际以 Ollama 层为准）；下载/校验由 ollama pull 官方 digest 机制完成。",
+        "commercialUse": "allowed"
+      }
+    },
+    {
+      "id": "f5-tts-base",
+      "name": "F5-TTS v1 Base（语音合成）",
+      "purpose": "tts",
+      "required": true,
+      "source": {
+        "kind": "huggingface",
+        "repo": "SWivid/F5-TTS",
+        "revision": "84e5a410d9cead4de2f847e7c9369a6440bdfaca"
+      },
+      "installDir": "f5-tts/F5TTS_v1_Base",
+      "integrity": "sha256",
+      "files": [
+        {
+          "path": "model_1250000.safetensors",
+          "sizeBytes": 1348435761,
+          "sha256": "670900fd14e6c458b95da6e9ed317cdb20dbaf7a1c02ac06a05475a9d32b6a38",
+          "url": "https://huggingface.co/SWivid/F5-TTS/resolve/84e5a410d9cead4de2f847e7c9369a6440bdfaca/F5TTS_v1_Base/model_1250000.safetensors"
+        },
+        {
+          "path": "vocab.txt",
+          "sizeBytes": 13800,
+          "sha256": "2a05f992e00af9b0bd3800a8d23e78d520dbd705284ed2eedb5f4bd29398fa3c",
+          "url": "https://huggingface.co/SWivid/F5-TTS/resolve/84e5a410d9cead4de2f847e7c9369a6440bdfaca/F5TTS_v1_Base/vocab.txt"
+        }
+      ],
+      "totalBytes": 1348449561,
+      "license": {
+        "name": "CC BY-NC 4.0",
+        "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+        "notes": "F5-TTS 权重按上游模型卡标注为非商业许可（CC BY-NC 4.0）；商业用途需另行取得授权，知影不代为授予。",
+        "commercialUse": "restricted"
+      }
+    },
+    {
+      "id": "vocos-mel-24khz",
+      "name": "Vocos Mel 24kHz 声码器",
+      "purpose": "vocoder",
+      "required": true,
+      "source": {
+        "kind": "huggingface",
+        "repo": "charactr/vocos-mel-24khz",
+        "revision": "0feb3fdd929bcd6649e0e7c5a688cf7dd012ef21"
+      },
+      "installDir": "f5-tts/vocos-mel-24khz",
+      "integrity": "sha256",
+      "files": [
+        {
+          "path": "config.yaml",
+          "sizeBytes": 461,
+          "sha256": "da9033922f969a47f0c160010226919e59f27761fd5066f3828d46de6650b0fc",
+          "url": "https://huggingface.co/charactr/vocos-mel-24khz/resolve/0feb3fdd929bcd6649e0e7c5a688cf7dd012ef21/config.yaml"
+        },
+        {
+          "path": "pytorch_model.bin",
+          "sizeBytes": 54365991,
+          "sha256": "97ec976ad1fd67a33ab2682d29c0ac7df85234fae875aefcc5fb215681a91b2a",
+          "url": "https://huggingface.co/charactr/vocos-mel-24khz/resolve/0feb3fdd929bcd6649e0e7c5a688cf7dd012ef21/pytorch_model.bin"
+        }
+      ],
+      "totalBytes": 54366452,
+      "license": {
+        "name": "MIT",
+        "url": "https://huggingface.co/charactr/vocos-mel-24khz",
+        "notes": "按上游模型卡标注为 MIT 许可；使用前请自行复核模型卡。",
+        "commercialUse": "allowed"
+      }
+    },
+    {
+      "id": "align-zh-xlsr",
+      "name": "中文字幕强制对齐模型（Wav2Vec2 XLSR-53）",
+      "purpose": "alignment",
+      "required": true,
+      "source": {
+        "kind": "huggingface",
+        "repo": "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
+        "revision": "99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd"
+      },
+      "installDir": "huggingface",
+      "integrity": "sha256",
+      "files": [
+        {
+          "path": "config.json",
+          "sizeBytes": 1567,
+          "sha256": "9af98614e322a5300c75605227d93c98af0c8f78754aba1dfc279166688afddd",
+          "url": "https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn/resolve/99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd/config.json"
+        },
+        {
+          "path": "preprocessor_config.json",
+          "sizeBytes": 158,
+          "sha256": "c403ce09975b90dff0dd8302c42d422e9de1f166cd7772df23490069893cb0cf",
+          "url": "https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn/resolve/99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd/preprocessor_config.json"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "sizeBytes": 85,
+          "sha256": "bb7068de1150661a10b55f9e4b12a0e77af8bf91f5e45e1b58afaf1d0e17f675",
+          "url": "https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn/resolve/99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd/special_tokens_map.json"
+        },
+        {
+          "path": "vocab.json",
+          "sizeBytes": 44357,
+          "sha256": "33fea3444869c2cd2433f59da079b04ce91515f946d21fe1b0ff3825398bcec7",
+          "url": "https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn/resolve/99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd/vocab.json"
+        },
+        {
+          "path": "pytorch_model.bin",
+          "sizeBytes": 1276296151,
+          "sha256": "de031fd4b29e0c0667e5346450fadfe1326c89936b888b59c4ede608db763ee4",
+          "url": "https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn/resolve/99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd/pytorch_model.bin"
+        }
+      ],
+      "totalBytes": 1276342318,
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://huggingface.co/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
+        "notes": "按上游模型卡标注为 Apache-2.0；下载固定 revision，校验通过后写入 models/huggingface 缓存结构。",
+        "commercialUse": "allowed"
+      }
+    }
+  ]
+}

@@ -37,10 +37,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
 DATA = Path(os.environ.get("M2V_DATA_DIR", "../../data")).resolve()
+# V1.8.0：安装版所有受管理模型统一位于 <InstallRoot>/models；开发模式默认仍是 DATA/models。
+MODELS_ROOT = Path(os.environ.get("M2V_MODELS_ROOT", DATA / "models")).resolve()
+HF_HOME = Path(os.environ.get("HF_HOME", MODELS_ROOT / "huggingface")).resolve()
+HF_HUB_CACHE = Path(os.environ.get("HF_HUB_CACHE", HF_HOME / "hub")).resolve()
+PACKAGED_MODELS_ROOT = "M2V_MODELS_ROOT" in os.environ
+if PACKAGED_MODELS_ROOT:
+    # 在导入 transformers 之前固定 HF 缓存位置；显式环境变量优先，开发模式不主动改写。
+    if "HF_HOME" not in os.environ:
+        os.environ["HF_HOME"] = str(HF_HOME)
+    if "HF_HUB_CACHE" not in os.environ:
+        os.environ["HF_HUB_CACHE"] = str(HF_HUB_CACHE)
 VOICE_DIR = DATA / "voices"
 AUDIO_DIR = DATA / "audio"
-F5TTS_MODEL_DIR = Path(os.environ.get("F5TTS_MODEL_DIR", DATA / "models" / "f5-tts" / "F5TTS_v1_Base")).resolve()
-F5TTS_VOCODER_DIR = Path(os.environ.get("F5TTS_VOCODER_DIR", DATA / "models" / "f5-tts" / "vocos-mel-24khz")).resolve()
+F5TTS_MODEL_DIR = Path(os.environ.get("F5TTS_MODEL_DIR", MODELS_ROOT / "f5-tts" / "F5TTS_v1_Base")).resolve()
+F5TTS_VOCODER_DIR = Path(os.environ.get("F5TTS_VOCODER_DIR", MODELS_ROOT / "f5-tts" / "vocos-mel-24khz")).resolve()
 _DLL_DIRECTORY_HANDLES: dict[str, object] = {}
 _TTS_LOCK = asyncio.Lock()
 _F5_ENGINE: Any | None = None
@@ -305,7 +316,7 @@ def health():
     codec_available, codec_error = _torchcodec_status()
     ffmpeg_version = _ffmpeg_version()
     ffmpeg_major = int(ffmpeg_version.split(".", 1)[0]) if ffmpeg_version else None
-    return {"ok": True, "python": platform.python_version(), "pdf": True, "ocr": bool(_ocr_data_dir()), "ttsModels": all(path.is_file() for path in [F5TTS_MODEL_DIR / "model_1250000.safetensors", F5TTS_MODEL_DIR / "vocab.txt", F5TTS_VOCODER_DIR / "config.yaml", F5TTS_VOCODER_DIR / "pytorch_model.bin"]), "tts": _tts_available(), "torchcodec": codec_available, "torchcodecError": codec_error, "ffmpeg": shutil.which("ffmpeg") is not None, "ffmpegVersion": ffmpeg_version, "ffmpegCompatible": ffmpeg_major in range(4, 9) if ffmpeg_major is not None else False, "ffprobe": shutil.which("ffprobe") is not None}
+    return {"ok": True, "python": platform.python_version(), "pdf": True, "ocr": bool(_ocr_data_dir()), "ttsModels": all(path.is_file() for path in [F5TTS_MODEL_DIR / "model_1250000.safetensors", F5TTS_MODEL_DIR / "vocab.txt", F5TTS_VOCODER_DIR / "config.yaml", F5TTS_VOCODER_DIR / "pytorch_model.bin"]), "tts": _tts_available(), "torchcodec": codec_available, "torchcodecError": codec_error, "ffmpeg": shutil.which("ffmpeg") is not None, "ffmpegVersion": ffmpeg_version, "ffmpegCompatible": ffmpeg_major in range(4, 9) if ffmpeg_major is not None else False, "ffprobe": shutil.which("ffprobe") is not None, "modelsRoot": str(MODELS_ROOT), "f5ttsModelDir": str(F5TTS_MODEL_DIR), "vocoderDir": str(F5TTS_VOCODER_DIR), "hfCache": str(HF_HUB_CACHE)}
 
 def _tts_available() -> bool:
     try:
@@ -875,8 +886,11 @@ async def align_audio(file: UploadFile = File(...), text: str = Form(...), langu
     try:
         async with _ALIGN_LOCK:
             if model_id not in _ALIGN_MODELS:
-                processor = AutoProcessor.from_pretrained(model_id)
-                model = AutoModelForCTC.from_pretrained(model_id).to("cpu").eval()
+                # 安装版显式使用 <models>/huggingface 缓存；开发模式保持 V1.7.0 默认行为。
+                cache_dir = str(HF_HUB_CACHE) if PACKAGED_MODELS_ROOT or "HF_HOME" in os.environ or "HF_HUB_CACHE" in os.environ else None
+                cache_kwargs = {"cache_dir": cache_dir} if cache_dir else {}
+                processor = AutoProcessor.from_pretrained(model_id, **cache_kwargs)
+                model = AutoModelForCTC.from_pretrained(model_id, **cache_kwargs).to("cpu").eval()
                 _ALIGN_MODELS[model_id] = (processor, model)
             processor, model = _ALIGN_MODELS[model_id]
             waveform, sample_rate = torchaudio.load(str(audio_path))
