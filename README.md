@@ -238,6 +238,87 @@
 
 应用以本地服务为主，不提供云端生成或复杂协作。公开网页抽取和 Commons 搜索/下载仅在用户主动操作时访问互联网。
 
+## 安装知影（Windows 桌面版，V1.8.0）
+
+V1.8.0 起提供普通用户可直接使用的 Windows 桌面发行版：安装版自带运行环境，**无需预装 Node.js / pnpm / Python / uv / Git，也不需要命令行操作**。开发模式（下文「初始化项目」）仍可继续使用，安装版规则不会破坏开发环境。
+
+### 系统要求
+
+| 项目 | 要求 |
+| --- | --- |
+| 操作系统 | Windows 10 / Windows 11，x64 |
+| 账户权限 | 安装到当前用户可写目录（默认 `%LOCALAPPDATA%\Programs\Zhiying`），**不需要管理员权限** |
+| 磁盘空间 | 程序与运行时约 0.1–1 GB；模型约 5.3 GB；建议预留 ≥ 10 GB |
+| 网络 | 安装本身不需要联网；下载模型需要联网（支持暂停/续传/重试），下载完成后可离线运行 |
+| 依赖 | 无需预装 Node.js / pnpm / Python / uv / Git；安装版自带运行时 |
+| 可选工具 | FFmpeg 8 full-shared（发行包内置）、Tesseract（PDF OCR 可选）、Ollama（发行包内置受管版本） |
+
+### 安装步骤
+
+1. 双击 `Zhiying-Setup.exe`（单文件安装程序）。
+2. 按控制台向导确认产品名称、版本 1.8.0、发行者与安装说明。
+3. 选择安装目录：直接回车使用默认目录，也可输入 `D:\Zhiying` 或含中文/空格的当前用户可写路径；`Program Files`、`Windows`、`System32`、盘符根等受保护位置会被拒绝并提示改用可写目录。
+4. 选择是否创建桌面快捷方式（默认创建），并选择安装完成后是否立即下载 AI 模型（默认“稍后下载”）。
+5. 安装完成页可选择 **立即下载**（启动模型管理器）或 **稍后下载**（直接启动知影，缺少模型时给出补装提示）。
+6. 安装成功后双击 `Zhiying.exe`（或桌面快捷方式）启动，服务健康检查通过后自动打开 `http://127.0.0.1:3000`。
+
+静默安装（自动化/企业部署）：
+
+```powershell
+.\Zhiying-Setup.exe --silent --target "D:\Zhiying" --no-shortcut --no-registry --download-models later
+.\Zhiying-Setup.exe --silent --target "D:\Zhiying" --download-models now --no-launch
+```
+
+退出码：`0` 成功、`2` 用户取消、`3` 安装前校验失败、`4` 安装失败；安装日志在 `<InstallRoot>\logs\setup-<时间戳>.log`。
+
+### 安装后的目录与模型位置
+
+所有知影管理的模型统一位于 `<InstallRoot>\models`（Ollama/Qwen 在 `models\ollama`，F5-TTS/Vocos 在 `models\f5-tts`，字幕对齐模型在 `models\huggingface`，下载临时文件在 `models\.downloads`）；用户项目与 SQLite 在 `<InstallRoot>\data`；配置与日志分别在 `config\`、`logs\`。升级/重装/卸载默认保留 `models`、`data`、`logs`、`config`。
+
+### 启动与停止
+
+- 双击 `Zhiying.exe`：按顺序启动受管组件（Python → 受管 Ollama → Web → Worker → 模型管理器），全部通过健康检查后才打开浏览器；重复双击会复用已运行实例，不会启动第二套服务。
+- 端口被其他程序占用时给出可读冲突信息（含进程 PID/名称）与恢复路径，**不会结束外部进程**；用户自己运行的 Ollama/Node/Python 不受影响。
+- 关闭启动器窗口或执行 `Zhiying.exe --stop` 只结束本次知影启动的进程树；日志在 `<InstallRoot>\logs\<服务>-<时间戳>.out/.err.log`。
+- 常用命令：`Zhiying.exe --status --json`、`Zhiying.exe --stop --json`、`Zhiying.exe --no-browser`。
+
+### 模型下载与管理
+
+- 入口：安装完成页「立即下载」、知影界面 **设置 → 模型**，或模型管理器 `http://127.0.0.1:8790`（仅本机回环）。
+- 进度：按真实字节显示单模型与总进度、速度、预计剩余时间；源站不返回 `Content-Length` 时显示不确定进度，不伪造百分比。
+- 暂停/恢复/取消/重试：HTTP 下载使用 `Range`/`If-Range` 断点续传，Ollama 使用官方 `ollama pull` 流式状态与可复用层；429/5xx/超时按受限退避自动重试（最多 3 次），403/404/许可错误直接给出可读错误。
+- 完整性：所有文件校验（SHA-256/大小）通过后才原子写入 `models`；校验失败标记 `corrupted`、保留临时文件且不覆盖已通过校验的旧模型；下载状态持久化，关闭/崩溃后重开可恢复。
+- 默认模型（版本/哈希/许可以安装目录内清单为准）：Qwen3 4B（Ollama `qwen3:4b`，Apache-2.0）、F5-TTS v1 Base（1.35 GB，**CC BY-NC 4.0 非商业**）、Vocos Mel 24kHz（54 MB，MIT）、中文字幕对齐 Wav2Vec2 XLSR-53（1.28 GB，Apache-2.0）。
+
+> **许可提示**：F5-TTS 权重按上游模型卡标注为 CC BY-NC 4.0（非商业）。商用前请自行核实并取得授权；知影不代为授予任何模型许可。
+
+### 诊断、修复、升级与卸载
+
+- 首次启动会在 `<InstallRoot>\logs\first-run-<时间戳>.log` 记录安装来源、版本、安装目录、模型根目录与未完成下载任务数（不阻塞启动）。
+- 诊断/修复：`maintenance-cli.mjs --install-root "<InstallRoot>" --diagnostics`，修复加 `--repair --yes`（只重下缺失/损坏模型，保留已校验模型）。
+- 升级/重装：运行新版本 `Zhiying-Setup.exe` 并选择同一目录即进入升级模式，替换程序与运行时，保留模型与用户数据；升级前自动备份 `config\install.json` 与 `data\m2v.db`，失败回滚；服务运行中会拒绝升级并提示先停止。
+- 卸载：Windows「应用和功能」中的“知影 Zhiying”，或 `maintenance-cli.mjs --uninstall`。默认**只移除程序**，保留模型/数据/日志/配置；仅在显式指定 `--purge-models`/`--purge-data` 且 `--yes` 二次确认时才删除对应数据，且拒绝删除安装目录外或链接目标。
+
+### 离线与网络限制
+
+- 安装过程不联网、不执行 `pnpm install`/`uv sync`/`git clone`，也不从非可信源下载开发工具。
+- 模型下载是唯一需要联网的环节；下载完成后本地模型与已安装应用可离线运行（本版本不联网检查更新）。
+- 断网/中断后再次打开模型管理器可继续（HTTP Range 续传或 Ollama 官方层复用）。
+
+### 常见问题
+
+| 现象 | 处理 |
+| --- | --- |
+| 双击 `Zhiying.exe` 无反应/立即退出 | 查看 `<InstallRoot>\logs` 下启动器与对应服务日志，运行维护 CLI `--diagnostics` |
+| 端口 3000/8000/11434 被占用 | 启动器会给出占用进程且不结束外部进程；关闭占用程序，或修改 `config\install.json` 中 `ports` 后重启 |
+| 模型下载失败/中断 | 在「设置 → 模型」或模型管理器继续/重试；`models\.downloads` 中临时片段会保留 |
+| 磁盘空间不足 | 清理磁盘或更换安装目录；下载前会显示所需与可用空间 |
+| 安装目录不可写 | 改用 `%LOCALAPPDATA%\Programs\Zhiying` 或 D 盘自建目录，不要使用 Program Files |
+| 想彻底清理 | `maintenance-cli.mjs --uninstall --purge-models --purge-data --yes`（列出路径与占用后确认） |
+| 开发模式 | 继续使用仓库 `start.ps1` + `pnpm dev`；安装版规则不影响开发环境 |
+
+> 完整安装/维护说明、BLOCKED-ENV 与发布校验命令见 `doc/V1.8.0_install.md`；版本测试与验收记录见 `doc/V1.8.0_test_report.md`、`doc/V1.8.0_acceptance_report.md`。
+
 ## 基本使用流程
 
 1. 新建项目，导入资料或粘贴文本，检查并编辑抽取结果；选择画幅、视觉风格、品牌套件（可选）及 PPTX 处理方式。
@@ -263,6 +344,8 @@
 当前 Python 依赖锁定 PyTorch XPU 版本，语音加速路径针对 Intel XPU。NVIDIA 或 AMD 显卡不会启用此 XPU 路径，语音服务会按 CPU 路径运行。Ollama 是否能使用图形设备由 Ollama 和对应驱动决定。
 
 ## 所需软件
+
+> 下表为**开发模式**（从源码运行）的要求；使用 V1.8.0 桌面安装版的普通用户无需预装这些工具，安装版自带运行时。
 
 | 软件 | 版本/用途 |
 | --- | --- |

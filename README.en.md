@@ -98,6 +98,19 @@ Browser acceptance on 2026-10-23 covered subtitle seeking/playback and timing, n
 
 The app is designed for local use and does not provide cloud generation or complex collaboration. Public webpage extraction and Wikimedia Commons search/download access the internet only after the user initiates those actions.
 
+## Install Zhiying (Windows desktop edition, V1.8.0)
+
+V1.8.0 ships a Windows desktop edition that end users can install directly: the installer bundles the runtime, so **Node.js / pnpm / Python / uv / Git are not required and no command line is needed**. Development mode (see "Windows setup" below) keeps working unchanged.
+
+- **System requirements:** Windows 10/11 x64; install into a user-writable directory (default `%LOCALAPPDATA%\Programs\Zhiying`), no administrator rights needed; ~0.1–1 GB for program/runtime plus ~5.3 GB for models (allow ≥ 10 GB); installing needs no network, downloading models does (pause/resume/retry), and the app runs offline once models are downloaded.
+- **Install:** double-click `Zhiying-Setup.exe`, confirm product/version/publisher, choose a writable install directory (Chinese characters, spaces and D: paths are supported; `Program Files`, `Windows`, `System32` and drive roots are rejected), choose whether to create a desktop shortcut, and choose **download models now / later** on the completion page. Silent install: `.\Zhiying-Setup.exe --silent --target "D:\Zhiying" --download-models later` (exit codes 0 success, 2 cancelled, 3 pre-flight validation failed, 4 install failed; log: `<InstallRoot>\logs\setup-<timestamp>.log`).
+- **Layout:** all managed models live under `<InstallRoot>\models` (Ollama/Qwen in `models\ollama`, F5-TTS/Vocos in `models\f5-tts`, subtitle-alignment models in `models\huggingface`, temporary downloads in `models\.downloads`); projects/SQLite live in `<InstallRoot>\data`; config and logs in `config\` and `logs\`. Upgrades, reinstalls and default uninstall keep `models`, `data`, `logs` and `config`.
+- **Start/stop:** double-click `Zhiying.exe`; managed components start in order (Python → managed Ollama → Web → Worker → model manager), the browser opens only after health checks pass, and launching again reuses the running instance. If a port is occupied by another program, the launcher reports the owning process and recovery path and **never kills external processes**. `Zhiying.exe --stop` stops only this instance's process tree; logs stay under `<InstallRoot>\logs`.
+- **Models:** open **Settings → Models**, the completion page, or the model manager at `http://127.0.0.1:8790` (loopback only). Progress is byte-accurate (unknown totals are shown as indeterminate, never faked), downloads support Range/If-Range resume, Ollama layer reuse, pause/cancel/retry with bounded backoff, integrity verification before atomic commit, corrupted marking, crash-safe resume state, and a disk-space pre-check. Defaults: Qwen3 4B (Ollama `qwen3:4b`, Apache-2.0), F5-TTS v1 Base (1.35 GB, **CC BY-NC 4.0 non-commercial**), Vocos Mel 24kHz (54 MB, MIT), Chinese subtitle alignment Wav2Vec2 XLSR-53 (1.28 GB, Apache-2.0). F5-TTS licensing must be verified by the user before commercial use; Zhiying does not grant model licenses.
+- **Maintenance:** first run writes a diagnostic log under `<InstallRoot>\logs`; `maintenance-cli.mjs --diagnostics` reports runtime/model/port/disk/download state; `--repair --yes` re-downloads only missing/corrupted models; running the new `Zhiying-Setup.exe` over the same directory upgrades in place, backs up `config\install.json` and `data\m2v.db`, preserves models/user data and rolls back on failure; uninstall removes the program only by default and deletes models/data only with explicit `--purge-models`/`--purge-data` plus `--yes` confirmation, refusing targets outside the install root or links.
+- **Offline:** install never runs `pnpm install`/`uv sync`/`git clone` or downloads developer tools; model download is the only online step, and interrupted downloads can be resumed later.
+- Details: `doc/V1.8.0_install.md`; test/acceptance records: `doc/V1.8.0_test_report.md`, `doc/V1.8.0_acceptance_report.md`.
+
 ## Typical workflow
 
 1. Create a project, import source material or paste text, review the extracted content, and choose aspect ratio, visual style, an optional Brand Kit, and PPTX handling.
@@ -123,6 +136,8 @@ These are recommendations for local development and video generation, not hard a
 The Python dependencies use a PyTorch XPU build, and the speech acceleration path targets Intel XPU. NVIDIA and AMD GPUs do not use this XPU path; speech runs on CPU. Ollama GPU support depends on Ollama and the installed driver.
 
 ## Required software and models
+
+> The table below is for **development mode** (running from source). Users of the V1.8.0 Windows desktop edition do not need these tools: the installer bundles the runtime.
 
 | Software | Version / purpose |
 | --- | --- |
