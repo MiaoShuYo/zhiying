@@ -337,6 +337,22 @@ test('#27-1 traceSteps：≤20、lines 1..N 不重复、state ≤12 且 name 不
   assert.equal(normalized.mode, 'focus');
   assert.equal('traceSteps' in normalized, false);
   assert.equal(resolveCodeTraceSteps({ code, mode: 'trace', traceSteps: [{ lines: [99] }] } as CodeVisual), null);
+  // R2：resolver 对非法 state 条目整条拒绝（回退 focus），不再静默过滤；仅行号步骤不构成可验证 trace
+  assert.equal(
+    resolveCodeTraceSteps({ code, mode: 'trace', traceSteps: [{ lines: [1], state: [{ name: 'a', value: 'ok' }, { name: 'b' }] }] } as unknown as CodeVisual),
+    null,
+    '非法 state 条目 → resolver 返回 null（整条拒绝）',
+  );
+  assert.equal(
+    resolveCodeTraceSteps({ code, mode: 'trace', traceSteps: [{ lines: [1] }] } as CodeVisual),
+    null,
+    '仅行号步骤无可验证状态 → resolver 返回 null',
+  );
+  assert.equal(
+    resolveCodeTraceSteps({ code, mode: 'trace', traceSteps: [{ lines: [1], callDepth: 0 }] } as CodeVisual)?.[0].callDepth,
+    0,
+    '仅 callDepth 也是可验证状态（保留 0 值）',
+  );
 });
 
 // ── #27-11（schema 健壮性）空 value / 空 state 不崩溃 ──────────────────────────

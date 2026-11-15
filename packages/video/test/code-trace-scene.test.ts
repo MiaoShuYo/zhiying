@@ -350,16 +350,17 @@ test('#27-4 output 可选：有 output 渲染 text；无 output 不渲染空区�
   assert.match(stateOnlyMarkup, /data-trace-section="variables"/);
   assert.doesNotMatch(stateOnlyMarkup, /data-trace-section="output"/, '无 output 不渲染空区块');
 
-  // 两者都无 → panelVisible=false、不渲染面板、布局与 focus 一致
+  // 两者都无 → 不构成可验证 trace：回退 focus、不渲染面板、布局与无 beats 的 focus 一致
   const noPanel = traceScene([{ lines: [2], label: '仅代码' }]);
   const noPanelState = frameState(noPanel, 0);
-  assert.equal(noPanelState.trace!.panelVisible, false, '都无 → panelVisible=false');
+  assert.equal(noPanelState.mode, 'focus', '无 state/output/callDepth → 回退 focus');
+  assert.equal(noPanelState.trace, null, '无可验证状态 → trace=null');
   assert.equal(noPanelState.layout.tracePanel, null, '布局无面板');
   const noPanelMarkup = renderStandard(noPanel, { frame: 0 });
   assert.doesNotMatch(noPanelMarkup, /data-trace-panel/, '不渲染 trace 面板');
-  const focusEquivalent = sceneOf({ beats: [{ lines: [2], label: '仅代码' }] });
-  assert.deepEqual(noPanelState.layout, frameState(focusEquivalent, 0).layout, '无面板时布局与 focus 一致');
-  assert.deepEqual(standardCodeRows(noPanelMarkup).filter(row => row.active).map(row => row.lineNumber), [2], '代码行高亮与 focus 一致');
+  const focusEquivalent = sceneOf({});
+  assert.deepEqual(noPanelState.layout, frameState(focusEquivalent, 0).layout, '回退 focus 后布局与 focus 一致');
+  assert.deepEqual(standardCodeRows(noPanelMarkup).filter(row => row.active).map(row => row.lineNumber), [], '无 beats 时无高亮（focus 语义）');
   assert.doesNotMatch(noPanelMarkup, /NaN|undefined/);
 });
 
@@ -379,6 +380,14 @@ test('#27-5 布局：16:9 面板右侧 width∈[0.28,0.34]W、代码区缩小、
   assert.ok(layoutLandscape.codeArea.widthPx < focusLandscape.codeArea.widthPx, '代码区宽度相应缩小');
   assert.ok(panel!.topPx + panel!.heightPx <= LANDSCAPE.height - 100 + 1e-6, '面板底边不越过字幕安全区');
   assert.ok(panel!.heightPx > 0 && panel!.topPx > 0);
+  // R2 契约：16:9 面板高度 = 实际渲染代码窗口高度（visibleLineCount × lineHeight），不再等于分配区域高度。
+  const frameLandscape = frameState(traceScene(), 0);
+  assert.ok(frameLandscape.layout.tracePanel, 'frameState 同样有面板');
+  assert.equal(
+    frameLandscape.layout.tracePanel!.heightPx,
+    frameLandscape.visibleLineCount * frameLandscape.layout.lineHeightPx,
+    'R2 16:9 面板高度 = visibleLineCount × lineHeight（与代码窗口同高）',
+  );
 
   // 9:16
   const layoutPortrait = resolveCodeSceneLayout({
@@ -554,11 +563,12 @@ test('#27-9 trace viewport：长代码跨区域 step 滚动正确、clamp、Stan
     assert.ok(Number.isFinite(standardY) && Number.isFinite(htmlY));
     assert.ok(Math.abs(standardY! - htmlY!) <= 1e-6, `Standard ${standardY} = HTML ${htmlY}`);
   }
-  // 面板存在不影响滚动：去掉 state 后同一 focus scene 的滚动仍一致
-  const withoutPanel = sceneOf({ code: codeOf(60), mode: 'trace', traceSteps: longSteps.map(step => ({ lines: step.lines })) });
-  const noPanelState = frameState(withoutPanel, timeline[1].startFrame);
-  assert.equal(noPanelState.layout.tracePanel, null, '无状态时无面板');
-  assert.equal(noPanelState.startLine, states[1].startLine, '面板有无不改变代码滚动位置');
+  // 无 state/output/callDepth 的步骤不构成可验证 trace：回退 focus，不产生面板与 step 滚动
+  const unverifiable = sceneOf({ code: codeOf(60), mode: 'trace', traceSteps: longSteps.map(step => ({ lines: step.lines })) });
+  const unverifiableState = frameState(unverifiable, timeline[1].startFrame);
+  assert.equal(unverifiableState.mode, 'focus', '仅行号步骤回退 focus');
+  assert.equal(unverifiableState.layout.tracePanel, null, '无可验证状态 → 无 trace 面板');
+  assert.equal(unverifiableState.startLine, 1, '回退 focus 后无 step 滚动');
 });
 
 // ═════════════════════════════ #27-11 主题/数值健壮性 ═════════════════════════
@@ -582,11 +592,13 @@ test('#27-11 trace 主题/数值：5 套 style 面板颜色来自 palette、无 
   assert.deepEqual(rows.map(row => [row.nameText, row.valueText]), [['empty', ''], ['zero', '0']], '空 value 正常渲染');
   assert.doesNotThrow(() => renderHtmlInner(emptyValue, { frame: 0 }));
 
-  // 无状态数据/空数组不产生 NaN
+  // 空 state 且无 output/callDepth → 不构成可验证 trace（回退 focus，不生成面板/NaN）
   const noState = traceScene([{ lines: [2], state: [] }]);
   const noStateMarkup = renderStandard(noState, { frame: 0 });
   assert.doesNotMatch(noStateMarkup, /NaN|undefined/);
+  assert.doesNotMatch(noStateMarkup, /data-trace-panel/);
   const noStateInfo = frameState(noState, 0);
-  assert.equal(noStateInfo.trace!.panelVisible, false, '空 state 无 output/callDepth → 无面板');
+  assert.equal(noStateInfo.mode, 'focus', '空 state 无 output/callDepth → 回退 focus');
+  assert.equal(noStateInfo.trace, null, '无可验证状态 → trace=null');
   assert.ok(rendererScale(LANDSCAPE.width, LANDSCAPE.height) > 0);
 });

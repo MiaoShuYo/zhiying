@@ -123,8 +123,16 @@ export function resolveCodeBuildSteps(visual: CodeVisual | null): ResolvedCodeBu
  * Normalise trace steps for rendering.
  *
  * Requires `mode === 'trace'` and 1..20 steps with valid 1..N lines; `lines` are ascending and
- * de-duplicated, `state`/`output`/`callDepth` are copied as provided (they are facts of the source
- * material, never invented here). Invalid data returns null → `focus`.
+ * de-duplicated. Data that is not verifiable returns null → `focus`:
+ *
+ * - `state` entries are validated one by one (name 1..40, value ≤160, `changed` boolean); a single
+ *   invalid entry rejects the whole trace instead of silently filtering it, so dirty data can never
+ *   produce a half-believable state card;
+ * - at least one step must actually carry verifiable execution state — a non-empty `state`, a
+ *   non-empty `output` or a `callDepth`. `traceSteps` with only line numbers is just focus with
+ *   labels, so it is not rendered as a trace (issue #27: no invented/empty state).
+ *
+ * `state`/`output`/`callDepth` are facts of the source material, never invented here.
  */
 export function resolveCodeTraceSteps(visual: CodeVisual | null): ResolvedCodeTraceStep[] | null {
   if (!visual || typeof visual !== 'object' || visual.mode !== 'trace') return null;
@@ -138,30 +146,55 @@ export function resolveCodeTraceSteps(visual: CodeVisual | null): ResolvedCodeTr
     const lines = normalizeLines(step.lines, totalLines);
     if (!lines) return null;
     const entry: ResolvedCodeTraceStep = { lines };
-    if (step.label) entry.label = step.label;
-    if (step.narrationText) entry.narrationText = step.narrationText;
-    if (Array.isArray(step.state)) {
-      entry.state = step.state
-        .filter(item => Boolean(item) && typeof item.name === 'string' && item.name.length > 0 && typeof item.value === 'string')
-        .map(item => {
-          const state: CodeTraceStateEntry = { name: item.name, value: item.value };
-          if (typeof item.changed === 'boolean') state.changed = item.changed;
-          return state;
-        });
+    if (step.label !== undefined) {
+      if (typeof step.label !== 'string' || !step.label.length || step.label.length > 30) return null;
+      entry.label = step.label;
     }
-    if (typeof step.output === 'string') entry.output = step.output;
-    if (typeof step.callDepth === 'number' && Number.isInteger(step.callDepth) && step.callDepth >= 0 && step.callDepth <= 20) entry.callDepth = step.callDepth;
+    if (step.narrationText !== undefined) {
+      if (typeof step.narrationText !== 'string' || !step.narrationText.length || step.narrationText.length > 200) return null;
+      entry.narrationText = step.narrationText;
+    }
+    if (step.state !== undefined) {
+      if (!Array.isArray(step.state) || step.state.length > 12) return null;
+      const stateEntries: CodeTraceStateEntry[] = [];
+      for (const item of step.state) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+        if (typeof item.name !== 'string' || !item.name.length || item.name.length > 40) return null;
+        if (typeof item.value !== 'string' || item.value.length > 160) return null;
+        if (item.changed !== undefined && typeof item.changed !== 'boolean') return null;
+        const state: CodeTraceStateEntry = { name: item.name, value: item.value };
+        if (typeof item.changed === 'boolean') state.changed = item.changed;
+        stateEntries.push(state);
+      }
+      entry.state = stateEntries;
+    }
+    if (step.output !== undefined) {
+      if (typeof step.output !== 'string' || step.output.length > 200) return null;
+      entry.output = step.output;
+    }
+    if (step.callDepth !== undefined) {
+      if (typeof step.callDepth !== 'number' || !Number.isInteger(step.callDepth) || step.callDepth < 0 || step.callDepth > 20) return null;
+      entry.callDepth = step.callDepth;
+    }
     resolved.push(entry);
   }
-  return resolved;
+  // A trace only renders when at least one step carries verifiable execution state. Line-only
+  // steps are a focus scene with labels, not a state-tracking trace (#27: never fabricate state).
+  const verifiable = resolved.some(step =>
+    (step.state?.length ?? 0) > 0
+    || Boolean(step.output && step.output.length > 0)
+    || step.callDepth !== undefined,
+  );
+  return verifiable ? resolved : null;
 }
 
 /**
  * Resolve the diff view of a `mode: 'diff'` visual.
  *
  * Requires real `beforeCode`/`afterCode`, `code === afterCode` and at least one change. Beats come
- * from `diffBeats`, keeping only entries whose every hunk id exists (de-duplicated, in order); when
- * no entry survives (or `diffBeats` is absent) every hunk gets one default beat `h1..hN`.
+ * from `diffBeats`, keeping only entries with at least one existing hunk id (illegal/unknown ids are
+ * dropped, de-duplicated, in order); an entry whose ids are all unknown is discarded. When no entry
+ * survives (or `diffBeats` is absent) every hunk gets one default beat `h1..hN`.
  */
 export function resolveCodeDiffView(visual: CodeVisual | null): ResolvedCodeDiffView | null {
   if (!visual || typeof visual !== 'object' || visual.mode !== 'diff') return null;

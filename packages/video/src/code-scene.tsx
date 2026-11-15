@@ -142,7 +142,21 @@ export function resolveCodeSceneLayout(input: {
       const panelWidthPx = clamp(0.32 * width, 0.28 * width, 0.34 * width);
       codeWidthPx = Math.max(1, width - panelWidthPx - gap);
       codeHeightPx = Math.max(1, availableHeight - (showCard ? cardHeightPx + gap : 0));
-      tracePanel = { placement: 'right', widthPx: panelWidthPx, heightPx: codeHeightPx, topPx: outer + headerHeight + gap };
+      // The panel is exactly as tall as the rendered code window (visible rows × line height), so
+      // the two columns align instead of the panel stretching to the full allocated code area. The
+      // fixed `0.34`/`0.32` layout numbers of focus/build/diff are untouched.
+      const panelVisibleLines = resolveCodeVisibleLineCount({
+        heightPx: codeHeightPx,
+        fontSizePx,
+        lineHeightRatio: CODE_LINE_HEIGHT_RATIO,
+        portrait: false,
+      });
+      tracePanel = {
+        placement: 'right',
+        widthPx: panelWidthPx,
+        heightPx: Math.max(1, panelVisibleLines * lineHeightPx),
+        topPx: outer + headerHeight + gap,
+      };
       if (showCard) {
         const rawTop = outer + headerHeight + gap + codeHeightPx + gap;
         const topPx = Math.max(0, Math.min(rawTop, Math.max(0, availableForCard - cardHeightPx)));
@@ -393,7 +407,7 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
     ? (input.captionReservedPx as number)
     : Math.round(height * CAPTION_EDGE_RATIO) + Math.round(2 * 30 * scale * CAPTION_LINE_HEIGHT) + Math.round(20 * scale);
   const layoutHasBeats = mode === 'focus' ? hasBeats : stepCount > 0;
-  const layout = resolveCodeSceneLayout({
+  const baseLayout = resolveCodeSceneLayout({
     width,
     height,
     hasBeats: layoutHasBeats,
@@ -432,9 +446,9 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
           }))
         : timeline;
   const viewportTotalLines = Math.max(1, rowCount);
-  const keyframes = resolveCodeScrollKeyframes({ beats: viewportSteps, totalLines: viewportTotalLines, visibleLineCount: layout.visibleLineCount });
+  const keyframes = resolveCodeScrollKeyframes({ beats: viewportSteps, totalLines: viewportTotalLines, visibleLineCount: baseLayout.visibleLineCount });
   const startLine = scrolledStartLine(keyframes, frame, viewportTotalLines);
-  const translatePx = (1 - startLine) * layout.lineHeightPx;
+  const translatePx = (1 - startLine) * baseLayout.lineHeightPx;
   const activeLines = mode === 'build'
     ? [...(buildStep?.focusLines ?? [])]
     : mode === 'trace'
@@ -442,7 +456,18 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
       : mode === 'diff'
         ? []
         : [...(currentBeat?.lines ?? [])];
-  const visibleLineCount = Math.min(layout.visibleLineCount, viewportTotalLines);
+  const visibleLineCount = Math.min(baseLayout.visibleLineCount, viewportTotalLines);
+  // The landscape trace panel shares the rendered code-window height (visible rows × line height).
+  // `resolveCodeSceneLayout` only knows the layout-level line count, so the row-count cap is applied
+  // here, where the final layout shared by the Standard and HTML renderers is produced.
+  const layout: CodeSceneLayout = mode === 'trace'
+    && baseLayout.tracePanel
+    && baseLayout.tracePanel.placement === 'right'
+    ? {
+        ...baseLayout,
+        tracePanel: { ...baseLayout.tracePanel, heightPx: Math.max(1, visibleLineCount * baseLayout.lineHeightPx) },
+      }
+    : baseLayout;
 
   const displayRows: CodeSceneDisplayRow[] = mode === 'diff'
     ? (diffView?.lines ?? []).map((line, index) => ({

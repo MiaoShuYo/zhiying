@@ -221,9 +221,9 @@ test('#27-6 resolveCodeTraceStepTimeline：旁白对齐/均分/最小 0.6s/单�
     'subtitleCues 命中窗口',
   );
 
-  // 最小 0.6s
+  // 最小 0.6s（第一步带可验证 state，满足 trace 可验证性契约）
   const tiny = traceScene([
-    { lines: [2], narrationText: '初始化变量' },
+    { lines: [2], narrationText: '初始化变量', state: [{ name: 'i', value: '0' }] },
     { lines: [4] },
   ], { audioDuration: 6, wordTimings: [{ text: '初始化变量', start: 0.1, end: 0.2 }] });
   const tinyTimeline = resolveCodeTraceStepTimeline(tiny, 30);
