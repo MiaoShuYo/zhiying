@@ -1,0 +1,15 @@
+{
+  "name": "@m2v/desktop",
+  "version": "1.8.0",
+  "private": true,
+  "type": "module",
+  "description": "知影 V1.8.0 Windows 桌面发行层：安装布局、启动器、模型管理与维护。",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node --input-type=module -e \"import {copyFileSync} from 'node:fs'; copyFileSync('src/model-manifest.default.json','dist/model-manifest.default.json')\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  }
+}

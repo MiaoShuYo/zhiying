@@ -78,7 +78,7 @@
 - 新建项目时可独立选择视觉风格和品牌套件（默认品牌自动预选，也可选「无品牌」）；项目编辑器可更换、重新应用或移除品牌，切换前逐项说明影响范围，且只更新品牌快照，不重新生成旁白、不重跑 TTS、不改字幕时间与场景时长。
 - 导出前检查新增品牌 Logo 交付检查：启用但文件缺失、与同侧字幕安全区冲突、竖屏 Logo 宽度超过设计画布 30% 时给出项目级 warning，并提供「打开品牌套件」修复入口；无品牌项目行为不变。
 
-### V1.2–V1.7.0 版本摘要
+### V1.2–V1.8.0 版本摘要
 
 - **V1.2–V1.5：** 可控性、恢复、质检交付、稳定性、制作效率与成片精修，详见下方各版本记录。
 - **V1.6 — 长项目渲染可靠性：** 增加渲染前估算、片段缓存与增量渲染、阶段日志、中断恢复和任务中心集中查看。
@@ -88,6 +88,7 @@
 - **V1.6.8 — 代码讲解场景：** Markdown fenced code 保留为结构化 codeBlocks（语言/源码原样，正文不混入源码）；Ollama 可为含关键代码的章节生成 `code` 场景与聚焦 beats，逐字来源校验拒绝幻觉代码，旁白复述源码自动回退；新增纯函数 beat 时间轴（wordTimings → subtitleCues → 均匀分配）与 viewport/滚动计算；Standard 模式新增 IDE 风格 CodeScene 渲染器（行号、beat 高亮、非重点行 0.38 弱化、5 套风格）；横屏 12–16 行 / 竖屏 7–11 行专用布局，beat 说明卡避让字幕；Standard 与 HTML 模式共用同一份结构化 visual。
 - **V1.6.9 — HTML 动态代码场景、受控代码样式与主题化语法高亮：** HTML 生成模式的 `code` 场景改为按 frame 动态渲染 active beat、viewport/滚动与真实源码，与 Standard 共用同一份 `CodeVisual`/时间轴/布局；`sanitizeSceneHtml` 增加代码布局所需受控样式与逐属性校验（拒 `url()`/`expression()` 等），长代码分块 sanitize 不截断；新增离线 tokenizer 与 5 套主题 token 调色板（≥3:1 对比度、缓存复用），Standard/HTML 共用 token 数据，支持关闭高亮且不影响行焦点/viewport。
 - **V1.7.0 — 代码讲解四模式：** 为 `code` 场景补齐 `focus/build/diff/trace` 模式选择策略与结构化数据（`buildSteps`/`beforeCode`+`afterCode`+`diffBeats`/`traceSteps`）：模型默认 `focus`，只有资料明确支持时才选择高级模式，结构非法或不完整时稳定回退 `focus`；build 按语义步骤逐段显示最终源码并与旁白/字幕时间轴对齐，diff 由系统对真实 before/after 做确定性 LCS 计算 unified 差异（add/remove/context 双行号、hunk 高亮、主题色），trace 同步展示代码行与可验证的变量/输出状态（`changed` 强调、横竖屏专用布局）；Standard 与 HTML 两种渲染器共享同一份模式数据、步骤顺序与状态，长代码统一复用 viewport 自动滚动。
+- **V1.8.0 — Windows 桌面发行版：** 新增可分发独立运行目录与 `Zhiying.exe` 桌面启动器（受管子进程/健康检查/端口冲突与重复启动防护/退出清理，不杀用户已有 Ollama/Node/Python，默认仅绑定 127.0.0.1）；新增单文件 `Zhiying-Setup.exe` 安装向导（默认 per-user 可写目录、路径/权限/空间校验、快捷方式与卸载入口、安装完成“立即下载/稍后下载 AI 模型”）；所有知影管理的模型统一到 `<InstallRoot>\models`（Ollama/Qwen、F5-TTS、Vocos、字幕对齐模型、HF 缓存与临时下载），通过子进程环境注入而不改系统环境变量；新增版本化模型清单与下载管理器（真实进度、暂停/恢复/取消/重试、完整性校验、断点状态恢复、Ollama/HF 源适配、管理器 UI 与“设置 → 模型”入口）；新增首次启动诊断、模型修复、软件升级与安全卸载的数据保留策略；构建脚本产出带版本、SHA-256 的运行目录/安装包与运行时/许可清单。
 
 ### V1.2 可控性与恢复
 
@@ -196,6 +197,15 @@
 - 项目编辑器新增项目级品牌栏：显示当前品牌，提供「更换 / 重新应用 / 移除」；选择器列出 Logo、名称、简化色板、base Style 和默认标记，确认框逐项列出「将更新：品牌颜色、标题/正文字体、Logo」与「不会修改：旁白、分镜内容、配音、语速/停顿、字幕时间、场景时长、制作方案」。切换/重新应用/移除只改品牌快照，不触发 Ollama/TTS、不创建任务；来源套件删除后显示「来源套件已删除」，项目仍可预览/导出；项目锁定或忙碌时按钮禁用并显示错误。
 - 品牌渲染几何（`rendererScale`、`captionSafeArea`、`brandLogoPlacement` 与字幕安全区常量）迁到 `@m2v/schema`，渲染器改为兼容 re-export，preflight 复用同一纯函数。新增项目级检查：启用但 Logo 文件缺失（warning，不阻断导出，修复入口「打开品牌套件」）、Logo 与同侧字幕安全区冲突（仅当某场景字幕实际超过预留下的 2 行，或按保守高度估计被抬高后超出画面时提示）、竖屏 Logo 宽度超过设计画布 30%。同侧但布局安全不误报，多场景只报一次，无 Brand 项目行为不变。
 - 验证：`pnpm typecheck`、`pnpm test:v16`（133 项）、`pnpm test:v16:integration`、`pnpm test:v15`、`pnpm test:v12`、`pnpm test:v17`（42 项 + 2 段静态渲染）、`pnpm test:v17:integration`（5/5）、`pnpm test:v16:render`（22 帧，含 1080p 像素基线）全部通过。
+
+### V1.8.0 Windows 桌面发行版（独立运行目录 / Setup.exe / 统一模型目录 / 模型下载 / 维护）
+
+- 运行与启动器：新增 `apps/desktop`（`@m2v/desktop`）与薄壳 `Zhiying.exe`，从 `config/install.json` 解析安装根，顺序启动受管的 Python/Web/Worker/受管 Ollama/模型管理器并做健康检查；重复启动返回 `already_running`，端口被外部程序占用时失败并给出占用者与恢复路径且**不会结束其它进程**；退出只停止本实例的进程树，日志/状态/临时数据全部位于安装根内；默认仅监听 `127.0.0.1`。
+- 安装器：`scripts/build-installer.mjs` 构建单文件 `Zhiying-Setup.exe`（嵌入 payload、PE 版本 1.8.0.0、SHA-256 与 release-info）。安装向导支持 per-user 默认目录或自选可写路径（中文/空格/D 盘/长路径），校验受保护目录、路径穿越、可写性与磁盘空间，staging 原子替换、失败回滚、升级保留 `models/data/logs/config`，创建 KnownFolder 桌面快捷方式与 Windows 标准卸载入口；完成页提供“立即下载 / 稍后下载 AI 模型”。
+- 统一模型目录：`ModelDirectoryResolver` 保证 `<InstallRoot>\models` 为唯一模型根（`ollama/`、`f5-tts/`、`huggingface/`、`.downloads/`）；`buildManagedServiceEnv` 仅向受管子进程注入 `OLLAMA_MODELS`、`HF_HOME/HF_HUB_CACHE`、`F5TTS_MODEL_DIR/F5TTS_VOCODER_DIR`、`M2V_DATA_DIR` 等，不修改系统环境变量；Python 服务新增 `M2V_MODELS_ROOT` 兼容与 `/health` 模型路径字段，开发模式 `start.ps1` 行为不变。
+- 模型下载：版本化 manifest（HF API 生成真实 size/SHA-256 与固定 revision，F5-TTS 标注 CC BY-NC 4.0）驱动下载管理器——按真实字节计算单模型/总体进度（无 Content-Length 不伪造百分比）、Range/If-Range 断点续传、暂停/恢复/取消/重试（429/5xx 受限退避）、磁盘预算、SHA-256/大小校验后原子提交、`state.json` 崩溃恢复、Ollama NDJSON 与 HF cache 结构落盘；另提供 127.0.0.1 上的管理器 HTTP+SSE 服务、自包含 UI 与 web“设置 → 模型”入口。
+- 维护：`maintenance-cli` 提供首次启动诊断（运行时/服务/模型/磁盘/未完成下载）、修复计划与按需模型修复、原地升级（备份 `install.json`/SQLite 后替换程序、保留模型与用户数据、失败回滚）与安全卸载（默认仅移除程序并保留 models/data/logs/config；清理需显式 `--purge-*` 与确认，拒绝删除安装根外或链接目标）。
+- 验证：`pnpm typecheck` exit 0；`pnpm test:v21` 147/147（覆盖 101 项测试要求）、`pnpm test:v21:e2e` 13/13（真实构建→Setup.exe 安装→Zhiying.exe 启动→下载→维护链路）；基线 `test:v20` 107/107、`test:v19` 68/68、`test:v18` 61/61、pipeline 37/37、`test:v12` 66/66、`test:v16` 109+18+6、`test:v17` 18/18 全部通过。独立验收 48 项：40 PASS + 8 项 BLOCKED-ENV（无干净 Windows 测试机 / 无真实大模型权重与推理，均给出净化环境与 fixture 替代证据）；冻结产物 `Zhiying-Setup.exe` SHA-256 为 `60d840e1a97790da1f8de5567a85208787d913623861ab5e08a41d0579d147bc`。逐项结果见 `doc/V1.8.0_test_report.md` 与 `doc/V1.8.0_acceptance_report.md`，安装说明见 `doc/V1.8.0_install.md`。
 
 ### V1.7.0 代码讲解四模式（build / diff / trace）与模式选择策略
 
