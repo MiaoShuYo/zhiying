@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>知影 · 本地 AI 讲解视频工作室</title>
-  <meta name="description" content="知影（Local Studio）是一个运行在本机的 AI 讲解视频工作室：把 PDF、Markdown、PowerPoint 或文章整理成分镜（含 HTML 动态代码场景与语法高亮），用本地模型生成旁白、字幕与成片。资料不上传云端。">
-  <meta name="keywords" content="知影, Local Studio, AI 讲解视频, 本地 AI, 代码讲解, Code Scene, HTML CodeScene, 语法高亮, 代码高亮, Markdown 代码, Remotion, F5-TTS, Ollama, 视频生成">
+  <meta name="description" content="知影（Local Studio）是一个运行在本机的 AI 讲解视频工作室：把 PDF、Markdown、PowerPoint 或文章整理成分镜（含代码讲解四模式 focus/build/diff/trace、HTML 动态代码场景与语法高亮），用本地模型生成旁白、字幕与成片。资料不上传云端。">
+  <meta name="keywords" content="知影, Local Studio, AI 讲解视频, 本地 AI, 代码讲解, Code Scene, HTML CodeScene, 语法高亮, 代码高亮, build 模式, diff 模式, trace 模式, 逐步构建, 代码差异, 执行状态, Markdown 代码, Remotion, F5-TTS, Ollama, 视频生成">
   <meta property="og:type" content="website">
   <meta property="og:title" content="知影 · 本地 AI 讲解视频工作室">
   <meta property="og:description" content="从资料到分镜、旁白、字幕与成片，全部在你的电脑上完成。">
@@ -55,7 +55,7 @@
             <span><i class="dot"></i>全部本地运行</span>
             <span><i class="dot"></i>MIT License</span>
             <span><i class="dot"></i>Windows 10 / 11</span>
-            <span><i class="dot"></i>最新版本 V1.6.9</span>
+            <span><i class="dot"></i>最新版本 V1.7.0</span>
           </div>
         </div>
 
@@ -135,11 +135,11 @@
             <p>项目数据库、素材、音频与成片都保存在本地；除你主动发起的网页抓取外不访问云端。</p>
           </article>
           <article class="card wide">
-            <div class="tag">V1.6.9</div>
+            <div class="tag">V1.7.0</div>
             <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6M13.5 4l-3 16"/></svg></div>
             <div class="wide-body">
-              <h3>代码讲解场景（Code Scene）＋ 语法高亮</h3>
-              <p>Markdown 代码块保留为结构化源码；模型按旁白给代码行分段，画面高亮当前讲解行、弱化其余行，长代码自动滚动。V1.6.9 起 HTML 生成模式也按帧动态渲染同一份代码数据，并加入主题化 token 语法高亮：TypeScript / JavaScript / Python / JSON 清晰可辨，5 套风格自动保证对比度，Standard 与 HTML 共用同一份 token 数据。</p>
+              <h3>代码讲解四模式：focus / build / diff / trace</h3>
+              <p>Markdown 代码块保留为结构化源码，模型按资料语义选择讲解模式：<b>focus</b> 聚焦现有代码（默认）、<b>build</b> 按语义步骤逐段构建、<b>diff</b> 由系统对真实 before/after 计算 unified 差异、<b>trace</b> 同步展示代码行与变量/输出状态。数据不完整或不可验证时自动回退 focus；Standard 与 HTML 共用同一份模式数据、步骤顺序与状态，并保留主题化 token 语法高亮。</p>
             </div>
           </article>
         </div>
@@ -167,9 +167,9 @@
     <section id="code">
       <div class="container">
         <div class="section-head">
-          <p class="eyebrow">CODE SCENE · V1.6.9</p>
-          <h2>代码讲解，也能一屏看懂</h2>
-          <p>Markdown 里的 fenced code 会被保留成结构化代码块；模型为每段旁白挑选要聚焦的代码行，画面按节拍高亮、弱化其余行，长代码自动滚动。V1.6.9 进一步让 HTML 生成模式按 frame 动态渲染代码窗口，并用主题化 token 调色板做语法高亮——源码逐字保留，Standard 与 HTML 两种渲染方式共用同一份数据。</p>
+          <p class="eyebrow">CODE SCENE · V1.7.0</p>
+          <h2>代码讲解，一屏看懂：聚焦、构建、差异与状态</h2>
+          <p>Markdown 里的 fenced code 会被保留成结构化代码块。V1.7.0 起 code scene 支持四种讲解模式：默认 <b>focus</b> 聚焦现有代码，<b>build</b> 按语义步骤逐步构建最终源码，<b>diff</b> 由系统对真实 before/after 计算 unified 差异，<b>trace</b> 让代码行焦点与变量/输出状态同步切换。模型只在资料明确支持时选择高级模式，数据不完整或不可验证时自动回退 focus；Standard 与 HTML 两种渲染方式共用同一份模式数据与主题化语法高亮。</p>
         </div>
 
         <div class="brand-split">
@@ -207,6 +207,12 @@
               <li>源码保真：visual.code 必须逐字来自输入源码，幻觉代码或旁白复述源码会自动回退到安全分镜</li>
               <li>Standard 与 HTML 两种生成模式共用同一份结构化 visual，预览与成片表现一致</li>
               <li>V1.6.9：HTML 模式不再注入静态代码 HTML，改为按 Remotion frame 动态解析 active beat 与 viewport，与 Standard 共用同一份 CodeVisual 和布局</li>
+              <li><span><b>V1.7.0 四模式</b>：<b>focus</b> 聚焦现有代码（默认）、<b>build</b> 按语义步骤逐段构建、<b>diff</b> 由系统计算真实 before/after 的 unified 差异、<b>trace</b> 同步展示执行状态；只有资料明确支持时才选高级模式，数据不完整或不可验证时自动回退 focus</span></li>
+              <li>mode 选择与保真：prompt 强制默认 focus、禁止臆造 before/after 与变量值；diff 的 beforeCode / afterCode 必须逐字来自输入 codeBlocks，trace 的 state 只能来自资料</li>
+              <li>build：步骤 revealLines 指向最终源码真实行，当前步聚焦行高亮、旧行弱化，未出现行隐藏占位；步骤时间复用旁白 / 字幕对齐，长代码照常 viewport 滚动</li>
+              <li>diff：确定性行级 LCS + hunk 分组与缓存；add / remove / context 双行号、当前 hunk 跟随旁白；主题化 diff 配色（5 套风格 ≥3:1），9:16 保持单列可读</li>
+              <li>trace：Variables / Output 状态卡随 step 切换，changed 用主题色 + ← 克制强调；横屏状态卡在右、竖屏在代码下方整行，长代码滚动复用</li>
+              <li>Standard / HTML 共用同一份模式数据、步骤顺序与状态；非法高级数据在 schema / 归一化 / 渲染三层安全回退</li>
               <li>主题化语法高亮：TypeScript / JavaScript / TSX / JSX、Python、JSON 可辨识；未知语言自动回退纯文本；5 套风格与品牌调色板保证 ≥3:1 对比度</li>
               <li>token 结果按 scene 缓存复用，Standard / HTML 共用；关闭高亮或分词失败不影响行焦点、行号与 viewport</li>
               <li>sanitizer 只放行受控代码样式（transform / overflow / 字体等），拒绝 url() 与 expression()；长代码分块处理，不因单次 20000 上限丢行</li>
@@ -214,10 +220,59 @@
           </div>
         </div>
 
+        <div class="mode-chips" aria-label="代码讲解模式">
+          <span class="mode-chip active">focus · 聚焦讲解</span>
+          <span class="mode-chip">build · 逐步构建</span>
+          <span class="mode-chip">diff · 前后差异</span>
+          <span class="mode-chip">trace · 执行状态</span>
+        </div>
+
+        <div class="mode-grid">
+          <article class="mode-card">
+            <div class="mode-head"><b>build</b><span class="pill">按步骤逐段出现</span></div>
+            <div class="mini-window">
+              <div class="code-line"><span class="ln">1</span><span class="lc"><span class="tok-keyword">const</span> cache = <span class="tok-keyword">new</span> <span class="tok-function">Map</span>();</span></div>
+              <div class="code-line"><span class="ln">2</span><span class="lc"><span class="tok-keyword">async</span> <span class="tok-keyword">function</span> <span class="tok-function">getUser</span>(id) {</span></div>
+              <div class="code-line active"><span class="ln">3</span><span class="lc">  <span class="tok-keyword">if</span> (cache.<span class="tok-function">has</span>(id)) <span class="tok-keyword">return</span> cache.<span class="tok-function">get</span>(id);</span></div>
+              <div class="code-line hidden"><span class="ln">4</span><span class="lc">  <span class="tok-keyword">return</span> <span class="tok-function">fetchUser</span>(id);</span></div>
+              <div class="code-line hidden"><span class="ln">5</span><span class="lc">}</span></div>
+            </div>
+            <p>每一步只新增当前要讲的代码，旧行保持稳定；未出现行占位隐藏，不做逐字符打字机。</p>
+          </article>
+          <article class="mode-card">
+            <div class="mode-head"><b>diff</b><span class="pill">真实 before / after</span></div>
+            <div class="mini-window">
+              <div class="code-line diff-line context"><span class="dm"> </span><span class="ln">12</span><span class="lc"><span class="tok-keyword">const</span> timeout = <span class="tok-number">3000</span>;</span></div>
+              <div class="code-line diff-line remove"><span class="dm">-</span><span class="ln">13</span><span class="lc">  <span class="tok-function">fetch</span>(url);</span></div>
+              <div class="code-line diff-line add"><span class="dm">+</span><span class="ln">13</span><span class="lc">  <span class="tok-keyword">await</span> <span class="tok-function">fetch</span>(url, { signal });</span></div>
+              <div class="code-line diff-line add active"><span class="dm">+</span><span class="ln">14</span><span class="lc">  <span class="tok-function">clearTimeout</span>(timer);</span></div>
+            </div>
+            <p>系统对真实前后版本计算 unified diff：删除 / 新增 / 上下文分行显示，当前 hunk 高亮，颜色跟随主题。</p>
+          </article>
+          <article class="mode-card">
+            <div class="mode-head"><b>trace</b><span class="pill">代码 + 执行状态</span></div>
+            <div class="mini-window trace-window">
+              <div class="trace-code">
+                <div class="code-line"><span class="ln">4</span><span class="lc"><span class="tok-keyword">for</span> (<span class="tok-keyword">let</span> i = <span class="tok-number">0</span>; i &lt; nums.length; i++) {</span></div>
+                <div class="code-line active"><span class="ln">5</span><span class="lc">  sum += nums[i];</span></div>
+                <div class="code-line"><span class="ln">6</span><span class="lc">}</span></div>
+              </div>
+              <div class="trace-state">
+                <div class="trace-title">Variables</div>
+                <div class="trace-row"><span class="tn">i</span><span class="tv">1</span></div>
+                <div class="trace-row changed"><span class="tn">sum</span><span class="tv">3</span><span class="tm">←</span></div>
+                <div class="trace-title">Output</div>
+                <div class="trace-out">3</div>
+              </div>
+            </div>
+            <p>代码行焦点与变量 / 输出同步切换；changed 变量用主题色 + ← 克制强调，未变化变量保持稳定。</p>
+          </article>
+        </div>
+
         <div style="height:18px"></div>
         <div class="version">
-          <b>最新版本 V1.6.9</b>
-          <span>HTML 动态代码场景 · 主题化语法高亮 · 受控代码样式 sanitizer · 5 套风格与品牌调色板 ≥3:1 对比度 · token 缓存复用</span>
+          <b>最新版本 V1.7.0</b>
+          <span>代码讲解四模式 focus / build / diff / trace · 逐步构建 · 系统计算 unified diff · 执行状态跟踪 · 107 个测试用例与 31 项验收全部通过</span>
           <a class="pill" href="https://github.com/MiaoShuYo/zhiying#readme" target="_blank" rel="noopener">阅读更新记录 ↗</a>
         </div>
       </div>
@@ -388,7 +443,11 @@ pnpm db:push
           </details>
           <details>
             <summary>代码讲解是怎么做的？</summary>
-            <p>V1.6.8 把 Markdown 里的 fenced code 保留为结构化源码块。生成分镜时，模型只为每段旁白选择要聚焦的代码行和一句简短提示，画面据此高亮当前行、弱化其余行，长代码按 viewport 自动平滑滚动。V1.6.9 起 HTML 生成模式也按 frame 动态渲染同一份代码数据，并加入主题化语法高亮（TypeScript / JavaScript / Python / JSON，5 套风格自动保证对比度，未知语言回退纯文本），Standard 与 HTML 共用同一份 token 数据。源码必须逐字来自你的资料，模型不能改写或补全代码；16:9 与 9:16 有各自布局，字幕继续遵循项目字幕设置。</p>
+            <p>V1.6.8 把 Markdown 里的 fenced code 保留为结构化源码块。生成分镜时，模型只为每段旁白选择要聚焦的代码行和一句简短提示，画面据此高亮当前行、弱化其余行，长代码按 viewport 自动平滑滚动。V1.6.9 起 HTML 生成模式也按 frame 动态渲染同一份代码数据，并加入主题化语法高亮（TypeScript / JavaScript / Python / JSON，5 套风格自动保证对比度，未知语言回退纯文本），Standard 与 HTML 共用同一份 token 数据。V1.7.0 进一步支持 code scene 四模式：<b>focus</b>（默认）、<b>build</b>（按步骤逐段显示最终源码）、<b>diff</b>（对真实 before/after 计算 unified 差异）、<b>trace</b>（代码行与变量 / 输出状态同步）。模式只在资料明确支持时选择，数据不完整或不可验证会自动回退 focus，模型不能凭空生成 before/after 或变量值；源码必须逐字来自你的资料；16:9 与 9:16 有各自布局，字幕继续遵循项目字幕设置。</p>
+          </details>
+          <details>
+            <summary>build / diff / trace 三种高级模式是怎么选出来的？</summary>
+            <p>由本地模型根据资料语义选择：教程式“从无到有”逐步写代码时才用 build；资料明确给出修改前后两个真实代码版本时才用 diff（beforeCode / afterCode 必须逐字来自输入代码块）；资料包含执行步骤与状态变化时才用 trace（变量值只能来自资料，本轮不执行用户代码）。默认始终是 focus；条件不足、结构非法或无法验证时统一回退 focus，不会渲染不可信画面。</p>
           </details>
           <details>
             <summary>旧项目还能打开吗？</summary>
