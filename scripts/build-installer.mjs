@@ -5,8 +5,8 @@
  * 复用 build-desktop 产物（或 --input 指定发行目录），通过 ISCC.exe 编译
  * apps/desktop/native/ZhiyingSetup.iss（payload 由 Inno [Files] 直接内嵌，不再生成 payload.zip）。
  *
- * 输出：dist/Zhiying-Setup.exe + Zhiying-Setup.exe.sha256 + release-info.json
- * （installer: "inno-setup"、innoVersion、version/profile/sha256/size/components）。
+ * 输出：dist/Zhiying-Setup.exe + Zhiying-Setup.exe.sha256 + release-info.json。
+ * 最终 EXE 是 GUI 启动壳，内嵌 Inno 单文件安装器，并为 Inno 子进程设置独立可写 TEMP/TMP。
  *
  * ISCC 定位顺序：ISCC_PATH → %LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe
  * → %ProgramFiles(x86)%\Inno Setup 6\ISCC.exe → PATH 中 iscc。
@@ -16,18 +16,21 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { buildDesktop, parseBuildArgs } from './build-desktop.mjs';
+import { buildDesktop, normalizePeExecutable, parseBuildArgs } from './build-desktop.mjs';
 
 const execFileAsync = promisify(execFile);
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), '..');
 const DEFAULT_VERSION = '1.8.0';
 const ISS_PATH = join(REPO_ROOT, 'apps', 'desktop', 'native', 'ZhiyingSetup.iss');
+const BOOTSTRAPPER_PATH = join(REPO_ROOT, 'apps', 'desktop', 'native', 'ZhiyingSetupBootstrapper.cs');
 const LANGUAGE_PATH = join(REPO_ROOT, 'apps', 'desktop', 'native', 'languages', 'ChineseSimplified.isl');
+const CSC_PATH = process.env.CSC_PATH || 'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe';
 
 function parseInstallerArgs(argv) {
   const options = {
@@ -237,6 +240,51 @@ async function verifySetupExecutable(setupExe, version) {
   }
 }
 
+/** 将 Inno 单文件安装器嵌入 GUI 启动壳，并为 Inno 子进程提供独立可写的 TEMP/TMP。 */
+async function compileSetupBootstrapper(outputPath, payloadPath, version) {
+  if (process.platform !== 'win32') throw new Error('安装器启动壳只能在 Windows 上通过 csc.exe 构建');
+  if (!existsSync(CSC_PATH)) throw new Error(`未找到 csc.exe：${CSC_PATH}（可通过 CSC_PATH 环境变量指定）`);
+  if (!existsSync(BOOTSTRAPPER_PATH)) throw new Error(`缺少安装器启动壳源码：${BOOTSTRAPPER_PATH}`);
+
+  const buildDir = await mkdtemp(join(tmpdir(), 'zhiying-setup-bootstrapper-'));
+  const assemblyInfo = join(buildDir, 'ZhiyingSetupBootstrapper.AssemblyInfo.cs');
+  const version4 = assemblyVersion(version);
+  await writeFile(
+    assemblyInfo,
+    [
+      'using System.Reflection;',
+      `[assembly: AssemblyVersion("${version4}")]`,
+      `[assembly: AssemblyFileVersion("${version4}")]`,
+      '[assembly: AssemblyTitle("知影 Zhiying Setup")]',
+      '[assembly: AssemblyProduct("知影 Zhiying")]',
+      '[assembly: AssemblyCompany("MiaoShuYo")]',
+      '[assembly: AssemblyDescription("知影安装程序启动壳（修复临时目录权限兼容）")]',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  const args = [
+    '/nologo',
+    '/target:winexe',
+    '/platform:x64',
+    '/optimize+',
+    '/reference:System.Windows.Forms.dll',
+    `/out:${outputPath}`,
+    `/resource:${payloadPath},Zhiying.SetupPayload`,
+    BOOTSTRAPPER_PATH,
+    assemblyInfo,
+  ];
+  try {
+    await execFileAsync(CSC_PATH, args, { windowsHide: true, timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
+    normalizePeExecutable(outputPath);
+  } catch (error) {
+    const output = `${error.stdout ?? ''}${error.stderr ?? ''}`.trim();
+    throw new Error(`编译安装器启动壳失败：\n${output || error.message}`);
+  } finally {
+    await rm(buildDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 /** 构建 Inno Setup 安装程序；返回摘要。 */
 export async function buildInstaller(options) {
   let productDir;
@@ -273,21 +321,24 @@ export async function buildInstaller(options) {
     }
   }
   if (!existsSync(ISS_PATH)) throw new Error(`缺少 Inno Setup 脚本：${ISS_PATH}`);
+  if (!existsSync(BOOTSTRAPPER_PATH)) throw new Error(`缺少安装器启动壳源码：${BOOTSTRAPPER_PATH}`);
   if (!existsSync(LANGUAGE_PATH)) throw new Error(`缺少中文语言文件：${LANGUAGE_PATH}（来源 Inno 官方 issrc Files/Languages/ChineseSimplified.isl）`);
 
   const iscc = locateIscc(options.isccPath);
   const outDir = resolve(options.outDir);
   const setupExe = join(outDir, 'Zhiying-Setup.exe');
-  const isccArgs = [
+  const makeIsccArgs = payloadOutDir => [
     '/Qp',
     `/DAppVersion=${version}`,
     `/DAppVersion4=${assemblyVersion(version)}`,
     `/DAppProfile=${profile}`,
     `/DPayloadDir=${resolve(productDir)}`,
-    `/DOutDir=${outDir}`,
+    `/DOutDir=${payloadOutDir}`,
     ISS_PATH,
   ];
-  const commandLine = [iscc, ...isccArgs].map(quoteForDisplay).join(' ');
+  const plannedPayloadDir = join(outDir, '.zhiying-installer-payload');
+  const plannedIsccArgs = makeIsccArgs(plannedPayloadDir);
+  const commandLine = [iscc, ...plannedIsccArgs].map(quoteForDisplay).join(' ');
   if (options.dryRun) {
     return {
       ok: true,
@@ -299,11 +350,14 @@ export async function buildInstaller(options) {
       version,
       profile,
       setupExe,
+      bootstrapperSource: BOOTSTRAPPER_PATH,
       sha256Path: join(outDir, 'Zhiying-Setup.exe.sha256'),
       releaseInfoPath: join(outDir, 'release-info.json'),
       command: commandLine,
       planned: [
-        `ISCC 编译：${ISS_PATH}`,
+        `ISCC 编译 Inno payload：${ISS_PATH}`,
+        `csc 将 payload 嵌入 GUI 启动壳：${setupExe}`,
+        '启动壳只为安装器子进程设置独立可写的 TEMP/TMP，不修改系统或用户环境变量',
         `payload 目录：${resolve(productDir)}（由 Inno [Files] 内嵌，排除 models/data/logs/config/install.json）`,
         `输出：${setupExe}`,
         '生成 Zhiying-Setup.exe.sha256 与 release-info.json（installer=inno-setup）',
@@ -314,6 +368,10 @@ export async function buildInstaller(options) {
   await mkdir(outDir, { recursive: true });
   await rm(setupExe, { force: true }).catch(() => undefined);
   await rm(`${setupExe}.sha256`, { force: true }).catch(() => undefined);
+  const buildDir = await mkdtemp(join(tmpdir(), 'zhiying-installer-build-'));
+  const payloadSetupExe = join(buildDir, 'Zhiying-Setup.exe');
+  const isccArgs = makeIsccArgs(buildDir);
+  const actualCommandLine = [iscc, ...isccArgs].map(quoteForDisplay).join(' ');
   try {
     await execFileAsync(iscc, isccArgs, {
       cwd: REPO_ROOT,
@@ -323,9 +381,16 @@ export async function buildInstaller(options) {
     });
   } catch (error) {
     const output = `${error.stdout ?? ''}${error.stderr ?? ''}`.trim();
-    throw new Error(`ISCC 编译安装程序失败：\n${output || error.message}\n命令：${commandLine}`);
+    await rm(buildDir, { recursive: true, force: true }).catch(() => undefined);
+    throw new Error(`ISCC 编译安装程序失败：\n${output || error.message}\n命令：${actualCommandLine}`);
   }
-  await verifySetupExecutable(setupExe, version);
+  try {
+    await verifySetupExecutable(payloadSetupExe, version);
+    await compileSetupBootstrapper(setupExe, payloadSetupExe, version);
+    await verifySetupExecutable(setupExe, version);
+  } finally {
+    await rm(buildDir, { recursive: true, force: true }).catch(() => undefined);
+  }
   const setupSha256 = await sha256File(setupExe);
   const setupSizeBytes = (await stat(setupExe)).size;
   await writeFile(join(outDir, 'Zhiying-Setup.exe.sha256'), `${setupSha256}  Zhiying-Setup.exe\n`, 'utf8');
@@ -342,6 +407,8 @@ export async function buildInstaller(options) {
       file: 'Zhiying-Setup.exe',
       sha256: setupSha256,
       sizeBytes: setupSizeBytes,
+      bootstrapper: 'csharp-gui',
+      tempDirectory: '%LOCALAPPDATA%\\Zhiying\\InstallerStaging\\<run-id>',
     },
     payload: {
       embedded: true,

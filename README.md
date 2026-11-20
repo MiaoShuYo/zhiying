@@ -201,11 +201,11 @@
 ### V1.8.0 Windows 桌面发行版（独立运行目录 / Setup.exe / 统一模型目录 / 模型下载 / 维护）
 
 - 运行与启动器：新增 `apps/desktop`（`@m2v/desktop`）与薄壳 `Zhiying.exe`，从 `config/install.json` 解析安装根，顺序启动受管的 Python/Web/Worker/受管 Ollama/模型管理器并做健康检查；重复启动返回 `already_running`，端口被外部程序占用时失败并给出占用者与恢复路径且**不会结束其它进程**；退出只停止本实例的进程树，日志/状态/临时数据全部位于安装根内；默认仅监听 `127.0.0.1`。
-- 安装器：`scripts/build-installer.mjs` 通过 **Inno Setup 6（ISCC）** 编译标准安装程序 `Zhiying-Setup.exe`（中文图形向导、标准卸载器 `unins000.exe` 与「应用和功能」注册、PE 版本 1.8.0.0、SHA-256 与 release-info；安装后由 `setup-cli --post-install` 写 `install.json`）。安装向导支持 per-user 默认目录或自选可写路径（中文/空格/D 盘/长路径），校验受保护目录、路径穿越、可写性与磁盘空间，staging 原子替换、失败回滚、升级保留 `models/data/logs/config`，创建 KnownFolder 桌面快捷方式与 Windows 标准卸载入口；完成页提供“立即下载 / 稍后下载 AI 模型”。
+- 安装器：`scripts/build-installer.mjs` 由 **Inno Setup 6（ISCC）** 编译安装数据，再嵌入 `Zhiying-Setup.exe` GUI 启动壳。启动壳先在 `%LOCALAPPDATA%\Zhiying\InstallerStaging` 创建并验证随机目录，再只为 Inno 子进程设置 `TEMP/TMP`，绕过原 Windows 临时目录 ACL 损坏导致的 `is-*.tmp`“拒绝访问”；不修改系统/用户环境变量。其余仍使用 Inno 标准中文向导、标准卸载器 `unins000.exe`、「应用和功能」注册与 SHA-256/release-info；安装后由 `setup-cli --post-install` 写 `install.json`。向导支持 per-user 默认目录或自选可写路径（中文/空格/D 盘/长路径），校验受保护目录、路径穿越、可写性与磁盘空间，staging 原子替换、失败回滚、升级保留 `models/data/logs/config`，创建 KnownFolder 桌面快捷方式与 Windows 标准卸载入口；完成页提供“立即下载 / 稍后下载 AI 模型”。
 - 统一模型目录：`ModelDirectoryResolver` 保证 `<InstallRoot>\models` 为唯一模型根（`ollama/`、`f5-tts/`、`huggingface/`、`.downloads/`）；`buildManagedServiceEnv` 仅向受管子进程注入 `OLLAMA_MODELS`、`HF_HOME/HF_HUB_CACHE`、`F5TTS_MODEL_DIR/F5TTS_VOCODER_DIR`、`M2V_DATA_DIR` 等，不修改系统环境变量；Python 服务新增 `M2V_MODELS_ROOT` 兼容与 `/health` 模型路径字段，开发模式 `start.ps1` 行为不变。
 - 模型下载：版本化 manifest（HF API 生成真实 size/SHA-256 与固定 revision，F5-TTS 标注 CC BY-NC 4.0）驱动下载管理器——按真实字节计算单模型/总体进度（无 Content-Length 不伪造百分比）、Range/If-Range 断点续传、暂停/恢复/取消/重试（429/5xx 受限退避）、磁盘预算、SHA-256/大小校验后原子提交、`state.json` 崩溃恢复、Ollama NDJSON 与 HF cache 结构落盘；另提供 127.0.0.1 上的管理器 HTTP+SSE 服务、自包含 UI 与 web“设置 → 模型”入口。
 - 维护：`maintenance-cli` 提供首次启动诊断（运行时/服务/模型/磁盘/未完成下载）、修复计划与按需模型修复、原地升级（备份 `install.json`/SQLite 后替换程序、保留模型与用户数据、失败回滚）与安全卸载（默认仅移除程序并保留 models/data/logs/config；清理需显式 `--purge-*` 与确认，拒绝删除安装根外或链接目标）。
-- 验证：`pnpm typecheck` exit 0；`pnpm test:v21` desktop 152（151 pass + 1 BLOCKED-ENV skip）+ web 7/7（覆盖 101 项测试要求）、`pnpm test:v21:e2e` 14/14（真实构建→Inno Setup 标准安装程序→Zhiying.exe 启动→下载→维护链路）；基线 `test:v20` 107/107、`test:v19` 68/68、`test:v18` 61/61、pipeline 58/58、`test:v12` 66/66、`test:v16` 109+18+6、`test:v17` 24+18 全部通过。独立验收 48 项：40 PASS + 8 项 BLOCKED-ENV（无干净 Windows 测试机 / 无真实大模型权重与推理，均给出净化环境与 fixture 替代证据）；冻结产物 `Zhiying-Setup.exe` SHA-256 为 `c9fcd8c8178ce38bb1176cf3582ea0d184464ece8ee5f14d0584020d0f3c7d6a`。逐项结果见 `doc/V1.8.0_test_report.md` 与 `doc/V1.8.0_acceptance_report.md`，安装说明见 `doc/V1.8.0_install.md`。
+- 验证：原 R4 发行版的验证记录见 `doc/V1.8.0_test_report.md` 与 `doc/V1.8.0_acceptance_report.md`。为修复临时目录权限问题，当前构建输出已改为上述 GUI 启动壳；当前 `Zhiying-Setup.exe` SHA-256 为 `8797c5b43b4935cb97eeafed32d7549251d5a9eea682a2c9783af8ec556be3c5`（24,922,112 B）。本次仅重建了安装包，尚未重跑安装端到端验证。
 
 ### V1.7.0 代码讲解四模式（build / diff / trace）与模式选择策略
 
@@ -255,7 +255,7 @@ V1.8.0 起提供普通用户可直接使用的 Windows 桌面发行版：安装�
 
 ### 安装步骤
 
-1. 双击 `Zhiying-Setup.exe`（单文件安装程序），启动**图形安装向导**。
+1. 双击 `Zhiying-Setup.exe`（单文件 GUI 启动壳；它会先切换到应用专用的可写临时目录，再启动安装向导）。
 2. 在欢迎页确认产品名称、版本 1.8.0、发行者与安装说明，点击「下一步」。
 3. 在安装目录页选择目录：默认 `%LOCALAPPDATA%\Programs\Zhiying`，可点击「浏览…」或直接输入 `D:\Zhiying`、含中文/空格的当前用户可写路径；`Program Files`、`Windows`、`System32`、盘符根等受保护位置会被拒绝并提示改用可写目录。
 4. 在安装选项页选择：是否创建桌面快捷方式（默认创建）、是否创建卸载注册表项（默认创建），以及安装完成后「立即下载 AI 模型 / 稍后下载」（默认稍后下载）。
