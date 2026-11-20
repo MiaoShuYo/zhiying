@@ -201,11 +201,11 @@
 ### V1.8.0 Windows 桌面发行版（独立运行目录 / Setup.exe / 统一模型目录 / 模型下载 / 维护）
 
 - 运行与启动器：新增 `apps/desktop`（`@m2v/desktop`）与薄壳 `Zhiying.exe`，从 `config/install.json` 解析安装根，顺序启动受管的 Python/Web/Worker/受管 Ollama/模型管理器并做健康检查；重复启动返回 `already_running`，端口被外部程序占用时失败并给出占用者与恢复路径且**不会结束其它进程**；退出只停止本实例的进程树，日志/状态/临时数据全部位于安装根内；默认仅监听 `127.0.0.1`。
-- 安装器：`scripts/build-installer.mjs` 由 **Inno Setup 6（ISCC）** 编译安装数据，再嵌入 `Zhiying-Setup.exe` GUI 启动壳。启动壳先在 `%LOCALAPPDATA%\Zhiying\InstallerStaging` 创建并验证随机目录，再只为 Inno 子进程设置 `TEMP/TMP`，绕过原 Windows 临时目录 ACL 损坏导致的 `is-*.tmp`“拒绝访问”；不修改系统/用户环境变量。其余仍使用 Inno 标准中文向导、标准卸载器 `unins000.exe`、「应用和功能」注册与 SHA-256/release-info；安装后由 `setup-cli --post-install` 写 `install.json`。向导支持 per-user 默认目录或自选可写路径（中文/空格/D 盘/长路径），校验受保护目录、路径穿越、可写性与磁盘空间，staging 原子替换、失败回滚、升级保留 `models/data/logs/config`，创建 KnownFolder 桌面快捷方式与 Windows 标准卸载入口；完成页提供“立即下载 / 稍后下载 AI 模型”。
+- 安装器：`scripts/build-installer.mjs` 由 **Inno Setup 6（ISCC）** 编译安装数据，再嵌入 `Zhiying-Setup.exe` GUI 启动壳。启动壳优先在 `%LOCALAPPDATA%\Zhiying\InstallerStaging` 创建并验证随机目录；若该位置 ACL 拒绝写入，则探测并回退到可写的 `TEMP/TMP` 或用户配置目录。它只为 Inno 子进程设置 `TEMP/TMP`，绕过临时目录 ACL 问题，不修改系统/用户环境变量。其余仍使用 Inno 标准中文向导、标准卸载器 `unins000.exe`、「应用和功能」注册与 SHA-256/release-info；安装后由 `setup-cli --post-install` 写 `install.json`。向导支持 per-user 默认目录或自选可写路径（中文/空格/D 盘/长路径），校验受保护目录、路径穿越、可写性与磁盘空间，staging 原子替换、失败回滚、升级保留 `models/data/logs/config`，创建 KnownFolder 桌面快捷方式与 Windows 标准卸载入口；完成页提供“立即下载 / 稍后下载 AI 模型”。
 - 统一模型目录：`ModelDirectoryResolver` 保证 `<InstallRoot>\models` 为唯一模型根（`ollama/`、`f5-tts/`、`huggingface/`、`.downloads/`）；`buildManagedServiceEnv` 仅向受管子进程注入 `OLLAMA_MODELS`、`HF_HOME/HF_HUB_CACHE`、`F5TTS_MODEL_DIR/F5TTS_VOCODER_DIR`、`M2V_DATA_DIR` 等，不修改系统环境变量；Python 服务新增 `M2V_MODELS_ROOT` 兼容与 `/health` 模型路径字段，开发模式 `start.ps1` 行为不变。
 - 模型下载：版本化 manifest（HF API 生成真实 size/SHA-256 与固定 revision，F5-TTS 标注 CC BY-NC 4.0）驱动下载管理器——按真实字节计算单模型/总体进度（无 Content-Length 不伪造百分比）、Range/If-Range 断点续传、暂停/恢复/取消/重试（429/5xx 受限退避）、磁盘预算、SHA-256/大小校验后原子提交、`state.json` 崩溃恢复、Ollama NDJSON 与 HF cache 结构落盘；另提供 127.0.0.1 上的管理器 HTTP+SSE 服务、自包含 UI 与 web“设置 → 模型”入口。
 - 维护：`maintenance-cli` 提供首次启动诊断（运行时/服务/模型/磁盘/未完成下载）、修复计划与按需模型修复、原地升级（备份 `install.json`/SQLite 后替换程序、保留模型与用户数据、失败回滚）与安全卸载（默认仅移除程序并保留 models/data/logs/config；清理需显式 `--purge-*` 与确认，拒绝删除安装根外或链接目标）。
-- 验证：原 R4 发行版的验证记录见 `doc/V1.8.0_test_report.md` 与 `doc/V1.8.0_acceptance_report.md`。为修复临时目录权限问题，当前构建输出已改为上述 GUI 启动壳；当前 `Zhiying-Setup.exe` SHA-256 为 `8797c5b43b4935cb97eeafed32d7549251d5a9eea682a2c9783af8ec556be3c5`（24,922,112 B）。本次仅重建了安装包，尚未重跑安装端到端验证。
+- 验证：原 R4 发行版的验证记录见 `doc/V1.8.0_test_report.md` 与 `doc/V1.8.0_acceptance_report.md`。为修复临时目录权限问题，当前构建输出已改为上述 GUI 启动壳；当前 `Zhiying-Setup.exe` SHA-256 为 `a2a42935a660557297f1c07fad47516a4ce590a7e85bee6345eceb38be768538`（24,923,136 B）。本次仅重建了安装包，尚未重跑安装端到端验证。
 
 ### V1.7.0 代码讲解四模式（build / diff / trace）与模式选择策略
 
@@ -957,6 +957,8 @@ cd services/python
 隔离集成测试使用 Node.js 22.13+ 的 node:sqlite 创建临时数据库，测试备份恢复、快照轮转、保存冲突、取消状态及导入预览；不修改真实项目。渲染冒烟测试位于 apps/worker/test/render-v11.ts，需要本机 Chromium/Edge 与 FFmpeg，可通过 REMOTION_BROWSER_EXECUTABLE 指定浏览器。
 
 竖屏字幕预览受视口高度限制，整幅 1080 × 1920 画面只能缩到约 0.37 倍显示，密集正文在屏幕上仅约 8px。预览工具栏的「1:1 原始尺寸」按钮会按画布原始像素显示并可滚动，字号与成片一致，便于判断阅读效果。
+
+
 
 
 

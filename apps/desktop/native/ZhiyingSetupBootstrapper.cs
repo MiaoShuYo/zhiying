@@ -5,6 +5,7 @@
 // Inno 安装器解到当前用户 LocalAppData 下的独立目录，并只为安装器子进程设置
 // TEMP/TMP，从而绕过损坏的系统临时目录 ACL；不修改用户/系统环境变量。
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -60,29 +61,84 @@ namespace Zhiying
             return result.ToString();
         }
 
-        private static string CreatePrivateStagingDirectory()
+        // 原样转发原始命令行参数：Main 的 args 已被去引号，若再次转义会把
+        // /TASKS="desktopicon" 这类带引号参数变成字面量引号，导致内嵌 Inno 安装器丢失任务。
+        private static string RawArguments(string[] fallbackArgs)
         {
-            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (String.IsNullOrWhiteSpace(localAppData))
-                throw new InvalidOperationException("Windows 未提供当前用户的 LocalAppData 路径。");
+            string commandLine = Environment.CommandLine ?? String.Empty;
+            int index = 0;
+            while (index < commandLine.Length && Char.IsWhiteSpace(commandLine[index])) index++;
+            if (index < commandLine.Length && commandLine[index] == '"')
+            {
+                index++;
+                while (index < commandLine.Length && commandLine[index] != '"') index++;
+                if (index < commandLine.Length) index++;
+            }
+            else
+            {
+                while (index < commandLine.Length && !Char.IsWhiteSpace(commandLine[index])) index++;
+            }
+            string raw = commandLine.Substring(index).TrimStart();
+            return raw.Length > 0 || fallbackArgs.Length == 0 ? raw : BuildArguments(fallbackArgs);
+        }
 
-            string stagingRoot = Path.Combine(localAppData, "Zhiying", "InstallerStaging");
-            Directory.CreateDirectory(stagingRoot);
-            string stagingDirectory = Path.Combine(stagingRoot, "run-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(stagingDirectory);
+        private static void AddStagingRoot(List<string> roots, string path)
+        {
+            if (String.IsNullOrWhiteSpace(path)) return;
             try
             {
-                // 先做一次真实写入检查，确保失败能在解包之前给出可读提示。
-                string probe = Path.Combine(stagingDirectory, ".write-probe-" + Guid.NewGuid().ToString("N"));
-                using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
-                File.Delete(probe);
-                return stagingDirectory;
+                string fullPath = Path.GetFullPath(path);
+                for (int index = 0; index < roots.Count; index++)
+                {
+                    if (String.Equals(roots[index], fullPath, StringComparison.OrdinalIgnoreCase)) return;
+                }
+                roots.Add(fullPath);
             }
-            catch
+            catch { /* Ignore malformed or unavailable fallback paths. */ }
+        }
+
+        private static string CreatePrivateStagingDirectory()
+        {
+            List<string> stagingRoots = new List<string>();
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!String.IsNullOrWhiteSpace(localAppData))
+                AddStagingRoot(stagingRoots, Path.Combine(localAppData, "Zhiying", "InstallerStaging"));
+
+            // LocalAppData is preferred because the ordinary Windows temp folder can have a
+            // broken ACL. Some managed/restricted accounts have the opposite ACL layout, so
+            // probe TEMP/TMP and the profile temp folder before giving up.
+            AddStagingRoot(stagingRoots, Environment.GetEnvironmentVariable("TMP"));
+            AddStagingRoot(stagingRoots, Environment.GetEnvironmentVariable("TEMP"));
+            try { AddStagingRoot(stagingRoots, Path.GetTempPath()); } catch { }
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!String.IsNullOrWhiteSpace(userProfile))
+                AddStagingRoot(stagingRoots, Path.Combine(userProfile, "Temp"));
+
+            List<string> failures = new List<string>();
+            for (int rootIndex = 0; rootIndex < stagingRoots.Count; rootIndex++)
             {
-                try { Directory.Delete(stagingDirectory, true); } catch { }
-                throw;
+                string stagingRoot = stagingRoots[rootIndex];
+                string stagingDirectory = Path.Combine(stagingRoot, "run-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    Directory.CreateDirectory(stagingRoot);
+                    Directory.CreateDirectory(stagingDirectory);
+                    // Check real file creation before extraction or launching Inno Setup.
+                    string probe = Path.Combine(stagingDirectory, ".write-probe-" + Guid.NewGuid().ToString("N"));
+                    using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+                    File.Delete(probe);
+                    return stagingDirectory;
+                }
+                catch (Exception error)
+                {
+                    failures.Add(stagingRoot + ": " + error.Message);
+                    try { Directory.Delete(stagingDirectory, true); } catch { }
+                }
             }
+
+            throw new UnauthorizedAccessException(
+                "无法创建可写的安装器临时目录。已尝试 LocalAppData、TEMP、TMP 和用户配置目录：" +
+                Environment.NewLine + String.Join(Environment.NewLine, failures.ToArray()));
         }
 
         private static void ExtractPayload(string targetPath)
@@ -108,7 +164,7 @@ namespace Zhiying
 
                 ProcessStartInfo startInfo = new ProcessStartInfo();
                 startInfo.FileName = payloadPath;
-                startInfo.Arguments = BuildArguments(args);
+                startInfo.Arguments = RawArguments(args);
                 startInfo.WorkingDirectory = Environment.CurrentDirectory;
                 startInfo.UseShellExecute = false;
                 startInfo.EnvironmentVariables["TEMP"] = stagingDirectory;

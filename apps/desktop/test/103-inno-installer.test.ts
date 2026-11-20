@@ -44,8 +44,8 @@ const PRODUCT = path.join(DIST, 'desktop', 'Zhiying-1.8.0-lite');
 const LAUNCHER = path.join(PRODUCT, 'Zhiying.exe');
 
 // R4 冻结 sha 由 Lead 提供后更新；PENDING 期间只断言内部一致性。
-const PINNED_SETUP_SHA = '8797c5b43b4935cb97eeafed32d7549251d5a9eea682a2c9783af8ec556be3c5';
-const PINNED_SETUP_SIZE = 24_922_112;
+const PINNED_SETUP_SHA = 'a2a42935a660557297f1c07fad47516a4ce590a7e85bee6345eceb38be768538';
+const PINNED_SETUP_SIZE = 24_923_136;
 const ISCC_PATH = process.env.ISCC_PATH ?? 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Inno Setup 6\\ISCC.exe';
 
 // Lead 协调：每个 Inno 用例前清理遗留 setup 进程/固定 AppId 卸载项/指向测试目录的快捷方式，保证串行隔离。
@@ -670,3 +670,4 @@ test('[#103-18 R4-Inno] 净化 PATH（无系统 node/pnpm/python/git）静默安
 test('[#103-6 R4-Inno] 磁盘不足：Inno 标准检查 + 可读提示（本机不可构造真实小容量卷 → BLOCKED-ENV 替代）', async (t) => {
   t.skip('#103-6 BLOCKED-ENV：Inno 标准磁盘空间检查无可注入点，本机无小容量卷/无法安全填满磁盘；Inno 自带检查 + /LOG 可读错误由契约与 GUI 向导保障，见报告 §7');
 });
+

@@ -13,8 +13,8 @@ import { sha256File } from './_helpers/fsx';
 import { readPeInfo, readExeVersionInfo } from './_helpers/gui';
 
 // 临时目录兼容启动壳重建：2026-11-15
-const PINNED_SETUP_SHA = '8797c5b43b4935cb97eeafed32d7549251d5a9eea682a2c9783af8ec556be3c5';
-const PINNED_SETUP_SIZE = 24_922_112;
+const PINNED_SETUP_SHA = 'a2a42935a660557297f1c07fad47516a4ce590a7e85bee6345eceb38be768538';
+const PINNED_SETUP_SIZE = 24_923_136;
 const PINNED_INNO_VERSION = '6.7.3';
 const DIST = path.join(REPO_ROOT, 'dist');
 const SETUP = path.join(DIST, 'Zhiying-Setup.exe');
@@ -120,3 +120,5 @@ test('[#102-13/#107-7 R4-Inno] 冻结版本化运行目录：Zhiying.exe Console
   assert.ok(!JSON.stringify(components).includes(REPO_ROOT.replace(/\\/g, '\\\\')), 'components.json 泄漏本机绝对路径');
   void spawnSync;
 });
+
+

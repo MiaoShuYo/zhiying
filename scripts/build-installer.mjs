@@ -7,6 +7,7 @@
  *
  * 输出：dist/Zhiying-Setup.exe + Zhiying-Setup.exe.sha256 + release-info.json。
  * 最终 EXE 是 GUI 启动壳，内嵌 Inno 单文件安装器，并为 Inno 子进程设置独立可写 TEMP/TMP。
+ * 启动壳优先使用 LocalAppData staging；遇到 ACL 拒绝时改用已探测可写的 TEMP/TMP。
  *
  * ISCC 定位顺序：ISCC_PATH → %LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe
  * → %ProgramFiles(x86)%\Inno Setup 6\ISCC.exe → PATH 中 iscc。
@@ -255,7 +256,7 @@ async function compileSetupBootstrapper(outputPath, payloadPath, version) {
       'using System.Reflection;',
       `[assembly: AssemblyVersion("${version4}")]`,
       `[assembly: AssemblyFileVersion("${version4}")]`,
-      '[assembly: AssemblyTitle("知影 Zhiying Setup")]',
+      '[assembly: AssemblyTitle("知影 Zhiying 安装程序")]',
       '[assembly: AssemblyProduct("知影 Zhiying")]',
       '[assembly: AssemblyCompany("MiaoShuYo")]',
       '[assembly: AssemblyDescription("知影安装程序启动壳（修复临时目录权限兼容）")]',
@@ -357,7 +358,7 @@ export async function buildInstaller(options) {
       planned: [
         `ISCC 编译 Inno payload：${ISS_PATH}`,
         `csc 将 payload 嵌入 GUI 启动壳：${setupExe}`,
-        '启动壳只为安装器子进程设置独立可写的 TEMP/TMP，不修改系统或用户环境变量',
+        '启动壳优先使用 LocalAppData staging，权限拒绝时回退到可写 TEMP/TMP；只为安装器子进程设置环境变量',
         `payload 目录：${resolve(productDir)}（由 Inno [Files] 内嵌，排除 models/data/logs/config/install.json）`,
         `输出：${setupExe}`,
         '生成 Zhiying-Setup.exe.sha256 与 release-info.json（installer=inno-setup）',
@@ -408,7 +409,7 @@ export async function buildInstaller(options) {
       sha256: setupSha256,
       sizeBytes: setupSizeBytes,
       bootstrapper: 'csharp-gui',
-      tempDirectory: '%LOCALAPPDATA%\\Zhiying\\InstallerStaging\\<run-id>',
+      tempDirectory: '%LOCALAPPDATA%\\Zhiying\\InstallerStaging\\<run-id> (fallback: %TEMP%/%TMP% or %USERPROFILE%\\Temp)',
     },
     payload: {
       embedded: true,
