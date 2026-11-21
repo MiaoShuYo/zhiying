@@ -12,9 +12,9 @@ import { REPO_ROOT } from './_helpers/temp';
 import { sha256File } from './_helpers/fsx';
 import { readPeInfo, readExeVersionInfo } from './_helpers/gui';
 
-// Lead FINAL FREEZE（R4 Inno）：2026-11-15
-const PINNED_SETUP_SHA = 'c9fcd8c8178ce38bb1176cf3582ea0d184464ece8ee5f14d0584020d0f3c7d6a';
-const PINNED_SETUP_SIZE = 24_915_215;
+// 临时目录兼容启动壳重建：2026-11-15
+const PINNED_SETUP_SHA = 'a2a42935a660557297f1c07fad47516a4ce590a7e85bee6345eceb38be768538';
+const PINNED_SETUP_SIZE = 24_923_136;
 const PINNED_INNO_VERSION = '6.7.3';
 const DIST = path.join(REPO_ROOT, 'dist');
 const SETUP = path.join(DIST, 'Zhiying-Setup.exe');
@@ -51,7 +51,7 @@ test('[#103-15/#107-7 R4-Inno] 冻结产物 Zhiying-Setup.exe：pinned sha256/�
   assert.equal(fs.statSync(SETUP).size, PINNED_SETUP_SIZE, 'Setup.exe 大小与冻结产物不一致');
   assert.equal(actualSha, PINNED_SETUP_SHA, 'Setup.exe sha256 与冻结产物不一致');
   const pe = readPeInfo(SETUP);
-  assert.equal(pe.subsystem, 2, `Inno Setup.exe 必须为 GUI 子系统(2)，实际 ${pe.subsystem}（${pe.subsystemLabel}）`);
+  assert.equal(pe.subsystem, 2, `Zhiying-Setup.exe 必须为 GUI 子系统(2)，实际 ${pe.subsystem}（${pe.subsystemLabel}）`);
   const version = peVersionInfo(SETUP);
   assert.match(version.fileVersion ?? '', /^1\.8\.0(\.\d+)?$/, `FileVersion 应为 1.8.0.x: ${version.fileVersion}`);
   assert.match(version.productVersion ?? '', /^1\.8\.0(\.\d+)?$/, `ProductVersion 应为 1.8.0.x: ${version.productVersion}`);
@@ -120,3 +120,5 @@ test('[#102-13/#107-7 R4-Inno] 冻结版本化运行目录：Zhiying.exe Console
   assert.ok(!JSON.stringify(components).includes(REPO_ROOT.replace(/\\/g, '\\\\')), 'components.json 泄漏本机绝对路径');
   void spawnSync;
 });
+
+

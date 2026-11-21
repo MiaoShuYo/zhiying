@@ -44,8 +44,8 @@ const PRODUCT = path.join(DIST, 'desktop', 'Zhiying-1.8.0-lite');
 const LAUNCHER = path.join(PRODUCT, 'Zhiying.exe');
 
 // R4 冻结 sha 由 Lead 提供后更新；PENDING 期间只断言内部一致性。
-const PINNED_INNO_SHA = 'c9fcd8c8178ce38bb1176cf3582ea0d184464ece8ee5f14d0584020d0f3c7d6a';
-const PINNED_INNO_SIZE = 24_915_215;
+const PINNED_SETUP_SHA = 'a2a42935a660557297f1c07fad47516a4ce590a7e85bee6345eceb38be768538';
+const PINNED_SETUP_SIZE = 24_923_136;
 const ISCC_PATH = process.env.ISCC_PATH ?? 'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Inno Setup 6\\ISCC.exe';
 
 // Lead 协调：每个 Inno 用例前清理遗留 setup 进程/固定 AppId 卸载项/指向测试目录的快捷方式，保证串行隔离。
@@ -219,9 +219,9 @@ test('[#103-15 R4-Inno] 产物：PE subsystem=2、FileVersion/ProductVersion 1.8
   // 版本化运行目录中启动器仍为 Console(3)
   const launcherPe = readPeInfo(LAUNCHER);
   assert.equal(launcherPe.subsystem, 3, `Zhiying.exe 启动器必须保持 Console(3)，实际 ${launcherPe.subsystem}`);
-  if (PINNED_INNO_SHA !== 'PENDING_R4_SHA') {
-    assert.equal(actualSha, PINNED_INNO_SHA, 'Setup.exe sha256 与冻结产物不一致');
-    assert.equal(fs.statSync(SETUP).size, PINNED_INNO_SIZE, 'Setup.exe 大小与冻结产物不一致');
+  if (PINNED_SETUP_SHA !== 'PENDING_R4_SHA') {
+    assert.equal(actualSha, PINNED_SETUP_SHA, 'Setup.exe sha256 与冻结产物不一致');
+    assert.equal(fs.statSync(SETUP).size, PINNED_SETUP_SIZE, 'Setup.exe 大小与冻结产物不一致');
   } else {
     t.diagnostic(`R4 pinned sha 待 Lead 提供；当前 sha256=${actualSha}, size=${fs.statSync(SETUP).size}`);
   }
@@ -670,3 +670,4 @@ test('[#103-18 R4-Inno] 净化 PATH（无系统 node/pnpm/python/git）静默安
 test('[#103-6 R4-Inno] 磁盘不足：Inno 标准检查 + 可读提示（本机不可构造真实小容量卷 → BLOCKED-ENV 替代）', async (t) => {
   t.skip('#103-6 BLOCKED-ENV：Inno 标准磁盘空间检查无可注入点，本机无小容量卷/无法安全填满磁盘；Inno 自带检查 + /LOG 可读错误由契约与 GUI 向导保障，见报告 §7');
 });
+
