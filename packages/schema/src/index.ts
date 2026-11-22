@@ -1,8 +1,12 @@
 import { z } from 'zod';
-import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } from './delivery';
+import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionDurationSchema, TransitionSchema } from './delivery';
 import { BrandSnapshotSchema } from './brand-kit';
 import { CodeVisualSchema } from './code-visual';
 import { StyleIdSchema } from './style-id';
+import { VisualBeatSchema, VisualPlanSchema, visualTemplateSupportsScene } from './visual-plan';
+import { VisualDensitySettingsSchema } from './visual-density';
+import { StylePackIdSchema } from './style-pack';
+import { SoundEffectsSettingsSchema, SfxCueSchema } from './sound-effects';
 
 export { StyleIdSchema } from './style-id';
 
@@ -52,9 +56,54 @@ const BaseSceneSchema = z.object({
   visual: z.record(z.unknown()).default({}),
   animation: z.string().optional(),
   styleOverride: z.record(z.unknown()).optional(),
+  /** Bounded renderer scale applied only by a reversible visual-overflow repair. */
+  visualFitScale: z.number().min(0.78).max(1).optional(),
+  /** Automatic QA may persist a static-motion fallback without changing source content. */
+  visualStaticFallback: z.boolean().optional(),
+  visualStaticFallbackReason: z.string().trim().max(240).optional(),
+  visualPlan: VisualPlanSchema.optional(),
+  visualBeats: z.array(VisualBeatSchema).max(80).optional(),
+  visualBeatsProvenance: z.enum(['rule', 'user']).optional(),
+  sfxCues: z.array(SfxCueSchema).max(80).optional(),
 });
 
 export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
+  if (scene.visualPlan && !visualTemplateSupportsScene(scene.visualPlan.templateId, scene.type)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visualPlan', 'templateId'], message: `模板 ${scene.visualPlan.templateId} 不支持 ${scene.type} 场景` });
+  }
+  if (scene.visualPlan?.motionPresets.length) {
+    const targetIds = new Set<string>(['scene-title', 'hero-copy', 'hero-stat', 'hero-stat-number', 'key-focus']);
+    const itemIds = (value: unknown, prefix: string) => {
+      if (!Array.isArray(value)) return;
+      value.forEach((item, index) => {
+        const record = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {};
+        targetIds.add(typeof record.id === 'string' && record.id.trim() ? record.id : `${prefix}-${index + 1}`);
+        if (prefix === 'chart') { targetIds.add(`chart-value-${index + 1}`); targetIds.add(`chart-bar-${index + 1}`); }
+      });
+    };
+    itemIds(scene.visual.items, scene.type === 'timeline' ? 'timeline' : scene.type === 'bullets' ? 'bullet' : 'item');
+    itemIds(scene.visual.data, 'chart');
+    itemIds(scene.visual.rows, 'table-row');
+    if (Array.isArray(scene.visual.columns)) scene.visual.columns.forEach((_, index) => targetIds.add(`compare-${index + 1}`));
+    if (Array.isArray(scene.visual.nodes)) {
+      scene.visual.nodes.forEach((node, index) => {
+        const record = node && typeof node === 'object' && !Array.isArray(node) ? node as Record<string, unknown> : {};
+        targetIds.add(typeof record.id === 'string' && record.id.trim() ? record.id : `node-${index + 1}`);
+        if (index > 0) targetIds.add(`flow-${index}`);
+      });
+    }
+    for (const [key, value] of Object.entries(scene.visualPlan.elementMap)) { targetIds.add(key); targetIds.add(value); }
+    for (const beat of [...(scene.visualBeats ?? []), ...scene.visualPlan.beats]) for (const targetId of beat.targetIds) targetIds.add(targetId);
+    const beats = new Set([...(scene.visualBeats ?? []), ...scene.visualPlan.beats].map(beat => beat.id));
+    scene.visualPlan.motionPresets.forEach((action, index) => {
+      if (!targetIds.has(action.targetId)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visualPlan', 'motionPresets', index, 'targetId'], message: `目标 ${action.targetId} 不存在于此场景` });
+      if (!beats.has(action.beatRef)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visualPlan', 'motionPresets', index, 'beatRef'], message: `beat ${action.beatRef} 不存在于此场景` });
+    });
+  }
+  const cueBeatIds = new Set([...(scene.visualBeats ?? []), ...(scene.visualPlan?.beats ?? [])].map(beat => beat.id));
+  scene.sfxCues?.forEach((cue, index) => {
+    if (cue.beatRef && !cueBeatIds.has(cue.beatRef)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['sfxCues', index, 'beatRef'], message: `音效引用的 beat ${cue.beatRef} 不存在` });
+  });
   if (scene.type === 'html' && (typeof scene.visual.html !== 'string' || !scene.visual.html.trim() || scene.visual.html.length > 20000)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'html'], message: 'html 场景需要不超过 20000 个字符的 HTML 片段' });
   }
@@ -121,15 +170,22 @@ export const StoryboardSchema = z.object({
   pronunciationRules: z.array(PronunciationRuleSchema.refine(rule => rule.occurrence === undefined, '项目规则不能指定出现位置')).max(200).optional(),
   aspectRatio: AspectRatioSchema.default('16:9'),
   styleId: StyleIdSchema,
+  stylePack: StylePackIdSchema.optional(),
+  soundEffects: SoundEffectsSettingsSchema.optional(),
   durationTarget: z.number().positive().optional(),
   subtitles: SubtitleSchema.optional(),
   bgmSrc: z.string().optional(),
+  /** Keeps the selected local BGM while allowing an independent one-click mute. */
+  bgmEnabled: z.boolean().default(true),
   bgmVolume: z.number().min(0).max(1).default(0.12),
   bgmFadeIn: z.number().min(0).max(10).default(1),
   bgmFadeOut: z.number().min(0).max(10).default(1),
   intro: FrameCardSchema.optional(),
   outro: FrameCardSchema.optional(),
   transition: TransitionSchema,
+  transitionDuration: TransitionDurationSchema.optional(),
+  visualDensity: VisualDensitySettingsSchema.optional(),
+  reducedMotion: z.boolean().optional(),
   scenes: z.array(SceneSchema).min(1),
 }).superRefine((storyboard, ctx) => {
   if (storyboard.bgmSrc && !/^(?:projects\/[A-Za-z0-9_-]+\/assets\/[^/]+|audio\/[^/]+)$/.test(storyboard.bgmSrc)) {
@@ -176,3 +232,11 @@ export * from "./render-plan";
 export * from "./render-validation";
 export * from "./scene-html";
 export * from "./timeline";
+export * from "./visual-plan";
+export * from "./motion";
+export * from "./visual-density";
+export * from "./visual-timeline";
+export * from "./table-staging";
+export * from "./style-pack";
+export * from "./visual-qa";
+export * from "./sound-effects";

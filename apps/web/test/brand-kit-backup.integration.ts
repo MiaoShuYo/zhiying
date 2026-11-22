@@ -81,9 +81,20 @@ async function main() {
     const storyboard = {
       title: '品牌备份项目',
       styleId: 'minimal-tech',
+      stylePack: 'paper-collage-lite',
       aspectRatio: '16:9',
+      soundEffects: { enabled: true, volume: 0.3, voiceDuck: 0.25, bgmDuck: 0.4, fadeIn: 0.05, fadeOut: 0.2 },
       brandKitId: kitId,
-      scenes: [{ id: randomUUID(), type: 'title', title: '开场', narration: '用于测试品牌快照恢复。', duration: 4 }],
+      scenes: [{
+        id: randomUUID(), type: 'title', title: '开场', narration: '用于测试品牌快照恢复。', duration: 4,
+        visualBeats: [{ id: 'opening-beat', narrationText: '用于测试品牌快照恢复。', targetIds: ['hero-copy'] }],
+        visualBeatsProvenance: 'user',
+        sfxCues: [{
+          id: 'opening-soft-transition', cueId: 'soft-transition', targetId: 'hero-copy', beatRef: 'opening-beat',
+          offsetSeconds: 0.2, durationSeconds: 0.7, gain: 0.4,
+          license: { kind: 'CC0', name: 'Backup fixture license', attribution: 'Fixture author attribution', sourceUrl: 'https://example.org/audio-license' },
+        }],
+      }],
       brand,
     };
     const project = await db.project.create({ data: {
@@ -94,6 +105,12 @@ async function main() {
     } });
 
     const savedStoryboard = await saveStoryboard(project.id, storyboard);
+    assert.equal(savedStoryboard.stylePack, 'paper-collage-lite', 'save preserves the optional style pack');
+    assert.equal(savedStoryboard.soundEffects?.enabled, true, 'save preserves the SFX mixer settings');
+    assert.equal(savedStoryboard.scenes[0]?.sfxCues?.[0]?.targetId, 'hero-copy');
+    assert.equal(savedStoryboard.scenes[0]?.sfxCues?.[0]?.beatRef, 'opening-beat');
+    assert.equal(savedStoryboard.scenes[0]?.sfxCues?.[0]?.license.sourceUrl, 'https://example.org/audio-license');
+    assert.equal(savedStoryboard.scenes[0]?.sfxCues?.[0]?.license.attribution, 'Fixture author attribution');
     const projectLogoSrc = savedStoryboard.brand!.logo!.src;
     const logoHash = createHash('sha256').update(logoBytes).digest('hex');
     assert.equal(projectLogoSrc, `projects/${project.id}/assets/brand-logos/${logoHash}.png`);
@@ -127,6 +144,12 @@ async function main() {
     assert.equal(restoredSnapshotBoard.brandKitId, kitId, 'restore preserves provenance even when its source kit no longer exists');
     assert.equal(restoredSnapshotBoard.brand.logo.src, restoredLogoSrc);
     assert.equal(restoredSnapshotBoard.brand.colors.accent, '#50e3c2');
+    assert.equal(restoredSnapshotBoard.stylePack, 'paper-collage-lite', 'snapshot restore preserves the optional style pack');
+    assert.equal(restoredSnapshotBoard.soundEffects.enabled, true, 'snapshot restore preserves SFX settings');
+    assert.equal(restoredSnapshotBoard.scenes[0].sfxCues[0].targetId, 'hero-copy');
+    assert.equal(restoredSnapshotBoard.scenes[0].sfxCues[0].beatRef, 'opening-beat');
+    assert.equal(restoredSnapshotBoard.scenes[0].sfxCues[0].license.sourceUrl, 'https://example.org/audio-license');
+    assert.equal(restoredSnapshotBoard.scenes[0].sfxCues[0].license.attribution, 'Fixture author attribution');
     assert.deepEqual(await readFile(join(sandbox, 'data', restoredLogoSrc)), logoBytes);
     assert.deepEqual(await readFile(join(sandbox, 'apps/web/public', restoredLogoSrc)), logoBytes);
     await assert.rejects(() => readFile(globalData), 'restore does not recreate a deleted global Brand Kit Logo');
@@ -143,6 +166,12 @@ async function main() {
     const restoredArchive = await db.project.findUniqueOrThrow({ where: { id: restoredArchiveId } });
     const restoredArchiveBoard = JSON.parse(restoredArchive.storyboardJson!) as typeof storyboard;
     assert.equal(restoredArchiveBoard.brandKitId, kitId);
+    assert.equal(restoredArchiveBoard.stylePack, 'paper-collage-lite', '.m2v import preserves the optional style pack');
+    assert.equal(restoredArchiveBoard.soundEffects.enabled, true, '.m2v import preserves SFX settings');
+    assert.equal(restoredArchiveBoard.scenes[0].sfxCues[0].targetId, 'hero-copy');
+    assert.equal(restoredArchiveBoard.scenes[0].sfxCues[0].beatRef, 'opening-beat');
+    assert.equal(restoredArchiveBoard.scenes[0].sfxCues[0].license.sourceUrl, 'https://example.org/audio-license');
+    assert.equal(restoredArchiveBoard.scenes[0].sfxCues[0].license.attribution, 'Fixture author attribution');
     assert.equal(restoredArchiveBoard.brand.logo.src, `projects/${restoredArchiveId}/assets/brand-logos/${logoHash}.png`);
     assert.deepEqual(await readFile(join(sandbox, 'apps/web/public', 'projects', restoredArchiveId, 'assets/brand-logos', `${logoHash}.png`)), logoBytes);
     await assert.rejects(() => readFile(globalData), 'archive restore does not recreate a deleted global Logo');
@@ -150,12 +179,25 @@ async function main() {
     const legacyManifest = structuredClone(manifest) as ArchiveManifest;
     const legacyStoryboard = JSON.parse(legacyManifest.project.storyboardJson!) as Record<string, unknown>;
     delete legacyStoryboard.brand;
+    delete legacyStoryboard.stylePack;
+    delete legacyStoryboard.soundEffects;
+    const legacyScenes = legacyStoryboard.scenes as Record<string, unknown>[];
+    for (const scene of legacyScenes) {
+      delete scene.visualBeats;
+      delete scene.visualBeatsProvenance;
+      delete scene.sfxCues;
+    }
     legacyManifest.project.storyboardJson = JSON.stringify(legacyStoryboard);
     legacyManifest.files = legacyManifest.files.filter(file => file.path !== projectLogoArchivePath);
     const legacyBodies = new Map([...bodies].filter(([path]) => path !== projectLogoArchivePath));
     const legacyArchive = pack(legacyManifest, legacyBodies);
     const restoredLegacyId = await importBackup(new Request('http://localhost/import', { method: 'POST', body: legacyArchive }));
-    assert.equal((await db.project.findUniqueOrThrow({ where: { id: restoredLegacyId } })).name, '品牌备份项目（恢复 3）', 'old V1 package without a brand asset still restores');
+    const restoredLegacyProject = await db.project.findUniqueOrThrow({ where: { id: restoredLegacyId } });
+    assert.equal(restoredLegacyProject.name, '品牌备份项目（恢复 3）', 'old V1 package without a brand asset still restores');
+    const restoredLegacyBoard = JSON.parse(restoredLegacyProject.storyboardJson!);
+    assert.equal(restoredLegacyBoard.stylePack, undefined, 'old project without stylePack restores unchanged');
+    assert.equal(restoredLegacyBoard.soundEffects, undefined, 'old project without SFX settings restores unchanged');
+    assert.equal(restoredLegacyBoard.scenes[0].sfxCues, undefined, 'old project without SFX cues restores unchanged');
 
     const missingLogoProject = await db.project.create({ data: {
       name: '引用缺失全局 Logo 的旧项目',

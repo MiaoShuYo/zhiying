@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TransitionDurationSchema, TransitionSchema } from './delivery';
 import { AspectRatioSchema, FrameCardSchema, SubtitleSchema } from './delivery';
 import type { Storyboard } from './index';
 
@@ -11,14 +12,15 @@ export const ExportPresetSchema = z.object({
   subtitles: SubtitleSchema,
   intro: FrameCardSchema.optional(),
   outro: FrameCardSchema.optional(),
-  transition: z.enum(['none', 'fade']).default('none'),
+  transition: TransitionSchema,
+  transitionDuration: TransitionDurationSchema.optional(),
   isDefault: z.boolean().default(false),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type ExportPreset = z.infer<typeof ExportPresetSchema>;
 
-export type ExportPresetPatch = Pick<Storyboard, 'aspectRatio' | 'subtitles' | 'intro' | 'outro' | 'transition'>;
+export type ExportPresetPatch = Pick<Storyboard, 'aspectRatio' | 'subtitles' | 'intro' | 'outro' | 'transition' | 'transitionDuration'>;
 
 /** The single apply entry point: scenes, narration, assets and style stay untouched. */
 export function presetBoardPatch(preset: ExportPreset): ExportPresetPatch {
@@ -28,6 +30,7 @@ export function presetBoardPatch(preset: ExportPreset): ExportPresetPatch {
     intro: preset.intro,
     outro: preset.outro,
     transition: preset.transition,
+    transitionDuration: preset.transitionDuration,
   };
 }
 
@@ -81,8 +84,8 @@ export function presetChanges(board: ExportPresetPatch, preset: ExportPreset, cu
     {
       key: 'transition',
       label: '转场',
-      current: board.transition === 'fade' ? '淡入淡出' : '无',
-      next: preset.transition === 'fade' ? '淡入淡出' : '无',
+      current: board.transition,
+      next: preset.transition,
       changed: board.transition !== preset.transition,
     },
     {

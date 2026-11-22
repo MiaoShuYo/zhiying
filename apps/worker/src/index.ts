@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { bundle } from '@remotion/bundler';
-import { renderMedia, selectComposition, makeCancelSignal, openBrowser } from '@remotion/renderer';
+import { renderMedia, renderStill, selectComposition, makeCancelSignal, openBrowser } from '@remotion/renderer';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access, mkdir, mkdtemp, rm, stat, writeFile, copyFile, rename } from 'node:fs/promises';
@@ -11,7 +11,12 @@ import {
   RENDER_STAGES,
   RENDER_STAGE_LABELS,
   StoryboardSchema,
+  VisualQaRenderEvidenceSchema,
+  captionDuration,
   evaluateRender,
+  resolveCaptionCues,
+  resolveVisualBeatTimeline,
+  sceneTransitionWindows,
   segmentFrameRange,
   segmentLabel,
   segmentPlan,
@@ -21,11 +26,15 @@ import {
   type RenderPlan,
   type RenderStage,
   type Storyboard,
+  type VisualQaRenderEvidence,
+  visualQualityAudit,
+  timelineFrames,
 } from '@m2v/schema';
 import { probeVideoFile } from '@m2v/video/probe';
 import dotenv from 'dotenv';
 import { JOB_ID_PATTERN, jobLogFileName, openJobLog } from './job-log';
 import { ensureSegmentDir, pruneSegmentCache, readSegmentIndex, segmentBytes, segmentDir, segmentVideoPath, writeSegmentMeta } from './segment-cache';
+import { captureVisualQaPreflight, finalizeVisualQaAfterRender } from './visual-qa';
 
 const repo = resolve(process.cwd(), '../..');
 dotenv.config({ path: resolve(repo, 'apps/web/.env') });
@@ -140,12 +149,29 @@ async function ensureBundle(storyboard: { scenes: { audioSrc?: string; visual?: 
 async function audioSignatures(storyboard: Storyboard): Promise<Record<string, AudioSignature>> {
   const result: Record<string, AudioSignature> = {};
   for (const scene of storyboard.scenes) {
-    const src = scene.audioSrc;
-    if (!src || result[src]) continue;
-    const info = await stat(resolve(publicRoot, src)).catch(() => null);
-    if (info) result[src] = { bytes: info.size, mtimeMs: info.mtimeMs };
+    const sources = [scene.audioSrc, ...(scene.sfxCues ?? []).map(cue => cue.assetSrc ?? `audio/sfx/${cue.cueId}.wav`)];
+    for (const src of sources) {
+      if (!src || result[src]) continue;
+      const info = await stat(resolve(publicRoot, src)).catch(() => null);
+      if (info) result[src] = { bytes: info.size, mtimeMs: info.mtimeMs };
+    }
+  }
+  if (storyboard.bgmEnabled !== false && storyboard.bgmSrc && !result[storyboard.bgmSrc]) {
+    const info = await stat(resolve(publicRoot, storyboard.bgmSrc)).catch(() => null);
+    if (info) result[storyboard.bgmSrc] = { bytes: info.size, mtimeMs: info.mtimeMs };
   }
   return result;
+}
+
+/** Missing local SFX is non-fatal: record a warning and let the Remotion track skip that cue. */
+function missingSfxWarnings(storyboard: Storyboard): string[] {
+  if (!storyboard.soundEffects?.enabled) return [];
+  const missing = new Set<string>();
+  for (const scene of storyboard.scenes) for (const cue of scene.sfxCues ?? []) {
+    const src = cue.assetSrc ?? `audio/sfx/${cue.cueId}.wav`;
+    if (!existsSync(resolve(publicRoot, src))) missing.add(src);
+  }
+  return [...missing].map(src => `本地音效文件缺失：${src}；对应 cue 将静音跳过。`);
 }
 
 /** Segments from the last two finished renders stay cached so switching back is instant. */
@@ -199,15 +225,21 @@ async function renderJob(jobId: string, projectId: string) {
   const final = join(dir, `${jobId}.mp4`);
   const partial = join(dir, `${jobId}.partial.mp4`);
   const cacheDir = segmentDir(dir, preset);
+  const visualQaDir = join(dir, 'visual-qa', jobId);
   const watcher = setInterval(() => void check().catch(console.error), 500);
   let width = 0;
   let height = 0;
+  let visualQaPreflight: Awaited<ReturnType<typeof captureVisualQaPreflight>> | undefined;
+  let visualQaFailure: string | undefined;
+  let audioWarnings: string[] = [];
   try {
     await log.info('开始渲染', { projectId, preset, attempt: job.attempt });
     await enterStage('bundling');
     await ensureActive();
     const serveUrl = await ensureBundle(storyboard, projectId, project.assetsJson);
     await log.info('渲染资源已就绪');
+    audioWarnings = missingSfxWarnings(storyboard);
+    for (const warning of audioWarnings) await log.warn(warning);
     await ensureActive();
 
     await ensureSegmentDir(cacheDir);
@@ -226,6 +258,24 @@ async function renderJob(jobId: string, projectId: string) {
       const composition = await selectComposition({ serveUrl, id: 'ExplainerVideo', inputProps, browserExecutable, puppeteerInstance: browser });
       width = composition.width;
       height = composition.height;
+      try {
+        visualQaPreflight = await captureVisualQaPreflight({
+          board: storyboard,
+          fps: plan.fps,
+          composition,
+          serveUrl,
+          browser,
+          browserExecutable,
+          artifactDir: visualQaDir,
+          audioWarnings,
+          log: (message, details) => log.info(message, details),
+        });
+      } catch (error) {
+        visualQaFailure = describeError(error);
+        await log.warn('视觉 QA 预检未能启动；渲染继续并在报告中记录阻塞', { error: visualQaFailure });
+        await mkdir(visualQaDir, { recursive: true }).catch(() => {});
+        await writeFile(join(visualQaDir, 'preflight-report.json'), JSON.stringify({ version: 1, phase: 'preflight', completed: false, error: visualQaFailure, audioWarnings }, null, 2), 'utf8').catch(() => {});
+      }
       if (Math.abs(composition.durationInFrames - plan.totalFrames) > 1) {
         await log.warn('时间轴与渲染计划不一致', { compositionFrames: composition.durationInFrames, planFrames: plan.totalFrames });
       }
@@ -294,13 +344,55 @@ async function renderJob(jobId: string, projectId: string) {
     await rename(partial, final);
     await log.info('成片已编码', { bytes: await segmentBytes(final) });
     await enterStage('validating');
+    if (visualQaPreflight) {
+      try {
+        const qa = await finalizeVisualQaAfterRender({
+          board: storyboard,
+          fps: plan.fps,
+          finalVideo: final,
+          artifactDir: visualQaDir,
+          plan: visualQaPreflight.plan,
+          captures: visualQaPreflight.captures,
+          preflightReport: visualQaPreflight.report,
+          warnings: visualQaPreflight.warnings,
+          audioWarnings: visualQaPreflight.audioWarnings,
+        });
+        await log.info('成片视觉 QA 完成', {
+          findings: qa.report.findings.length,
+          evidenceFrames: qa.report.evidenceFrames,
+          report: join(visualQaDir, 'report.json'),
+          contactSheet: join(visualQaDir, 'contact-sheet.html'),
+          motionStrip: join(visualQaDir, 'motion-strip.html'),
+        });
+      } catch (error) {
+        await log.warn('成片视觉 QA 未能完整生成', { error: describeError(error), artifactDir: visualQaDir });
+        await writeFile(join(visualQaDir, 'report.json'), JSON.stringify({
+          version: 1,
+          phase: 'post-render',
+          completed: false,
+          error: describeError(error),
+          preflight: visualQaPreflight.report,
+          captureWarnings: visualQaPreflight.warnings,
+          audioWarnings,
+        }, null, 2), 'utf8').catch(() => {});
+      }
+    } else if (visualQaFailure) {
+      await writeFile(join(visualQaDir, 'report.json'), JSON.stringify({
+        version: 1,
+        phase: 'post-render',
+        completed: false,
+        error: visualQaFailure,
+        captureWarnings: [visualQaFailure],
+        audioWarnings,
+      }, null, 2), 'utf8').catch(() => {});
+    }
     // The file is already complete; a failed probe must not turn this job red, so the
     // verdict is written when available and skipped otherwise.
     const validation = await validateRender(final, {
       width: Math.round(width * (preset === 'draft' ? .5 : 1)),
       height: Math.round(height * (preset === 'draft' ? .5 : 1)),
       duration: plan.totalFrames / plan.fps,
-      requireAudio: storyboard.scenes.some(scene => scene.narration.trim().length > 0 || Boolean(scene.audioSrc)) || Boolean(storyboard.bgmSrc),
+      requireAudio: storyboard.scenes.some(scene => scene.narration.trim().length > 0 || Boolean(scene.audioSrc)) || Boolean(storyboard.bgmEnabled !== false && storyboard.bgmSrc),
     });
     await prisma.job.updateMany({
       where: { id: jobId, status: 'running' },

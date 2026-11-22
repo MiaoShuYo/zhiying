@@ -1,4 +1,7 @@
 import type { BrandPalette, BrandSnapshot, StyleId } from '@m2v/schema';
+import type { StylePackId } from '@m2v/schema';
+import { visualStylePacks } from './visual-packs';
+export { visualStylePacks, stylePackOptions, type VisualStylePack } from './visual-packs';
 
 export const styles = {
   'minimal-tech': { id: 'minimal-tech', name: 'Minimal Tech', visual: { mode: 'dark', background: 'grid', density: 'minimal' }, typography: { headingFont: 'Arial', bodyFont: 'Arial', titleScale: 1.1, bodyScale: 1, maxWordsPerScreen: 36 }, layout: { padding: 100, alignment: 'left', cardStyle: 'soft', borderRadius: 20 }, motion: { pace: 'medium', entrance: 'fade', transition: 'fade' }, narration: { tone: 'professional', speed: 1 } },
@@ -26,6 +29,7 @@ export type FontFamilies = {
 };
 
 export type ResolvedTheme = {
+  stylePackId?: StylePackId;
   visual: StyleDefinition['visual'];
   typography: {
     headingFont: string;
@@ -67,18 +71,23 @@ function fontFamilyWithFallback(fontName: string, serif: boolean): string {
 }
 
 /** Combines one built-in style's design language with optional brand identity. */
-export function resolveBrandTheme(styleId?: StyleId, brandSnapshot?: BrandSnapshot): ResolvedTheme {
+export function resolveBrandTheme(styleId?: StyleId, brandSnapshot?: BrandSnapshot, stylePackId?: StylePackId): ResolvedTheme {
   const selectedStyleId = styleId ?? brandSnapshot?.baseStyleId ?? 'minimal-tech';
   const style = styles[selectedStyleId];
-  const colors = brandSnapshot?.colors ?? palettes[selectedStyleId];
-  const headingFont = brandSnapshot?.typography.headingFont ?? style.typography.headingFont;
-  const bodyFont = brandSnapshot?.typography.bodyFont ?? style.typography.bodyFont;
+  const pack = stylePackId ? visualStylePacks[stylePackId] : undefined;
+  const colors = brandSnapshot?.colors ?? pack?.colors ?? palettes[selectedStyleId];
+  const headingFont = brandSnapshot?.typography.headingFont ?? pack?.typography.headingFont ?? style.typography.headingFont;
+  const bodyFont = brandSnapshot?.typography.bodyFont ?? pack?.typography.bodyFont ?? style.typography.bodyFont;
+  // Style packs can override font names, but their fallback chain must preserve
+  // the selected base style's typography (and therefore its Brand Kit fallback).
   const serif = usesSerifTypeface(style);
 
   return {
-    visual: { ...style.visual },
+    ...(stylePackId ? { stylePackId } : {}),
+    visual: { ...style.visual, ...pack?.visual },
     typography: {
       ...style.typography,
+      ...pack?.typography,
       ...(brandSnapshot ? {
         headingFont,
         bodyFont,
@@ -88,8 +97,8 @@ export function resolveBrandTheme(styleId?: StyleId, brandSnapshot?: BrandSnapsh
       heading: fontFamilyWithFallback(headingFont, serif),
       body: fontFamilyWithFallback(bodyFont, serif),
     },
-    layout: { ...style.layout },
-    motion: { ...style.motion },
+    layout: { ...style.layout, ...pack?.layout },
+    motion: { ...style.motion, ...pack?.motion },
     narration: { ...style.narration },
     colors: { ...colors },
   };
@@ -102,3 +111,4 @@ export function resolveStyle(id: StyleId, override?: Record<string, unknown>) {
 
 export { contrastRatio, resolveCodeTokenColors } from './code-token-colors';
 export { resolveCodeDiffColors, type CodeDiffColorSet } from './code-diff-colors';
+export { visualDesignTokens, type VisualDesignTokens } from './visual-tokens';

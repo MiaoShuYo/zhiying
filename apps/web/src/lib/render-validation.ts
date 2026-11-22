@@ -34,7 +34,7 @@ export function expectedRender(inputJson: string | null): ExpectedRender {
     width: Math.round((portrait ? 1080 : 1920) * scale),
     height: Math.round((portrait ? 1920 : 1080) * scale),
     duration: timelineFor(board).totalSeconds,
-    requireAudio: board.scenes.some(scene => scene.narration.trim().length > 0 || Boolean(scene.audioSrc)) || Boolean(board.bgmSrc),
+    requireAudio: board.scenes.some(scene => scene.narration.trim().length > 0 || Boolean(scene.audioSrc)) || Boolean(board.bgmEnabled !== false && board.bgmSrc),
   };
 }
 

@@ -20,5 +20,10 @@ export const FrameCardSchema = z.object({
 });
 export type FrameCard = z.infer<typeof FrameCardSchema>;
 
-export const TransitionSchema = z.enum(['none', 'fade']).default('none');
+export const TransitionSchema = z.enum([
+  'none', 'fade', 'cut', 'crossfade', 'wipe', 'slide', 'match-move', 'shared-element-lite',
+]).default('none');
 export type Transition = z.infer<typeof TransitionSchema>;
+
+/** Duration of a visual bridge at a scene boundary, in seconds. */
+export const TransitionDurationSchema = z.number().min(0.1).max(2.5).default(0.5);

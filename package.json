@@ -7,6 +7,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm --filter @m2v/schema test",
+    "test:visual-quality": "tsx --test packages/schema/test/visual-plan.test.ts packages/schema/test/visual-selection.test.ts packages/schema/test/visual-density.test.ts packages/schema/test/visual-timeline.test.ts packages/schema/test/visual-transition.test.ts packages/schema/test/visual-qa.test.ts packages/schema/test/table-staging.test.ts packages/styles/test/visual-packs.test.ts packages/video/test/visual-templates.test.tsx packages/video/test/motion.test.ts packages/video/test/sfx.test.ts",
+    "test:visual-quality:render": "tsx apps/worker/test/render-v19-visual-quality.ts && tsx apps/worker/test/render-v19-density-motion.ts && tsx apps/worker/test/render-v19-style-sfx.ts",
     "db:generate": "pnpm --filter @m2v/web db:generate",
     "db:push": "pnpm --filter @m2v/web db:push",
     "db:migrate:v11": "node scripts/migrate-v11.cjs",

@@ -1,13 +1,14 @@
 'use client';
 import { useEffect, useState, type ReactNode } from 'react';
-import { SubtitleSchema, templates, cloneScene, storyboardWarnings, renderValidationLabels, batchImpact, applyBatch, type BatchChanges, type BatchImpact, type RenderValidation, type Storyboard, type Scene, type StyleId, type SubtitleSettings } from '@m2v/schema';
-import { styles } from '@m2v/styles';
+import { SubtitleSchema, VisualPlanSchema, SfxCueSchema, SoundEffectsSettingsSchema, applyDensitySettings, autoFixVisualQuality, visualQualityAudit, defaultVisualDensitySettings, estimateVisualDensity, decideVisualTemplate, visualTemplateSupportsScene, templates, cloneScene, storyboardWarnings, renderValidationLabels, batchImpact, applyBatch, type BatchChanges, type BatchImpact, type RenderValidation, type Storyboard, type Scene, type StyleId, type SubtitleSettings, type VisualDensitySettings, type VisualTemplateId, type SfxCueId } from '@m2v/schema';
+import { styles, stylePackOptions } from '@m2v/styles';
 import { AssetManager } from './asset-manager';
 import { CaptionTimeline } from './caption-editor';
 import { PageReview } from './page-review';
 import { StructureReview } from './source-structure';
 import { normalizePageInfo, type ExtractionMeta, type PageInfo } from '@/lib/extraction';
 import { SnapshotVerifier, StoragePanel } from './maintenance-panel';
+import type { VisualQaFinding, VisualQaRenderEvidence } from '@m2v/schema';
 
 type Asset = { path: string; name: string; displayName?: string; kind?: string; attribution?: string; license?: string; licenseUrl?: string; sourceUrl?: string; licenseClass?: string; requiresAttribution?: boolean; warnings?: string[] };
 type Snapshot = { id: string; createdAt: string; locked: boolean; bytes: number };
@@ -72,24 +73,104 @@ function startDownload(url: string, name?: string) {
   document.body.appendChild(link); link.click(); link.remove();
 }
 async function json(response: Response) { const result = await response.json(); if (!response.ok) throw new Error(result.error ?? '操作失败'); return result; }
+type PersistedVisualQa = { jobId: string; report: { phase?: string; completed?: boolean; findings?: VisualQaFinding[]; staticFallbacks?: { sceneId: string; reason: string }[]; audioWarnings?: string[]; evidence?: VisualQaRenderEvidence; artifacts?: { contactSheet?: string; motionStrip?: string } } };
+function RenderedVisualQaPanel({ id, board, disabled, onSelect, onChange, save }: { id: string; board: Storyboard; disabled: boolean; onSelect: (index: number) => void; onChange: (board: Storyboard) => void; save: (board?: Storyboard) => Promise<boolean> }) {
+  const [result, setResult] = useState<PersistedVisualQa | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [preview, setPreview] = useState<ReturnType<typeof autoFixVisualQuality> | null>(null);
+  const [actionMessage, setActionMessage] = useState('');
+  useEffect(() => {
+    let active = true;
+    void fetch('/api/projects/' + encodeURIComponent(id) + '/visual-qa')
+      .then(async response => response.ok ? await response.json() as PersistedVisualQa : null)
+      .then(value => { if (active) { setResult(value); setLoaded(true); } })
+      .catch(() => { if (active) setLoaded(true); });
+    return () => { active = false; };
+  }, [id]);
+  if (!loaded) return <div className="settings-card visual-qa-rendered"><h3>最近一次成片视觉 QA</h3><p className="hint">正在读取导出后的质检结果。</p></div>;
+  if (!result) return <div className="settings-card visual-qa-rendered"><h3>最近一次成片视觉 QA</h3><p className="hint">还没有带持久报告的已完成导出。</p></div>;
+  const findings = result.report.findings ?? [];
+  const artifacts = '/api/projects/' + encodeURIComponent(id) + '/visual-qa?jobId=' + encodeURIComponent(result.jobId) + '&file=';
+  return <div className="settings-card visual-qa-rendered">
+    <h3>最近一次成片视觉 QA</h3>
+    <p className="hint">{result.report.completed === false ? '质检证据生成不完整。' : '检查实际成片抽帧与 Remotion 布局。'} · {findings.length} 项 · Job {result.jobId}</p>
+    {result.report.staticFallbacks?.length ? <ul>{result.report.staticFallbacks.map(item => <li key={item.sceneId}>{item.sceneId}：{item.reason}</li>)}</ul> : null}
+    {result.report.audioWarnings?.length ? <ul>{result.report.audioWarnings.map((warning, index) => <li key={`audio-warning-${index}`}>{warning}</li>)}</ul> : null}
+    <div className="v11-row">
+      <a className="button subtle" href={artifacts + 'contact-sheet.html'} target="_blank" rel="noreferrer">查看关键帧联系表</a>
+      <a className="button subtle" href={artifacts + 'motion-strip.html'} target="_blank" rel="noreferrer">查看转场运动条</a>
+      <button className="button subtle" disabled={disabled || !result.report.evidence || findings.length === 0} onClick={() => { setActionMessage(''); setPreview(autoFixVisualQuality(board, { maxRounds: 2, phase: 'post-render', renderEvidence: result.report.evidence })); }}>预览安全修复</button>
+    </div>
+    {findings.length === 0 ? <p role="status">当前采样规则检查通过。</p> : <ul>{findings.map((finding, index) => {
+      const sceneIndex = board.scenes.findIndex(sceneItem => sceneItem.id === finding.sceneId);
+      const frame = finding.location.frame;
+      const screenshotMatch = (finding.location.screenshotPath ?? '').match(/(?:^|[\\/])(preflight|after)[\\/](frame-\d{6}\.png)$/);
+      const image = screenshotMatch ? artifacts + encodeURIComponent(`${screenshotMatch[1]}/${screenshotMatch[2]}`) : undefined;
+      return <li key={finding.sceneId + '-' + finding.code + '-' + frame + '-' + index}>
+        <button className="text-button" disabled={disabled || sceneIndex < 0} onClick={() => { if (sceneIndex >= 0) onSelect(sceneIndex); }}>
+          {sceneIndex >= 0 ? '场景 ' + (sceneIndex + 1) : finding.sceneId}{finding.location.beatId ? ' · beat ' + finding.location.beatId : ''} · 第 {frame} 帧：{finding.message}
+        </button>
+        {image && <a className="text-button" href={image} target="_blank" rel="noreferrer">查看截图</a>}
+      </li>;
+    })}</ul>}
+    {preview && <div className="batch-impact" role="status">
+      <b>修复预览 · 最多两轮 · 剩余 {preview.report.findings.length} 项</b>
+      <p className="hint">缩放修复为本地渲染拟合方案；应用后请重新渲染并检查新报告中的实际帧。</p>
+      <div className="v11-row">
+        <button className="button primary" disabled={disabled || preview.storyboard === board} onClick={() => {
+          const next = preview.storyboard;
+          onChange(next);
+          void save(next).then(saved => {
+            if (!saved) setActionMessage('修复没有保存成功，请重试。');
+            else { setActionMessage('修复已保存；重新渲染后会生成新的实际帧报告。'); setPreview(null); }
+          }).catch(error => setActionMessage(String(error)));
+        }}>应用修复</button>
+        <button className="button subtle" disabled={disabled} onClick={() => setPreview(null)}>关闭</button>
+      </div>
+      {actionMessage && <p role="status">{actionMessage}</p>}
+    </div>}
+  </div>;
+}
 const safeLink = (value?: string) => value && /^https?:\/\//i.test(value) ? value : undefined;
 export const licenseLabels: Record<string, string> = { 'public-domain': '公有领域', 'cc-by': 'CC BY · 需署名', 'cc-by-sa': 'CC BY-SA · 需署名并相同方式共享', other: '其他许可', unknown: '许可未知' };export function ProductionTools({ id, board, active, assets, busy, save, onChange, onSelect, reload, speed, focus, onRegenerateAudio }: { id: string; board: Storyboard; active: number; assets: Asset[]; busy: boolean; save: (board?: Storyboard) => Promise<boolean>; onChange: (board: Storyboard) => void; onSelect: (index: number) => void; reload: () => Promise<void>; speed: number; focus?: { section: string; nonce: number; sceneIndex?: number; cueIndex?: number } | null; onRegenerateAudio?: (sceneId: string) => void }) {
   const storageRefreshKey = JSON.stringify({ assets: assets.map(asset => asset.path), scenes: board.scenes.map(scene => [scene.audioSrc, scene.visual]), bgmSrc: board.bgmSrc });
   const [section, setSection] = useState('layout'), [message, setMessage] = useState(''), [working, setWorking] = useState(false);
   const [selected, setSelected] = useState<string[]>([]), [seconds, setSeconds] = useState(6), [batchStyle, setBatchStyle] = useState<StyleId>(board.styleId);
+  const [visualQaPreview, setVisualQaPreview] = useState<ReturnType<typeof autoFixVisualQuality> | null>(null);
   const [batch, setBatch] = useState<BatchChanges>({}), [impact, setImpact] = useState<BatchImpact | null>(null), [undoBoard, setUndoBoard] = useState<Storyboard | null>(null);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]), [customTemplates, setCustomTemplates] = useState<{ name: string; scene: Scene }[]>([]);
   const [fragment, setFragment] = useState(''), [preview, setPreview] = useState('');
+  const [densityDraft, setDensityDraft] = useState<VisualDensitySettings>(board.visualDensity ?? defaultVisualDensitySettings);
+  const [densityPreview, setDensityPreview] = useState<Storyboard | null>(null);
   const scene = board.scenes[active]; const subtitle = SubtitleSchema.parse(board.subtitles ?? {});
   const disabled = busy || working;
   const minimalPreset = subtitle.preset === 'minimal';
   const backgroundDisabled = disabled || minimalPreset;
   useEffect(() => { setFragment(''); setPreview(''); }, [scene?.id]);
+  useEffect(() => { setDensityDraft(board.visualDensity ?? defaultVisualDensitySettings); setDensityPreview(null); }, [board.visualDensity]);
   useEffect(() => { if (focus) setSection(focus.section); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [focus?.nonce]);
   useEffect(() => { void fetch('/api/templates').then(json).then(setCustomTemplates).catch(error => setMessage(String(error))); }, []);
   async function run(action: () => Promise<void>) { setWorking(true); setMessage(''); try { await action(); } catch (error) { setMessage(error instanceof Error ? error.message : '操作失败'); } finally { setWorking(false); } }
   async function saved() { if (!await save()) throw new Error('请先处理分镜保存错误'); }
   function patchScene(patch: Partial<Scene>) { onChange({ ...board, scenes: board.scenes.map((item, index) => index === active ? { ...item, ...patch, ...(patch.speechSpeed !== undefined || patch.sentencePause !== undefined ? { audioSrc: undefined, audioKey: undefined, audioDuration: undefined, wordTimings: undefined, subtitleCues: undefined } : {}) } : item) }); }
+  function chooseVisualTemplate(value: string) {
+    if (!value) { patchScene({ visualPlan: undefined }); return; }
+    const templateId = value as VisualTemplateId;
+    const intents: Record<VisualTemplateId, 'hook' | 'comparison' | 'flow' | 'timeline' | 'data-story'> = { hero: 'hook', comparison: 'comparison', diagram: 'flow', timeline: 'timeline', chart: 'data-story' };
+    patchScene({ visualPlan: VisualPlanSchema.parse({ ...scene.visualPlan, templateId, narrativeIntent: intents[templateId], selectionReason: undefined, manualOverride: true, provenance: 'user' }) });
+  }
+  function reselectVisualTemplate() {
+    const decision = decideVisualTemplate(scene);
+    if (!decision) return;
+    patchScene({ visualPlan: VisualPlanSchema.parse({ ...scene.visualPlan, ...decision, manualOverride: false, provenance: 'rule' }) });
+  }
+  function addSoundCue(value: string) {
+    if (!value) return;
+    const cue = SfxCueSchema.parse({ id: crypto.randomUUID(), cueId: value as SfxCueId, license: {} });
+    onChange({ ...board, soundEffects: { ...soundSettings, enabled: true }, scenes: board.scenes.map((item, index) => index === active ? { ...item, sfxCues: [...(item.sfxCues ?? []), cue] } : item) });
+  }
+  function removeSoundCue(cueId: string) { patchScene({ sfxCues: (scene.sfxCues ?? []).filter(cue => cue.id !== cueId) }); }
+  function updateSoundSettings(patch: Partial<NonNullable<Storyboard['soundEffects']>>) { onChange({ ...board, soundEffects: { ...soundSettings, ...patch } }); }
   async function loadSnapshots() { setSnapshots(await json(await fetch(`/api/projects/${id}/backups`))); }
   async function backup(action: string, extra: object = {}) {
     await saved(); const result = await json(await fetch(`/api/projects/${id}/backups`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, ...extra }) }));
@@ -98,6 +179,22 @@ export const licenseLabels: Record<string, string> = { 'public-domain': '公有�
   const warnings = storyboardWarnings(board);
   const selectedIndexes = board.scenes.flatMap((item, index) => selected.includes(item.id) ? [index] : []);
   const liveImpact = batchImpact(board, selectedIndexes, batch);
+  const densityCandidate = applyDensitySettings(board, densityDraft);
+  const visualQaReport = visualQualityAudit(board);
+  const soundSettings = SoundEffectsSettingsSchema.parse(board.soundEffects ?? {});
+  const densityChanges = board.scenes.flatMap((item, index) => {
+    const next = densityCandidate.scenes[index];
+    const before = estimateVisualDensity(item, board.aspectRatio);
+    const beats = next?.visualBeatsProvenance === 'rule' ? next.visualBeats ?? [] : [];
+    return beats.length > 1 ? [{ index, title: item.title ?? item.type, beats: beats.length, ratio: Math.round(before.ratio * 100) }] : [];
+  });
+  const soundBeats = scene.visualBeats?.length ? scene.visualBeats : scene.visualPlan?.beats ?? [];
+  const soundTargetIds = [...new Set([
+    ...soundBeats.flatMap(beat => beat.targetIds),
+    ...(scene.visualPlan?.motionPresets ?? []).map(action => action.targetId),
+    ...Object.values(scene.visualPlan?.elementMap ?? {}),
+    ...(scene.sfxCues ?? []).flatMap(cue => cue.targetId ? [cue.targetId] : []),
+  ])];
   function editBatch(patch: BatchChanges) { setBatch(current => ({ ...current, ...patch })); setImpact(null); }
   function editSubtitle(patch: Partial<SubtitleSettings>) {
     setBatch(current => {
@@ -124,7 +221,12 @@ export const licenseLabels: Record<string, string> = { 'public-domain': '公有�
     setMessage('已撤销上一次批量修改');
   }
   return <section className="settings-card production-tools"><div className="tools-tabs"><div className="tabs">{[['layout', '分镜精修'], ['captions', '字幕与节奏'], ['assets', '素材库'], ['backups', '备份与恢复']].map(([key, label]) => <button key={key} className={section === key ? 'active' : ''} onClick={() => { setSection(key); if (key === 'backups') void run(loadSnapshots); }}>{label}</button>)}</div></div>{message && <p role="status" className="hint">{message}</p>}
-  {section === 'layout' && <><div className="v11-row tools-strip"><label>插入模板<select className="input" disabled={disabled} value="" onChange={event => { const item = [...templates, ...customTemplates][Number(event.target.value)]; if (!item) return; const newScene = { ...structuredClone(item.scene), id: crypto.randomUUID(), audioSrc: undefined, audioKey: undefined, wordTimings: undefined, audioDuration: undefined }; onChange({ ...board, scenes: [...board.scenes.slice(0, active + 1), newScene, ...board.scenes.slice(active + 1)] }); onSelect(active + 1); }}><option value="">选择场景模板</option>{[...templates, ...customTemplates].map((item, i) => <option key={i} value={i}>{item.name}</option>)}</select></label><button className="button subtle" disabled={disabled} onClick={() => { onChange({ ...board, scenes: [...board.scenes.slice(0, active + 1), cloneScene(scene), ...board.scenes.slice(active + 1)] }); onSelect(active + 1); }}>复制当前场景</button><button className="button subtle" disabled={disabled} onClick={() => void run(async () => { const result = await json(await fetch('/api/templates', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: scene.title ?? '我的模板', scene }) })); setCustomTemplates(result); setMessage('当前版式已保存为可复用模板'); })}>保存当前为模板</button><label>当前版式<select className="input" disabled={disabled} value={scene.layout ?? 'auto'} onChange={e => patchScene({ layout: e.target.value as Scene['layout'] })}>{[['auto','自动'],['stack','纵向'],['columns','并排'],['compact','紧凑']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label></div>
+  {section === 'layout' && <div className="settings-card"><h3>音效设计</h3><label><input type="checkbox" disabled={disabled} checked={soundSettings.enabled} onChange={event => updateSoundSettings({ enabled: event.currentTarget.checked })} />启用稀疏本地音效</label><div className="v11-row"><label>音效音量<input className="input" type="range" min={0} max={1} step={0.01} disabled={disabled || !soundSettings.enabled} value={soundSettings.volume} onChange={event => updateSoundSettings({ volume: Number(event.currentTarget.value) })} /></label><label>旁白时音效衰减<input className="input" type="range" min={0} max={0.9} step={0.01} disabled={disabled || !soundSettings.enabled} value={soundSettings.voiceDuck} onChange={event => updateSoundSettings({ voiceDuck: Number(event.currentTarget.value) })} /></label><label>旁白时 BGM 衰减<input className="input" type="range" min={0} max={0.9} step={0.01} disabled={disabled || !soundSettings.enabled} value={soundSettings.bgmDuck} onChange={event => updateSoundSettings({ bgmDuck: Number(event.currentTarget.value) })} /></label></div><p className="hint">六种程序化 WAV 均本地生成并带许可来源；素材缺失时静音跳过。音效与 BGM 音量独立，叠加峰值会自动按同时播放数量衰减。</p><select className="input" disabled={disabled || !soundSettings.enabled} value="" onChange={event => addSoundCue(event.currentTarget.value)}><option value="">添加当前场景音效…</option>{[['soft-transition','柔和转场'],['emphasis-tick','强调轻响'],['data-pop','数据提示'],['flow-pulse','流程脉冲'],['success-chime','结论提示音'],['paper-tap','纸张轻敲']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{(scene.sfxCues ?? []).map(cue => <div className="v11-row" key={cue.id}><span>{({ 'soft-transition': '柔和转场', 'emphasis-tick': '强调轻响', 'data-pop': '数据提示', 'flow-pulse': '流程脉冲', 'success-chime': '结论提示音', 'paper-tap': '纸张轻敲' } as Record<string, string>)[cue.cueId]}</span><label>Beat<select className="input" disabled={disabled} value={cue.beatRef ?? ''} onChange={event => patchScene({ sfxCues: (scene.sfxCues ?? []).map(item => item.id === cue.id ? { ...item, beatRef: event.currentTarget.value || undefined } : item) })}><option value="">按目标定位 / 场景开头</option>{cue.beatRef && !soundBeats.some(beat => beat.id === cue.beatRef) && <option value={cue.beatRef}>缺失：{cue.beatRef}（回退定位）</option>}{soundBeats.map(beat => <option key={beat.id} value={beat.id}>{beat.label ?? beat.id}</option>)}</select></label><label>动画目标<select className="input" disabled={disabled || soundTargetIds.length === 0} value={cue.targetId ?? ''} onChange={event => patchScene({ sfxCues: (scene.sfxCues ?? []).map(item => item.id === cue.id ? { ...item, targetId: event.currentTarget.value || undefined } : item) })}><option value="">不指定</option>{soundTargetIds.map(targetId => <option key={targetId} value={targetId}>{targetId}</option>)}</select></label><label>偏移（秒）<input className="input" type="number" min={0} max={3600} step={0.1} value={cue.offsetSeconds} onChange={event => patchScene({ sfxCues: (scene.sfxCues ?? []).map(item => item.id === cue.id ? { ...item, offsetSeconds: Number(event.currentTarget.value) } : item) })} /></label><button className="button subtle" disabled={disabled} onClick={() => removeSoundCue(cue.id)}>移除</button></div>)}</div>}
+  {section === 'layout' && <div className="settings-card visual-qa-panel"><h3>视觉质量检查</h3><p className="hint">导出前按文本密度和真实布局预检，导出后复核成片帧；自动修复最多两轮，仍有动画相关风险时可为未锁定场景关闭动态效果，并在报告中列出原因，不改旁白、画面事实或 Preserve 内容。</p><div className="v11-row"><span>{visualQaReport.findings.length ? `发现 ${visualQaReport.findings.length} 个待处理项` : '当前规则检查通过'}</span><button className="button subtle" disabled={disabled} onClick={() => setVisualQaPreview(autoFixVisualQuality(board, { maxRounds: 2 }))}>运行检查并预览修复</button></div>{visualQaPreview && <div className="batch-impact" role="status"><b>检查了 {visualQaPreview.report.checkedScenes} 个场景 · 修复轮数 {visualQaPreview.report.autoFixRounds}/2 · 剩余 {visualQaPreview.report.findings.length} 项</b>{visualQaPreview.report.staticFallbacks.length > 0 && <ul>{visualQaPreview.report.staticFallbacks.map((fallback, index) => <li key={`static-fallback-${fallback.sceneId}-${index}`}>{fallback.sceneId}：{fallback.reason}</li>)}</ul>}{visualQaPreview.report.findings.length > 0 && <ul>{visualQaPreview.report.findings.map((finding, index) => <li key={`${finding.sceneId}-${finding.code}-${index}`}>{board.scenes.findIndex(item => item.id === finding.sceneId) + 1}. {finding.message}{finding.fixable ? '（可自动修复）' : '（需手动处理）'}<button className="text-button" onClick={() => { const sceneIndex = board.scenes.findIndex(item => item.id === finding.sceneId); if (sceneIndex >= 0) onSelect(sceneIndex); }}>定位：{finding.location.beatId ? 'beat ' + finding.location.beatId + ' · ' : ''}第 {finding.location.frame} 帧</button>{finding.location.screenshotPath && <small>{finding.location.screenshotPath}</small>}</li>)}</ul>}<div className="v11-row"><button className="button primary" disabled={disabled || visualQaPreview.storyboard === board} onClick={() => { onChange(visualQaPreview.storyboard); setVisualQaPreview(null); }}>应用修复</button><button className="button subtle" onClick={() => setVisualQaPreview(null)}>关闭</button></div></div>}</div>}
+  {section === 'layout' && <RenderedVisualQaPanel id={id} board={board} disabled={disabled} onSelect={onSelect} onChange={onChange} save={save} />}
+  {section === 'layout' && <div className="settings-card"><h3>视觉风格包</h3><select className="input" disabled={disabled} value={board.stylePack ?? ''} onChange={event => onChange({ ...board, stylePack: (event.currentTarget.value || undefined) as Storyboard['stylePack'] })}><option value="">使用基础风格</option>{stylePackOptions.map(pack => <option key={pack.id} value={pack.id}>{pack.name}</option>)}</select><p className="hint">可选的本地样式叠加层，与现有基础风格和品牌色兼容；Paper Collage Lite 使用程序化纸张纹理，不联网下载素材。</p></div>}
+  {section === 'layout' && <><div className="v11-row tools-strip"><label>插入模板<select className="input" disabled={disabled} value="" onChange={event => { const item = [...templates, ...customTemplates][Number(event.target.value)]; if (!item) return; const newScene = { ...structuredClone(item.scene), id: crypto.randomUUID(), audioSrc: undefined, audioKey: undefined, wordTimings: undefined, audioDuration: undefined }; onChange({ ...board, scenes: [...board.scenes.slice(0, active + 1), newScene, ...board.scenes.slice(active + 1)] }); onSelect(active + 1); }}><option value="">选择场景模板</option>{[...templates, ...customTemplates].map((item, i) => <option key={i} value={i}>{item.name}</option>)}</select></label><button className="button subtle" disabled={disabled} onClick={() => { onChange({ ...board, scenes: [...board.scenes.slice(0, active + 1), cloneScene(scene), ...board.scenes.slice(active + 1)] }); onSelect(active + 1); }}>复制当前场景</button><button className="button subtle" disabled={disabled} onClick={() => void run(async () => { const result = await json(await fetch('/api/templates', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: scene.title ?? '我的模板', scene }) })); setCustomTemplates(result); setMessage('当前版式已保存为可复用模板'); })}>保存当前为模板</button><label>当前版式<select className="input" disabled={disabled} value={scene.layout ?? 'auto'} onChange={e => patchScene({ layout: e.target.value as Scene['layout'] })}>{[['auto','自动'],['stack','纵向'],['columns','并排'],['compact','紧凑']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label>{(['hero','comparison','diagram','timeline','chart'] as const).some(templateId => visualTemplateSupportsScene(templateId, scene.type)) && <><label>视觉模板<select className="input" disabled={disabled} value={scene.visualPlan?.templateId ?? ''} onChange={e => chooseVisualTemplate(e.target.value)}><option value="">默认结构</option>{(['hero','comparison','diagram','timeline','chart'] as const).filter(templateId => visualTemplateSupportsScene(templateId, scene.type)).map(templateId => <option key={templateId} value={templateId}>{({ hero: '标题 / 重点', comparison: '左右对比', diagram: '流程关系', timeline: '时间线', chart: '数据图表' })[templateId]}</option>)}</select></label><button className="button subtle" disabled={disabled || !decideVisualTemplate(scene)} onClick={reselectVisualTemplate}>按规则重选</button></>}</div>{scene.visualPlan?.manualOverride ? <p className="hint">此场景已锁定手动模板。可用页面上方“撤销”恢复上一版式，或按规则重选；选择“默认结构”可移除视觉模板。</p> : scene.visualPlan?.selectionReason && <p className="hint">规则选择：{({ 'title-or-text': '标题或长文本使用重点模板', 'two-column-comparison': '两列结构使用对比模板', 'ordered-flow': '有序节点使用流程模板', 'chronological-events': '时间节点使用时间线模板', 'numeric-data': '数值系列使用图表模板' } as Record<string, string>)[scene.visualPlan.selectionReason]}。仍可手动切换模板。</p>}
+    <div className="settings-card density-settings"><h3>知识密度与分步显示</h3><div className="v11-row"><label><input type="checkbox" disabled={disabled} checked={densityDraft.autoSplit} onChange={e => { setDensityDraft({ ...densityDraft, autoSplit: e.target.checked }); setDensityPreview(null); }} /> 自动分步显示</label><label>内容策略<select className="input" disabled={disabled} value={densityDraft.strategy} onChange={e => { setDensityDraft({ ...densityDraft, strategy: e.target.value as VisualDensitySettings['strategy'] }); setDensityPreview(null); }}><option value="concise">精炼</option><option value="balanced">平衡</option><option value="complete">完整</option></select></label><label><input type="checkbox" disabled={disabled} checked={Boolean(board.reducedMotion)} onChange={e => onChange({ ...board, reducedMotion: e.target.checked })} /> 减弱动态效果</label><button className="button subtle" disabled={disabled} onClick={() => setDensityPreview(densityCandidate)}>预览影响范围</button></div><p className="hint">预算按画幅、标题/正文字号估算并预留字幕与 Logo 安全区。已手动覆盖的场景不会被重写；减弱动态效果会使用静态可读状态。应用后可用页面上方“撤销”恢复。</p>{densityPreview && <div className="batch-impact" role="status"><b>预览：{densityChanges.length} 个场景将分步呈现</b>{densityChanges.length > 0 && <ul>{densityChanges.map(item => <li key={item.index}>{item.index + 1}. {item.title} · 约 {item.ratio}% 画面高度 · {item.beats} 个旁白 beat</li>)}</ul>}<button className="button primary" disabled={disabled} onClick={() => { onChange(densityPreview); setDensityPreview(null); }}>应用分步方案</button></div>}</div>
     <details className="batch-panel"><summary><span>批量选择与调整</span><b>已选 {selected.length} 项</b></summary><div className="batch-toolbar"><button className="button subtle" onClick={() => setSelected(board.scenes.map(scene => scene.id))}>全选</button><button className="button subtle" onClick={() => setSelected([])}>清空选择</button><span className="batch-count">共 {board.scenes.length} 个场景</span></div><div className="batch-grid">{board.scenes.map((item, index) => <label key={item.id}><input type="checkbox" checked={selected.includes(item.id)} onChange={e => setSelected(e.target.checked ? [...selected, item.id] : selected.filter(id => id !== item.id))} /><span>{index + 1}. {item.title ?? item.type}</span></label>)}</div><div className="v11-row batch-actions"><label>时长（秒）<input className="input" type="number" min={3} max={3600} value={seconds} onChange={e => setSeconds(Number(e.target.value))} /></label><button className="button subtle" disabled={disabled || !selected.length || seconds < 3 || seconds > 3600} onClick={() => onChange({ ...board, scenes: board.scenes.map(item => selected.includes(item.id) ? { ...item, duration: seconds } : item) })}>批量设置时长</button><select className="input" value={batchStyle} onChange={e => setBatchStyle(e.target.value as StyleId)}>{Object.values(styles).map(style => <option key={style.id} value={style.id}>{style.name}</option>)}</select><button className="button subtle" disabled={disabled || !selected.length} onClick={() => onChange({ ...board, scenes: board.scenes.map(item => selected.includes(item.id) ? { ...item, sceneStyle: batchStyle } : item) })}>批量应用风格</button></div>
     <div className="batch-refine"><p className="field-label">批量精修</p><div className="v11-row"><label>版式<select className="input" disabled={disabled} value={batch.layout ?? ''} onChange={e => editBatch({ layout: e.target.value === '' ? undefined : e.target.value as BatchChanges['layout'] })}><option value="">不修改</option><option value="auto">自动</option><option value="stack">纵向</option><option value="columns">并排</option><option value="compact">紧凑</option></select></label>{([{ key: 'speechSpeed', label: '语速', min: .5, max: 3, step: .05 }, { key: 'sentencePause', label: '句间停顿（秒）', min: 0, max: 3, step: .05 }, { key: 'sceneGap', label: '场景间隔（秒）', min: 0, max: 10, step: .1 }] as const).map(item => <label key={item.key}>{item.label}<input className="input" type="number" placeholder="不修改" disabled={disabled} min={item.min} max={item.max} step={item.step} value={batch[item.key] ?? ''} onChange={e => editBatch({ [item.key]: e.target.value === '' ? undefined : Number(e.target.value) } as BatchChanges)} /></label>)}</div>
       <p className="hint">字幕样式是项目级设置，会同时改变全部 {board.scenes.length} 个场景的字幕，不计入选中场景数。</p>

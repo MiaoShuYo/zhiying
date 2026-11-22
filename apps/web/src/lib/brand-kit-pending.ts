@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { BrandSnapshotSchema, type BrandKit, type BrandSnapshot, type Storyboard } from '@m2v/schema';
+import { BrandSnapshotSchema, StylePackIdSchema, type BrandKit, type BrandSnapshot, type Storyboard, type StylePackId } from '@m2v/schema';
 import { readBrandKits } from './brand-kits';
 import { copyBrandLogoToProject } from './brand-kit-logo-files';
 
@@ -17,6 +17,7 @@ import { copyBrandLogoToProject } from './brand-kit-logo-files';
 export type ImportSettings = {
   preferLocalAI?: boolean;
   generationMode?: 'standard' | 'html';
+  stylePack?: StylePackId;
   /** Only present while the project has not built its first storyboard yet. */
   brandKitId?: string;
 };
@@ -32,6 +33,8 @@ export function parseImportSettings(value: unknown): ImportSettings {
   const settings: ImportSettings = {};
   if (record.preferLocalAI === true) settings.preferLocalAI = true;
   if (record.generationMode === 'html' || record.generationMode === 'standard') settings.generationMode = record.generationMode;
+  const stylePack = StylePackIdSchema.safeParse(record.stylePack);
+  if (stylePack.success) settings.stylePack = stylePack.data;
   const brandKitId = typeof record.brandKitId === 'string' ? record.brandKitId.trim() : '';
   if (brandKitId) settings.brandKitId = brandKitId;
   return settings;
@@ -52,6 +55,7 @@ export async function writeImportSettings(projectId: string, settings: ImportSet
   const value = {
     preferLocalAI: settings.preferLocalAI === true,
     generationMode: settings.generationMode === 'html' ? 'html' : 'standard',
+    ...(settings.stylePack ? { stylePack: StylePackIdSchema.parse(settings.stylePack) } : {}),
     ...(settings.brandKitId ? { brandKitId: settings.brandKitId } : {}),
   };
   await writeFile(target, JSON.stringify(value), 'utf8');

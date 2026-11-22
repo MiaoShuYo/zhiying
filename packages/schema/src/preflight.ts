@@ -1,8 +1,9 @@
 import type { Scene, Storyboard } from './index';
 import { timelineFor } from './timeline';
 import { captionDuration, resolveCaptionCues } from './captions';
-import { CAPTION_RESERVED_LINES, brandLogoPlacement, captionSafeArea, designCanvas, rendererScale } from './brand-layout';
+import { CAPTION_RESERVED_LINES, STYLE_PACK_LOGO_SAFE_AREA_RATIO, brandLogoPlacement, captionSafeArea, designCanvas, rendererScale } from './brand-layout';
 import { SubtitleSchema } from './delivery';
+import { estimateVisualDensity } from './visual-density';
 
 export type PreflightSeverity = 'error' | 'warning' | 'info';
 
@@ -10,10 +11,10 @@ export type PreflightCode =
   | 'missing_image' | 'missing_file' | 'missing_audio' | 'empty_narration' | 'narration_too_long'
   | 'caption_overflow' | 'caption_overtime' | 'scene_too_short'
   | 'duration_target_miss' | 'missing_bgm' | 'subtitles_off'
-  | 'brand_logo_caption_conflict' | 'brand_logo_too_large';
+  | 'brand_logo_caption_conflict' | 'brand_logo_too_large' | 'visual_density';
 
 /** `fix` names the panel that can resolve the issue, so the UI can jump straight there. */
-export type PreflightFix = 'upload_asset' | 'open_assets' | 'generate_audio' | 'open_captions' | 'open_render' | 'rewrite_narration' | 'open_brand_settings';
+export type PreflightFix = 'upload_asset' | 'open_assets' | 'generate_audio' | 'open_captions' | 'open_layout' | 'open_render' | 'rewrite_narration' | 'open_brand_settings';
 
 export type PreflightIssue = {
   code: PreflightCode;
@@ -59,12 +60,14 @@ export const preflightCodeLabels: Record<PreflightCode, string> = {
   subtitles_off: '字幕已关闭',
   brand_logo_caption_conflict: '品牌 Logo 与字幕冲突',
   brand_logo_too_large: '品牌 Logo 尺寸过大',
+  visual_density: '画面密度过高',
 };
 export const preflightFixLabels: Record<PreflightFix, string> = {
   upload_asset: '补充素材',
   open_assets: '打开素材',
   generate_audio: '生成语音',
   open_captions: '打开字幕',
+  open_layout: '预览分步显示',
   open_render: '检查导出设置',
   rewrite_narration: '补充旁白',
   open_brand_settings: '打开品牌套件',
@@ -170,7 +173,7 @@ function brandLogoIssues(storyboard: Storyboard, portrait: boolean, stale: (path
 
   // Check 2: Logo and captions share a vertical edge. Center/opposite captions never move the Logo,
   // so `brandLogoPlacement` yields the plain margin and the check below is skipped.
-  const placement = brandLogoPlacement({ logo, subtitles: storyboard.subtitles, videoWidth: canvas.width, videoHeight: canvas.height });
+  const placement = brandLogoPlacement({ logo, subtitles: storyboard.subtitles, videoWidth: canvas.width, videoHeight: canvas.height, safeAreaRatio: storyboard.stylePack ? STYLE_PACK_LOGO_SAFE_AREA_RATIO : undefined });
   const subtitles = SubtitleSchema.parse(storyboard.subtitles ?? {});
   if (placement && subtitles.enabled && subtitles.position === placement.verticalEdge) {
     const scale = rendererScale(canvas.width, canvas.height);
@@ -206,6 +209,7 @@ export function preflight(storyboard: Storyboard, assets: { path: string; kind?:
   const portrait = storyboard.aspectRatio === '9:16';
   const issues: PreflightIssue[] = [];
   const assetPaths = new Set(assets.map(asset => asset.path));
+  const reportedMissingSfx = new Set<string>();
   // The browser has no filesystem, so `missing_file` only appears when the server supplies `exists`.
   const stale = (path: string) => (options.exists ? !options.exists(path) : false);
 
@@ -240,9 +244,24 @@ export function preflight(storyboard: Storyboard, assets: { path: string; kind?:
         issues.push({ code: 'missing_file', severity: 'error', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, assetPath: scene.audioSrc, assetKind: 'audio', message: `${target}的语音文件已不存在：${scene.audioSrc}`, fix: 'generate_audio' });
       }
     }
+    if (storyboard.soundEffects?.enabled) for (const cue of scene.sfxCues ?? []) {
+      const cuePath = cue.assetSrc ?? `audio/sfx/${cue.cueId}.wav`;
+      if (!reportedMissingSfx.has(cuePath) && stale(cuePath)) {
+        reportedMissingSfx.add(cuePath);
+        issues.push({
+          code: 'missing_file', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title,
+          assetPath: cuePath, assetKind: 'audio', fix: 'open_assets',
+          message: `本地音效文件缺失：${cuePath}；该 cue 会静音跳过，不会阻止成片导出。`,
+        });
+      }
+    }
     // sceneSeconds floors every scene at 3 seconds, so the raw length is the honest signal.
     if (Math.max(scene.audioDuration ?? 0, scene.duration ?? 0) > 0 && Math.max(scene.audioDuration ?? 0, scene.duration ?? 0) < 3) {
       issues.push({ code: 'scene_too_short', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message: `${target}只有 ${Math.max(scene.audioDuration ?? 0, scene.duration ?? 0).toFixed(1)} 秒，画面会一闪而过。`, fix: 'open_captions' });
+    }
+    if (scene.type !== 'media' && scene.type !== 'code' && scene.type !== 'html' && typeof scene.visual.html !== 'string' && !(scene.visualBeats?.length || scene.visualPlan?.beats.length)) {
+      const density = estimateVisualDensity(scene, storyboard.aspectRatio);
+      if (density.overBudget) issues.push({ code: 'visual_density', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message: `${target}估算占用 ${Math.round(density.ratio * 100)}% 的可用画面高度，超过可读性预算；可预览分步显示。`, fix: 'open_layout' });
     }
     issues.push(...cueIssues(scene, index, portrait, storyboard.subtitles?.fontSize ?? 30));
   });
@@ -254,7 +273,7 @@ export function preflight(storyboard: Storyboard, assets: { path: string; kind?:
       issues.push({ code: 'duration_target_miss', severity: 'info', message: `预计时长 ${Math.round(estimatedSeconds)} 秒，与目标 ${Math.round(storyboard.durationTarget)} 秒相差 ${Math.round(drift * 100)}%。`, fix: 'open_render' });
     }
   }
-  if (storyboard.bgmSrc && stale(storyboard.bgmSrc)) {
+  if (storyboard.bgmEnabled !== false && storyboard.bgmSrc && stale(storyboard.bgmSrc)) {
     issues.push({ code: 'missing_bgm', severity: 'error', assetPath: storyboard.bgmSrc, assetKind: 'bgm', message: `背景音乐文件已不存在：${storyboard.bgmSrc}`, fix: 'upload_asset' });
   }
   // Brand Logo findings are project-level (one Logo for the whole video) and never block export.

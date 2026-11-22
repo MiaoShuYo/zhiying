@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionSchema } from './delivery';
+import { AspectRatioSchema, FrameCardSchema, SubtitleSchema, TransitionDurationSchema, TransitionSchema } from './delivery';
+import { StylePackIdSchema } from './style-pack';
 import type { Storyboard } from './index';
 
 /** A reusable production setup: voice, subtitles, frame and export quality in one bundle. */
@@ -13,6 +14,8 @@ export const ProductionTemplateSchema = z.object({
   aspectRatio: AspectRatioSchema,
   subtitles: SubtitleSchema,
   transition: TransitionSchema,
+  transitionDuration: TransitionDurationSchema.optional(),
+  stylePack: StylePackIdSchema.optional(),
   intro: FrameCardSchema.optional(),
   outro: FrameCardSchema.optional(),
   bgmVolume: z.number().min(0).max(1).default(0.12),
@@ -26,9 +29,9 @@ export const ProductionTemplateSchema = z.object({
 export type ProductionTemplate = z.infer<typeof ProductionTemplateSchema>;
 
 export type TemplateSceneSettings = Pick<ProductionTemplate, 'speechSpeed' | 'sentencePause' | 'sceneGap'>;
-export type TemplateBoardPatch = Pick<Storyboard, 'aspectRatio' | 'subtitles' | 'transition' | 'intro' | 'outro' | 'bgmVolume' | 'bgmFadeIn' | 'bgmFadeOut'>;
+export type TemplateBoardPatch = Pick<Storyboard, 'aspectRatio' | 'subtitles' | 'transition' | 'transitionDuration' | 'stylePack' | 'intro' | 'outro' | 'bgmVolume' | 'bgmFadeIn' | 'bgmFadeOut'>;
 
-export type TemplateChangeKey = 'voiceId' | 'speechSpeed' | 'sentencePause' | 'sceneGap' | 'aspectRatio' | 'subtitles' | 'intro' | 'outro' | 'transition' | 'bgmVolume' | 'renderPreset';
+export type TemplateChangeKey = 'voiceId' | 'speechSpeed' | 'sentencePause' | 'sceneGap' | 'aspectRatio' | 'subtitles' | 'intro' | 'outro' | 'transition' | 'stylePack' | 'bgmVolume' | 'renderPreset';
 
 /** One row of the "what would applying this change" table. Scene-scoped rows are applied to every scene. */
 export type TemplateChange = { key: TemplateChangeKey; label: string; current: string; next: string; changed: boolean; scope: 'project' | 'scene' };
@@ -66,6 +69,8 @@ export function templateFromProject(input: { board: Storyboard; voiceId?: string
     aspectRatio: board.aspectRatio ?? '16:9',
     subtitles: SubtitleSchema.parse(board.subtitles ?? {}),
     transition: board.transition,
+    transitionDuration: board.transitionDuration,
+    stylePack: board.stylePack,
     intro: board.intro,
     outro: board.outro,
     bgmVolume: board.bgmVolume ?? 0.12,
@@ -82,6 +87,8 @@ export function templateBoardPatch(template: ProductionTemplate): TemplateBoardP
     aspectRatio: template.aspectRatio,
     subtitles: template.subtitles,
     transition: template.transition,
+    transitionDuration: template.transitionDuration,
+    stylePack: template.stylePack,
     intro: template.intro,
     outro: template.outro,
     bgmVolume: template.bgmVolume,
@@ -122,7 +129,8 @@ export function templateChanges(board: Storyboard, voiceId: string | null | unde
     { key: 'subtitles', label: '字幕样式', scope: 'project', current: subtitleText(currentSubtitles), next: subtitleText(template.subtitles), changed: JSON.stringify(currentSubtitles) !== JSON.stringify(template.subtitles) },
     { key: 'intro', label: '片头', scope: 'project', current: frameText(currentIntro), next: frameText(nextIntro), changed: JSON.stringify(currentIntro) !== JSON.stringify(nextIntro) },
     { key: 'outro', label: '片尾', scope: 'project', current: frameText(currentOutro), next: frameText(nextOutro), changed: JSON.stringify(currentOutro) !== JSON.stringify(nextOutro) },
-    { key: 'transition', label: '转场', scope: 'project', current: board.transition === 'fade' ? '淡入淡出' : '无', next: template.transition === 'fade' ? '淡入淡出' : '无', changed: board.transition !== template.transition },
+    { key: 'transition', label: '转场', scope: 'project', current: board.transition, next: template.transition, changed: board.transition !== template.transition || board.transitionDuration !== template.transitionDuration },
+    { key: 'stylePack', label: '视觉风格包', scope: 'project', current: board.stylePack ?? '基础风格', next: template.stylePack ?? '基础风格', changed: board.stylePack !== template.stylePack },
     { key: 'bgmVolume', label: '背景音乐音量', scope: 'project', current: `${Math.round((board.bgmVolume ?? 0.12) * 100)}%`, next: `${Math.round(template.bgmVolume * 100)}%`, changed: (board.bgmVolume ?? 0.12) !== template.bgmVolume },
     { key: 'renderPreset', label: '导出画质', scope: 'project', current: currentRenderPreset === 'draft' ? '草稿' : '正式', next: template.renderPreset === 'draft' ? '草稿' : '正式', changed: currentRenderPreset !== template.renderPreset },
   ];

@@ -1,4 +1,5 @@
 import type { Scene, Storyboard } from './index';
+import { estimateVisualDensity } from './visual-density';
 
 export const sceneSeconds = (scene: Scene) => Math.max(3, scene.duration ?? 6, scene.audioDuration ?? 0) + (scene.sceneGap ?? 0);
 export const templates: { name: string; scene: Omit<Scene, 'id'> }[] = [
@@ -17,6 +18,8 @@ export function layoutMetrics(scene: Scene, portrait: boolean) {
   const density = Math.max(0.85, Math.min(scene.layout === 'compact' ? .85 : 1, Math.sqrt(limit / Math.max(limit, size))));
   const warnings: string[] = [];
   if (size > limit) warnings.push('画面文字较密，建议拆成多个场景或缩短正文。');
+  const measured = estimateVisualDensity(scene, portrait ? '9:16' : '16:9');
+  if (measured.overBudget && !warnings.some(warning => warning.includes('可读性预算'))) warnings.push(...measured.warnings);
   if ((scene.title?.length ?? 0) > (portrait ? 22 : 36)) warnings.push('标题较长，请检查换行。');
   if (scene.type === 'code' && String(scene.visual.code ?? '').split('\n').length > (portrait ? 24 : 18)) warnings.push('代码行数可能超出画面。');
   if (scene.duration && scene.audioDuration && scene.duration < scene.audioDuration) warnings.push('时长短于旁白，实际播放将延长至旁白结束。');

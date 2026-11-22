@@ -3,8 +3,8 @@ import { resolveBrandTheme, type ResolvedTheme } from '@m2v/styles';
 
 /** Resolve render styling from the scene's selected base style and saved snapshot. */
 export function resolveSceneTheme(
-  storyboard: Pick<Storyboard, 'styleId' | 'brand'>,
+  storyboard: Pick<Storyboard, 'styleId' | 'brand' | 'stylePack'>,
   scene: Pick<Scene, 'sceneStyle'>,
 ): ResolvedTheme {
-  return resolveBrandTheme(scene.sceneStyle ?? storyboard.styleId, storyboard.brand);
+  return resolveBrandTheme(scene.sceneStyle ?? storyboard.styleId, storyboard.brand, storyboard.stylePack);
 }

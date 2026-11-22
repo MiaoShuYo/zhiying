@@ -306,6 +306,7 @@ export function QualityDelivery({
           intro: board.intro,
           outro: board.outro,
           transition: board.transition,
+          transitionDuration: board.transitionDuration,
         }),
       }));
       setPresets(current => [result.preset, ...current.filter(preset => preset.id !== result.preset.id)]);

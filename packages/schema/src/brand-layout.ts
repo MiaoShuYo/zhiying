@@ -29,6 +29,9 @@ export const LOGO_CAPTION_GAP = 12;
 /** Conservative number of caption lines the safe area reserves. */
 export const CAPTION_RESERVED_LINES = 2;
 
+/** Extra breathing room used by the new selectable Visual Style Packs. */
+export const STYLE_PACK_LOGO_SAFE_AREA_RATIO = 0.055;
+
 /** Width of the authored 9:16 design canvas; the portrait renderer scales from this value. */
 export const DESIGN_CANVAS_PORTRAIT_WIDTH = 1080;
 
@@ -144,15 +147,19 @@ export function brandLogoPlacement(input: {
   subtitles: SubtitleSettings | undefined;
   videoWidth: number;
   videoHeight: number;
+  /** Optional inset for new visual packs; omitted to preserve legacy placement exactly. */
+  safeAreaRatio?: number;
 }): BrandLogoPlacement | null {
-  const { logo, subtitles, videoWidth, videoHeight } = input;
+  const { logo, subtitles, videoWidth, videoHeight, safeAreaRatio = 0 } = input;
   if (!logo?.enabled || !logo.src?.trim()) return null;
 
   const scale = rendererScale(videoWidth, videoHeight);
   const edge: BrandLogoPlacement['edge'] = logo.position.endsWith('left') ? 'left' : 'right';
   const verticalEdge: BrandLogoPlacement['verticalEdge'] = logo.position.startsWith('top') ? 'top' : 'bottom';
-  const edgeOffset = logo.margin * scale;
-  let verticalOffset = logo.margin * scale;
+  const safeInsetX = videoWidth * Math.min(.25, Math.max(0, safeAreaRatio));
+  const safeInsetY = videoHeight * Math.min(.25, Math.max(0, safeAreaRatio));
+  const edgeOffset = Math.max(logo.margin * scale, safeInsetX);
+  let verticalOffset = Math.max(logo.margin * scale, safeInsetY);
 
   const settings = SubtitleSchema.parse(subtitles ?? {});
   if (settings.enabled && settings.position === verticalEdge) {

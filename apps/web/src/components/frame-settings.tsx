@@ -37,8 +37,19 @@ export function FrameSettings({ board, disabled, onChange }: Props) {
     <label className="field-label">场景转场</label>
     <select className="input" disabled={disabled} value={board.transition ?? 'none'} onChange={e => onChange({ transition: e.currentTarget.value as Storyboard['transition'] })}>
       <option value="none">无（直接切换）</option>
+      <option value="cut">直切</option>
       <option value="fade">淡入淡出</option>
+      <option value="crossfade">交叉淡化</option>
+      <option value="wipe">擦除</option>
+      <option value="slide">滑动</option>
+      <option value="match-move">匹配移动</option>
+      <option value="shared-element-lite">共享元素（轻量）</option>
     </select>
+    {['crossfade', 'wipe', 'slide', 'match-move', 'shared-element-lite'].includes(board.transition ?? '') && <>
+      <label className="field-label">转场时长（秒）</label>
+      <input className="input" type="number" min={0.1} max={2.5} step={0.1} disabled={disabled} value={board.transitionDuration ?? 0.5} onChange={e => onChange({ transitionDuration: Number(e.currentTarget.value) })} />
+      <p className="muted">视觉转场复用场景交界处的帧，不增加成片时长或改变旁白时间；减弱运动时，擦除和滑动会回退为淡化。</p>
+    </>}
     <p className="muted">片头片尾计入成片总时长，字幕时间轴与导出前检查会自动顺延。</p>
   </section>;
 }

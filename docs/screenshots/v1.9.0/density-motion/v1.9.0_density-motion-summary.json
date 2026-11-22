@@ -1,0 +1,74 @@
+{
+  "outputs": [
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_16-9_motion-hero.mp4",
+      "sha256": "2343b57b95ae0f7183981cc75d06ca9fbf6daab9c6aa90eb8feeb6c92908faca",
+      "width": 1920,
+      "height": 1080,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_16-9_motion-comparison.mp4",
+      "sha256": "ff7262a136d31922d4a3baa366d170a321aa75ead7dbb7f777da4817f26b5097",
+      "width": 1920,
+      "height": 1080,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_16-9_motion-diagram.mp4",
+      "sha256": "35989308667252d9b8bc7c5dde01fcb87c7199e2b13acc052185bf80219fd017",
+      "width": 1920,
+      "height": 1080,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_16-9_motion-timeline.mp4",
+      "sha256": "e46fd622fa1164dd7f74cd6928c9909d1ba34721afb619846df488f6142c48be",
+      "width": 1920,
+      "height": 1080,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_16-9_motion-chart.mp4",
+      "sha256": "2730743d7e7034c8da7faa9c7338eb189e2b53079237ad58b87363e5d32163dc",
+      "width": 1920,
+      "height": 1080,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_9-16_motion-hero.mp4",
+      "sha256": "97e9141a43c360b11b24781af816882eefefeeaa23514cf3fdef6562f95461a7",
+      "width": 1080,
+      "height": 1920,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_9-16_motion-comparison.mp4",
+      "sha256": "859bb9cbba26fce1e3e43dd835f1bc8695e21e7b5f215dd6a28b53b29efcd1d2",
+      "width": 1080,
+      "height": 1920,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_9-16_motion-diagram.mp4",
+      "sha256": "4e5bfa1e4599c2c25dc74b3ed1464e1ba8f25f3bc9eebffd1205b9238379fbab",
+      "width": 1080,
+      "height": 1920,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_9-16_motion-timeline.mp4",
+      "sha256": "92a4fb76d8e043da1614a5be2f177a5f01991271e2899ecdd541f00e568e565b",
+      "width": 1080,
+      "height": 1920,
+      "duration": 4
+    },
+    {
+      "path": "C:\\Users\\Administrator\\.codex\\worktrees\\3ae9\\M2V\\docs\\outputs\\V1.9.0\\V1.9.0_9-16_motion-chart.mp4",
+      "sha256": "5268b4de73e11bb45227e841ae5a309343d6d246a40738668a0ebfffe783d499",
+      "width": 1080,
+      "height": 1920,
+      "duration": 4
+    }
+  ]
+}

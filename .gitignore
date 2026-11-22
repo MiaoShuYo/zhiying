@@ -58,5 +58,18 @@ data/models/f5-tts/vocos-mel-24khz/*
 !data/models/qwen3-4b/
 data/models/qwen3-4b/*
 !data/models/qwen3-4b/Modelfile
+
+# Keep the existing job log API source (the global logs/ rule targets runtime data).
+!apps/web/src/app/api/jobs/*/logs/
+!apps/web/src/app/api/jobs/*/logs/route.ts
+
+# Small, deterministic synthesized SFX are the only public audio files versioned.
+!apps/web/public/
+!apps/web/public/audio/
+!apps/web/public/audio/sfx/
+apps/web/public/audio/sfx/*
+!apps/web/public/audio/sfx/*.wav
 !data/models/qwen3-4b/qwen3-4b.gguf.part*
 doc/
+!doc/
+!doc/V1.8.0_install.md

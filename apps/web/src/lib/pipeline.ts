@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, codeLines, codeVisualOf, normalizeCodeVisualInput, resolveCodeSceneMode, type Scene, type Storyboard } from '@m2v/schema';
+import { sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, StylePackIdSchema, applyDensitySettings, selectRuleVisualPlans, defaultVisualDensitySettings, codeLines, codeVisualOf, normalizeCodeVisualInput, resolveCodeSceneMode, type Scene, type Storyboard, type StylePackId } from '@m2v/schema';
 import { db } from './db';
 import { copyBrandLogoToProject } from './brand-kit-logo-files';
 import { applyPendingBrandSnapshot, consumePendingBrandKitId, readImportSettings, resolveCreationBrandKitId, writeImportSettings } from './brand-kit-pending';
@@ -1479,7 +1479,7 @@ async function ollamaPreservedSlideNarrations(title: string, chapters: Chapter[]
   });
 }
 
-export async function createProject(input: { name: string; text: string; styleId: string; aspectRatio?: string; importMode?: string; generationMode?: string; file: File | null; preferLocalAI?: boolean; brandKitId?: string }) {
+export async function createProject(input: { name: string; text: string; styleId: string; aspectRatio?: string; importMode?: string; generationMode?: string; stylePack?: string; file: File | null; preferLocalAI?: boolean; brandKitId?: string }) {
   const extension = input.file ? extname(input.file.name).toLowerCase() : '';
   if (input.file && !['.pdf', '.md', '.markdown', '.pptx'].includes(extension)) throw new Error('目前支持 PDF、PPTX、Markdown 文件或直接输入文本');
   if (input.aspectRatio && !['16:9', '9:16'].includes(input.aspectRatio)) throw new Error('不支持的视频画幅');
@@ -1497,7 +1497,8 @@ export async function createProject(input: { name: string; text: string; styleId
   }
   // 项目还没有 Storyboard：先把品牌选择记为 pending，runProject 首次构造时注入快照。
   const pendingBrandKitId = await resolveCreationBrandKitId(input.brandKitId);
-  await writeImportSettings(project.id, { preferLocalAI: input.preferLocalAI === true, generationMode: input.generationMode === 'html' ? 'html' : 'standard', ...(pendingBrandKitId ? { brandKitId: pendingBrandKitId } : {}) });
+  const stylePack = StylePackIdSchema.safeParse(input.stylePack);
+  await writeImportSettings(project.id, { preferLocalAI: input.preferLocalAI === true, generationMode: input.generationMode === 'html' ? 'html' : 'standard', ...(stylePack.success ? { stylePack: stylePack.data } : {}), ...(pendingBrandKitId ? { brandKitId: pendingBrandKitId } : {}) });
   await db.job.create({ data: { projectId: project.id, kind: 'storyboard', status: 'queued', stage: 'extracting', attempt: 1 } });
   return { ...project, sourcePath };
 }
@@ -1509,11 +1510,11 @@ const activeProjectRuns = new Set<string>();
 export async function processProject(projectId: string, startAt: ProjectStage = 'extracting', preferLocalAI = false) {
   if (activeProjectRuns.has(projectId)) return;
   activeProjectRuns.add(projectId);
-  try { let requiredAI = preferLocalAI; let generationMode: 'standard' | 'html' = 'standard'; const settings = await readImportSettings(projectId); requiredAI ||= settings.preferLocalAI === true; generationMode = settings.generationMode === 'html' ? 'html' : 'standard'; await runProject(projectId, startAt, requiredAI, generationMode); }
+  try { let requiredAI = preferLocalAI; let generationMode: 'standard' | 'html' = 'standard'; const settings = await readImportSettings(projectId); requiredAI ||= settings.preferLocalAI === true; generationMode = settings.generationMode === 'html' ? 'html' : 'standard'; await runProject(projectId, startAt, requiredAI, generationMode, settings.stylePack); }
   finally { activeProjectRuns.delete(projectId); }
 }
 
-async function runProject(projectId: string, startAt: ProjectStage, preferLocalAI: boolean, generationMode: 'standard' | 'html') {
+async function runProject(projectId: string, startAt: ProjectStage, preferLocalAI: boolean, generationMode: 'standard' | 'html', stylePack?: StylePackId) {
   const job = await db.job.findFirstOrThrow({ where: { projectId, kind: 'storyboard' }, orderBy: { createdAt: 'desc' } });
   const ollamaSummary = createOllamaTelemetrySummary();
   const heartbeat = setInterval(() => {
@@ -1563,7 +1564,7 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
     await writeFile(resolve(checkpointDir, 'chapters.json'), JSON.stringify(chapters.map((chapter, position) => ({ index: position + 1, title: chapter.title, ...(chapter.page ? { page: chapter.page } : {}) })))).catch(() => {});
     const checkpointPath = resolve(checkpointDir, 'storyboard-checkpoint.json');
     const localLlm = readLocalLlmConfig();
-    const checkpointKey = createHash('sha256').update(JSON.stringify({ version: 2, chapters, title: project.name, style: project.styleId, mode: project.importMode, generationMode, model: localLlm.model, numCtx: localLlm.numCtx, preferLocalAI })).digest('hex');
+    const checkpointKey = createHash('sha256').update(JSON.stringify({ version: 2, chapters, title: project.name, style: project.styleId, stylePack: stylePack ?? null, mode: project.importMode, generationMode, model: localLlm.model, numCtx: localLlm.numCtx, preferLocalAI })).digest('hex');
     if (startAt === 'storyboarding') {
       try {
         const cached = JSON.parse(await readFile(checkpointPath, 'utf8'));
@@ -1631,7 +1632,8 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
       return { ...scene, visual: { ...scene.visual, html: sanitizeSceneHtml(designedHtml) } };
     });
     // 首次构造 storyboard 时注入 pending 品牌；已存在分镜的项目不会走到这里。
-    const storyboard: Storyboard = await applyPendingBrandSnapshot(projectId, StoryboardSchema.parse({ title: project.name, styleId: project.styleId, aspectRatio: project.aspectRatio, scenes: finalScenes }));
+    const densityStoryboard = StoryboardSchema.parse({ title: project.name, styleId: project.styleId, ...(stylePack ? { stylePack } : {}), aspectRatio: project.aspectRatio, visualDensity: defaultVisualDensitySettings, scenes: finalScenes });
+    const storyboard: Storyboard = await applyPendingBrandSnapshot(projectId, applyDensitySettings(selectRuleVisualPlans(densityStoryboard), defaultVisualDensitySettings));
     await db.project.update({ where: { id: projectId }, data: { status: 'storyboarding' } });
     await db.job.update({ where: { id: job.id }, data: { stage: 'storyboarding' } });
     await db.$transaction([

@@ -1,8 +1,8 @@
 import type { Storyboard } from './index';
-import { timelineFrames } from './timeline';
+import { sceneTransitionWindows, timelineFrames } from './timeline';
 
 /** Bump when the rendered pixels or the segment cache layout change. */
-export const RENDER_VERSION = 2;
+export const RENDER_VERSION = 3;
 export const RENDER_FPS = 30;
 
 export const RENDER_STAGES = ['bundling', 'rendering', 'concatenating', 'encoding', 'validating'] as const;
@@ -148,11 +148,16 @@ export function segmentPlan(input: SegmentPlanInput): RenderPlan {
     preset,
     fps,
     styleId: storyboard.styleId,
+    ...(storyboard.stylePack ? { stylePack: storyboard.stylePack } : {}),
+    ...(storyboard.soundEffects ? { soundEffects: storyboard.soundEffects } : {}),
     aspectRatio: storyboard.aspectRatio,
     subtitles: storyboard.subtitles ?? null,
     transition: storyboard.transition ?? 'none',
+    ...(storyboard.transitionDuration === undefined ? {} : { transitionDuration: storyboard.transitionDuration }),
+    ...(storyboard.reducedMotion ? { reducedMotion: true } : {}),
     bgm: {
       src: storyboard.bgmSrc ?? null,
+      enabled: storyboard.bgmEnabled !== false,
       volume: storyboard.bgmVolume ?? 0.12,
       fadeIn: storyboard.bgmFadeIn ?? 1,
       fadeOut: storyboard.bgmFadeOut ?? 1,
@@ -168,15 +173,21 @@ export function segmentPlan(input: SegmentPlanInput): RenderPlan {
     cachedByKey.set(item.key, item);
   }
   const { segments, totalFrames } = timelineFrames(storyboard, fps);
+  const transitionTo = new Map(sceneTransitionWindows(storyboard, fps).map(window => [window.fromIndex, storyboard.scenes[window.toIndex]]));
   const planned: PlannedSegment[] = segments.map(segment => {
     const scene = segment.kind === 'scene' ? storyboard.scenes[segment.index] : undefined;
     const key = segment.kind === 'scene' ? `scene:${scene!.id}` : segment.kind;
+    const transitionTarget = segment.kind === 'scene' ? transitionTo.get(segment.index) : undefined;
     const content = segment.kind === 'scene'
-      ? stableStringify(scene)
+      ? stableStringify(transitionTarget ? { scene, transitionTo: transitionTarget } : scene)
       : stableStringify({ card: segment.kind === 'intro' ? storyboard.intro ?? null : storyboard.outro ?? null, title: storyboard.title });
     const signature = scene?.audioSrc ? input.audioSignatures?.[scene.audioSrc] ?? null : null;
+    const sfx = storyboard.soundEffects?.enabled ? (scene?.sfxCues ?? []).map(cue => {
+      const src = cue.assetSrc ?? `audio/sfx/${cue.cueId}.wav`;
+      return { cue, src, signature: input.audioSignatures?.[src] ?? null };
+    }) : [];
     const audio = segment.kind === 'scene'
-      ? stableStringify({ src: scene?.audioSrc ?? null, duration: scene?.audioDuration ?? null, key: scene?.audioKey ?? null, signature })
+      ? stableStringify({ src: scene?.audioSrc ?? null, duration: scene?.audioDuration ?? null, key: scene?.audioKey ?? null, signature, sfx })
       : stableStringify(null);
     const parts: SegmentParts = {
       global: globalHash,
