@@ -34,7 +34,7 @@ import { probeVideoFile } from '@m2v/video/probe';
 import dotenv from 'dotenv';
 import { JOB_ID_PATTERN, jobLogFileName, openJobLog } from './job-log';
 import { ensureSegmentDir, pruneSegmentCache, readSegmentIndex, segmentBytes, segmentDir, segmentVideoPath, writeSegmentMeta } from './segment-cache';
-import { captureVisualQaPreflight, finalizeVisualQaAfterRender } from './visual-qa';
+import { captureVisualQaPreflight, finalizeVisualQaAfterRender, visualQaChromiumOptions } from './visual-qa';
 
 const repo = resolve(process.cwd(), '../..');
 dotenv.config({ path: resolve(repo, 'apps/web/.env') });
@@ -253,7 +253,7 @@ async function renderJob(jobId: string, projectId: string) {
 
     const inputProps = { storyboard };
     const pending = plan.segments.filter(segment => !segment.reuse);
-    const browser = await openBrowser('chrome', { browserExecutable: browserExecutable ?? null });
+    const browser = await openBrowser('chrome', { browserExecutable: browserExecutable ?? null, chromiumOptions: visualQaChromiumOptions() });
     try {
       const composition = await selectComposition({ serveUrl, id: 'ExplainerVideo', inputProps, browserExecutable, puppeteerInstance: browser });
       width = composition.width;

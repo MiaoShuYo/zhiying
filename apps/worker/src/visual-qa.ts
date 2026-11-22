@@ -36,6 +36,11 @@ type FramePlanEntry = {
 type TransitionPlan = { fromSceneId: string; toSceneId: string; startFrame: number; frames: number; transition: string };
 type VisualQaPlan = { entries: FramePlanEntry[]; transitions: TransitionPlan[] };
 
+/** Force Chromium's software GL backend for reproducible CPU-only QA runs. */
+export function visualQaChromiumOptions(cpuOnly = process.env.M2V_VISUAL_QA_CPU_ONLY === '1') {
+  return cpuOnly ? { gl: 'swiftshader' as const } : undefined;
+}
+
 function makeFramePlan(board: Storyboard, fps: number): VisualQaPlan {
   const { segments, totalFrames } = timelineFrames(board, fps);
   const sceneSegments = segments.filter(segment => segment.kind === 'scene');

@@ -11,7 +11,7 @@ import { CodeScene } from './code-scene';
 import { CodeHtmlScene } from './code-html-scene';
 import { VisualTemplateContent, visualTemplateRegistry } from './visual-templates';
 import { animatedNumberValue, motionStyleForTarget } from './motion';
-import { resolveBgmFrameGain, resolveSfxCueFadeEnvelope, resolveSfxCueInstances } from './sfx';
+import { resolveAudioDuckGain, resolveBgmFrameGain, resolveSfxCueFadeEnvelope, resolveSfxCueInstances } from './sfx';
 
 export * from './code-scene';
 export * from './code-html-scene';
@@ -59,13 +59,13 @@ function SfxAudio({ src, durationFrames, gain, settings, scene, cueStartFrame, f
   if (!settings.enabled || available !== true) return null;
   const fadeIn = Math.round(settings.fadeIn * fps);
   const fadeOut = Math.round(settings.fadeOut * fps);
-  const voiceFrames = Math.round((scene.audioDuration ?? 0) * fps);
+  const voiceFrames = Math.round((scene.audioDuration ?? scene.duration ?? 0) * fps);
   return <Sequence from={cueStartFrame} durationInFrames={Math.max(1, durationFrames)}>
     <Audio src={staticFile(src)} volume={frame => {
       const sceneFrame = cueStartFrame + frame;
       const activeCues = allCues.filter(cue => sceneFrame >= cue.startFrame && sceneFrame < cue.startFrame + cue.durationFrames).length;
       const envelope = resolveSfxCueFadeEnvelope({ frame, durationFrames, fadeInFrames: fadeIn, fadeOutFrames: fadeOut });
-      const voiceDuck = scene.audioSrc && sceneFrame < voiceFrames ? 1 - settings.voiceDuck : 1;
+      const voiceDuck = scene.audioSrc ? resolveAudioDuckGain(sceneFrame, [{ startFrame: 0, endFrame: voiceFrames }], 1 - settings.voiceDuck) : 1;
       return Math.max(0, Math.min(.8, settings.volume * gain / Math.max(1, activeCues) * envelope * voiceDuck));
     }} />
   </Sequence>;
@@ -539,33 +539,26 @@ export function ExplainerVideo({ storyboard, onOverflow, visualQaCapture = false
   const transitionWindows = sceneTransitionWindows(storyboard, fps);
   const music = storyboard.bgmEnabled !== false ? storyboard.bgmSrc : undefined;
   const soundSettings = SoundEffectsSettingsSchema.parse(storyboard.soundEffects ?? {});
-  const hasSfx = soundSettings.enabled && storyboard.scenes.some(scene => Boolean(scene.sfxCues?.length));
   const totalFrames = getDurationInFrames(storyboard, fps);
   const fadeInFrames = Math.round((storyboard.bgmFadeIn ?? 1) * fps);
   const fadeOutFrames = Math.round((storyboard.bgmFadeOut ?? 1) * fps);
   const baseVolume = storyboard.bgmVolume ?? 0.12;
-  const speechActive = (frame: number) => segments.some(segment => {
-    if (segment.kind !== 'scene') return false;
+  const soundActivityWindows = soundSettings.enabled ? segments.flatMap(segment => {
+    if (segment.kind !== 'scene') return [];
     const scene = storyboard.scenes[segment.index];
-    if (!scene?.audioSrc) return false;
-    const voiceEnd = segment.startFrame + Math.round((scene.audioDuration ?? scene.duration ?? 0) * fps);
-    return frame >= segment.startFrame && frame < voiceEnd;
-  });
-  const sfxActive = (frame: number) => {
-    if (!soundSettings.enabled) return false;
-    const segment = segments.find(item => item.kind === 'scene' && frame >= item.startFrame && frame < item.startFrame + item.frames);
-    const scene = segment?.kind === 'scene' ? storyboard.scenes[segment.index] : undefined;
-    if (!segment || !scene || scene.visualStaticFallback || !scene.sfxCues?.length) return false;
-    const localFrame = frame - segment.startFrame;
-    return resolveSfxCueInstances(scene, scene.sfxCues, fps).some(cue => localFrame >= cue.startFrame && localFrame < cue.startFrame + cue.durationFrames);
-  };
+    if (!scene || scene.visualStaticFallback) return [];
+    const windows: { startFrame: number; endFrame: number }[] = [];
+    if (scene.audioSrc) windows.push({ startFrame: segment.startFrame, endFrame: segment.startFrame + Math.round((scene.audioDuration ?? scene.duration ?? 0) * fps) });
+    if (scene.sfxCues?.length) windows.push(...resolveSfxCueInstances(scene, scene.sfxCues, fps).map(cue => ({ startFrame: segment.startFrame + cue.startFrame, endFrame: segment.startFrame + cue.startFrame + cue.durationFrames })));
+    return windows;
+  }) : [];
   const volume = (frame: number) => resolveBgmFrameGain({
     frame,
     totalFrames,
     baseVolume,
     fadeInFrames,
     fadeOutFrames,
-    duckGain: hasSfx && (speechActive(frame) || sfxActive(frame)) ? 1 - soundSettings.bgmDuck : 1,
+    duckGain: resolveAudioDuckGain(frame, soundActivityWindows, 1 - soundSettings.bgmDuck),
   });
   const introSegment = segments.find(segment => segment.kind === 'intro');
   const outroSegment = segments.find(segment => segment.kind === 'outro');

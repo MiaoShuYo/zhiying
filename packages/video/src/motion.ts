@@ -38,7 +38,7 @@ function beatFocusStyle(targetId: string, frames: ReturnType<typeof resolveVisua
 }
 
 /** Frame-pure mapping from whitelisted action data to CSS primitives. */
-export function motionStyleForTarget(input: { targetId: string; scene: Scene; frame: number; fps: number; reducedMotion?: boolean }): CSSProperties {
+function motionStyleForTargetUnsafe(input: { targetId: string; scene: Scene; frame: number; fps: number; reducedMotion?: boolean }): CSSProperties {
   const { targetId, scene, frame, fps } = input;
   const frames = resolveVisualBeatTimeline(scene, fps);
   const actions = (scene.visualPlan?.motionPresets ?? []).filter(action => action.targetId === targetId);
@@ -79,15 +79,29 @@ export function motionStyleForTarget(input: { targetId: string; scene: Scene; fr
   }
 }
 
+/** Animation calculation failures keep the complete target visible in its static state. */
+export function motionStyleForTarget(input: { targetId: string; scene: Scene; frame: number; fps: number; reducedMotion?: boolean }): CSSProperties {
+  try {
+    return motionStyleForTargetUnsafe(input);
+  } catch {
+    return {};
+  }
+}
+
 export function animatedNumberValue(input: { targetId: string; value: number; scene: Scene; frame: number; fps: number; reducedMotion?: boolean }): string {
-  const action = input.scene.visualPlan?.motionPresets.find(
-    (item): item is Extract<MotionAction, { action: 'number-count' }> => item.targetId === input.targetId && item.action === 'number-count',
-  );
-  if (!action || input.reducedMotion) return input.value.toLocaleString();
-  const frames = resolveVisualBeatTimeline(input.scene, input.fps);
-  const window = actionWindow(action, input.scene, input.fps, frames);
-  if (!window) return input.value.toLocaleString();
-  const progress = ease((input.frame - window.start) / Math.max(1, window.end - window.start), action.easingPreset);
-  const decimals = action.parameters.decimals;
-  return (input.value * progress).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  const staticValue = input.value.toLocaleString();
+  try {
+    const action = input.scene.visualPlan?.motionPresets.find(
+      (item): item is Extract<MotionAction, { action: 'number-count' }> => item.targetId === input.targetId && item.action === 'number-count',
+    );
+    if (!action || input.reducedMotion) return staticValue;
+    const frames = resolveVisualBeatTimeline(input.scene, input.fps);
+    const window = actionWindow(action, input.scene, input.fps, frames);
+    if (!window) return staticValue;
+    const progress = ease((input.frame - window.start) / Math.max(1, window.end - window.start), action.easingPreset);
+    const decimals = action.parameters.decimals;
+    return (input.value * progress).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  } catch {
+    return staticValue;
+  }
 }

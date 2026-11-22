@@ -70,3 +70,33 @@ test('number-count displays the final value with reduced motion and animates the
   assert.equal(animatedNumberValue({ targetId: 'chart-value-1', value: 120, scene, frame: 60, fps: 30 }), '120.0');
   assert.equal(animatedNumberValue({ targetId: 'chart-value-1', value: 120, scene, frame: 0, fps: 30, reducedMotion: true }), '120');
 });
+
+test('malformed animation data falls back to visible static content and the final number', () => {
+  const revealScene = chartScene();
+  const malformedReveal = {
+    ...revealScene,
+    visualPlan: {
+      ...revealScene.visualPlan!,
+      motionPresets: [{ targetId: 'chart-1', beatRef: 'beat-1', durationPolicy: 'beat', action: 'reveal', parameters: null }],
+    },
+  } as unknown as typeof revealScene;
+  assert.deepEqual(
+    motionStyleForTarget({ targetId: 'chart-1', scene: malformedReveal, frame: 12, fps: 30 }),
+    {},
+    'an invalid action leaves the target at its ordinary static style',
+  );
+
+  const numberScene = chartScene();
+  const malformedNumber = {
+    ...numberScene,
+    visualPlan: {
+      ...numberScene.visualPlan!,
+      motionPresets: [{ targetId: 'chart-value-1', beatRef: 'beat-1', durationPolicy: 'beat', action: 'number-count', parameters: { decimals: 101 } }],
+    },
+  } as unknown as typeof numberScene;
+  assert.equal(
+    animatedNumberValue({ targetId: 'chart-value-1', value: 120, scene: malformedNumber, frame: 12, fps: 30 }),
+    (120).toLocaleString(),
+    'a formatting failure returns the complete static value',
+  );
+});

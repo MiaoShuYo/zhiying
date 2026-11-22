@@ -50,8 +50,12 @@ test('rule selection applies to generated scenes and preserves a user lock until
 
   const productionTools = readFileSync(new URL('../../../apps/web/src/components/production-tools.tsx', import.meta.url), 'utf8');
   const editor = readFileSync(new URL('../../../apps/web/src/components/project-editor.tsx', import.meta.url), 'utf8');
-  assert.match(productionTools, /function chooseVisualTemplate[\s\S]*?manualOverride: true, provenance: 'user'/, 'manual template picker creates an undoable user lock');
+  assert.match(productionTools, /function chooseVisualTemplate[\s\S]*?manualOverride: true, provenance: 'user'[\s\S]*?patchScene\(/, 'manual template picker routes changes through the undoable scene patch');
+  assert.match(productionTools, /function patchScene\([\s\S]*?setUndoBoard\(board\)[\s\S]*?onChange\(/, 'template and density edits save the previous board for undo');
+  assert.match(productionTools, /data-template-thumbnail=\{templateId\}/, 'each candidate exposes its local visual thumbnail');
+  assert.match(productionTools, /aria-label="候选视觉模板"[\s\S]*?onClick=\{\(\) => chooseVisualTemplate\(templateId\)\}/, 'candidate cards select their corresponding template');
   assert.match(productionTools, /function reselectVisualTemplate\(\)[\s\S]*?decideVisualTemplate\(scene\)[\s\S]*?manualOverride: false, provenance: 'rule'/, 'reselect button applies the deterministic rule and clears the user lock');
   assert.match(editor, /boardUndo\.current = \[\.\.\.boardUndo\.current\.slice\(-49\), JSON\.parse\(JSON\.stringify\(previous\)\) as Storyboard\]/, 'editor snapshots the previous storyboard before an edit');
   assert.match(editor, /const undoBoard = useCallback\(\(\) => \{[\s\S]*?boardUndo\.current\.pop\(\)[\s\S]*?setData\(current => \(\{ \.\.\.current, storyboard: previous \}\)\)/, 'editor undo restores the previous storyboard snapshot');
+  assert.match(editor, /title="撤销上一步分镜修改（Ctrl\+Z）" onClick=\{undoBoard\}/, 'the undo control is visible in the project editor');
 });

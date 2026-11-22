@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { SceneSchema, SoundEffectsSettingsSchema, SfxCueSchema, SfxCueIdSchema, StoryboardSchema, fullRenderPlan, preflight } from '@m2v/schema';
-import { resolveBgmFrameGain, resolveSfxCueInstances, resolveSfxCueStartFrame, sfxCueFadeEnvelope, sfxCueOptions, sfxCueRegistry } from '../src/sfx';
+import { resolveAudioDuckGain, resolveBgmFrameGain, resolveSfxCueInstances, resolveSfxCueStartFrame, sfxCueFadeEnvelope, sfxCueOptions, sfxCueRegistry } from '../src/sfx';
 
 const ids = ['soft-transition', 'emphasis-tick', 'data-pop', 'flow-pulse', 'success-chime', 'paper-tap'] as const;
 const publicDir = resolve(process.cwd(), 'apps/web/public');
@@ -122,6 +122,25 @@ test('BGM mute is retained in the render fingerprint and frame gains honor fades
   assert.equal(gain(89), 0, 'BGM fade-out reaches silence on the final frame');
   assert.ok(gain(45) > 0);
   assert.ok(gain(45, .25) < gain(45), 'ducking lowers the active BGM gain');
+});
+
+test('zero-config BGM fades still have silent endpoints and audio duck ramps are monotonic', () => {
+  const bgmGain = (frame: number) => resolveBgmFrameGain({
+    frame, totalFrames: 12, baseVolume: .5, fadeInFrames: 0, fadeOutFrames: 0,
+  });
+  assert.equal(bgmGain(0), 0, 'BGM starts at zero even when fade-in is configured as zero');
+  assert.ok(bgmGain(1) > 0);
+  assert.equal(bgmGain(11), 0, 'BGM ends at zero even when fade-out is configured as zero');
+
+  const window = [{ startFrame: 10, endFrame: 20 }];
+  const gain = (frame: number) => resolveAudioDuckGain(frame, window, .2, 3);
+  const attack = [7, 8, 9, 10].map(gain);
+  const release = [19, 20, 21, 22, 23].map(gain);
+  assert.deepEqual(attack.slice(0, 1), [1]);
+  assert.ok(attack.every((value, index) => index === 0 || value <= attack[index - 1]!));
+  assert.equal(attack.at(-1), .2, 'duck is at full attenuation when voice begins');
+  assert.ok(release.every((value, index) => index === 0 || value >= release[index - 1]!));
+  assert.equal(release.at(-1), 1, 'duck returns smoothly to unity after voice ends');
 });
 
 test('server-side missing SFX checks warn without blocking export; disabled SFX skips the warning', () => {

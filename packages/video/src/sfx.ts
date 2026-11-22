@@ -15,6 +15,30 @@ export const sfxCueRegistry: Record<SfxCueId, SfxCueDefinition> = {
 export const sfxCueOptions = Object.values(sfxCueRegistry).map(({ cueId, durationSeconds }) => ({ cueId, durationSeconds }));
 
 export type ResolvedSfxCueInstance = { cue: SfxCue; startFrame: number; durationFrames: number; src: string };
+export type AudioDuckWindow = { startFrame: number; endFrame: number };
+
+/** Smoothly changes gain around voice/SFX windows to avoid a click at duck boundaries. */
+export function resolveAudioDuckGain(frameInput: number, windows: readonly AudioDuckWindow[], attenuationInput: number, rampFramesInput = 3): number {
+  const frame = Math.floor(frameInput);
+  const attenuation = Math.max(0, Math.min(1, attenuationInput));
+  const rampFrames = Math.max(1, Math.floor(rampFramesInput));
+  let gain = 1;
+  for (const window of windows) {
+    const start = Math.max(0, Math.floor(window.startFrame));
+    const end = Math.max(start, Math.floor(window.endFrame));
+    let windowGain = 1;
+    if (frame >= start && frame < end) windowGain = attenuation;
+    else if (frame >= start - rampFrames && frame < start) {
+      const progress = (frame - (start - rampFrames)) / rampFrames;
+      windowGain = 1 - (1 - attenuation) * progress;
+    } else if (frame >= end && frame < end + rampFrames) {
+      const progress = (frame - end) / rampFrames;
+      windowGain = attenuation + (1 - attenuation) * progress;
+    }
+    gain = Math.min(gain, windowGain);
+  }
+  return gain;
+}
 
 /** Resolve a semantic SFX cue to the current scene frame; beat timing is recalculated from current TTS data. */
 export function resolveSfxCueStartFrame(scene: Scene, cue: Pick<SfxCue, 'beatRef' | 'targetId' | 'offsetSeconds'>, fpsInput = 30): number {
@@ -81,10 +105,10 @@ export function resolveBgmFrameGain(input: {
 }): number {
   const totalFrames = Math.max(1, Math.floor(input.totalFrames));
   const frame = Math.min(totalFrames - 1, Math.max(0, Math.floor(input.frame)));
-  const fadeInFrames = Math.max(0, Math.floor(input.fadeInFrames));
-  const fadeOutFrames = Math.max(0, Math.floor(input.fadeOutFrames));
-  const attack = fadeInFrames ? Math.min(1, frame / fadeInFrames) : 1;
-  const release = fadeOutFrames ? Math.max(0, Math.min(1, (totalFrames - 1 - frame) / fadeOutFrames)) : 1;
+  const fadeInFrames = Math.max(1, Math.floor(input.fadeInFrames));
+  const fadeOutFrames = Math.max(1, Math.floor(input.fadeOutFrames));
+  const attack = Math.min(1, frame / (fadeInFrames + 1));
+  const release = Math.max(0, Math.min(1, (totalFrames - 1 - frame) / (fadeOutFrames + 1)));
   const volume = Math.max(0, Math.min(1, input.baseVolume));
   const duckGain = Math.max(0, Math.min(1, input.duckGain ?? 1));
   return volume * Math.min(attack, release) * duckGain;
