@@ -4,11 +4,17 @@
 // 若用户的 TEMP/TMP ACL 异常，Inno 的 [Code] 还没有机会运行。本启动壳把内嵌的
 // Inno 安装器解到当前用户 LocalAppData 下的独立目录，并只为安装器子进程设置
 // TEMP/TMP，从而绕过损坏的系统临时目录 ACL；不修改用户/系统环境变量。
+//
+// #124：解出的安装器在 Process.Start 前若被其他账户替换，就会以安装用户的身份执行。
+// 因此 run-* 目录创建时即使用不继承的私有 ACL（仅当前用户、SYSTEM、Administrators），
+// 并拒绝其他账户可删除/改名子项或修改权限的回退根目录（例如共享的 TEMP）。
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Windows.Forms;
 
@@ -97,6 +103,82 @@ namespace Zhiying
             catch { /* Ignore malformed or unavailable fallback paths. */ }
         }
 
+        // NT SERVICE\TrustedInstaller owns many system folders and is as trusted as SYSTEM.
+        private const string TrustedInstallerSid = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+        private static SecurityIdentifier[] TrustedSids()
+        {
+            return new SecurityIdentifier[]
+            {
+                WindowsIdentity.GetCurrent().User,
+                new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+            };
+        }
+
+        private static bool IsTrustedSid(IdentityReference identity)
+        {
+            SecurityIdentifier sid = identity as SecurityIdentifier;
+            if (sid == null) return false;
+            foreach (SecurityIdentifier trusted in TrustedSids())
+            {
+                if (sid.Equals(trusted)) return true;
+            }
+            return sid.Value == TrustedInstallerSid;
+        }
+
+        // Rights on a staging root that let another account delete, rename or replace our
+        // run-* directory, or rewrite the root's ACL to gain that ability.
+        private static bool GrantsReplace(FileSystemAccessRule rule)
+        {
+            const int GenericAll = 0x10000000;
+            FileSystemRights dangerous = FileSystemRights.DeleteSubdirectoriesAndFiles | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+            return (rule.FileSystemRights & dangerous) != 0 || ((int)rule.FileSystemRights & GenericAll) != 0;
+        }
+
+        // Returns a description of the untrusted account that could tamper with entries of the
+        // root, or null when only the current user, SYSTEM and Administrators can.
+        private static string UntrustedControllerOf(string directory)
+        {
+            DirectorySecurity security = Directory.GetAccessControl(directory, AccessControlSections.Access | AccessControlSections.Owner);
+            IdentityReference owner = security.GetOwner(typeof(SecurityIdentifier));
+            if (owner == null || !IsTrustedSid(owner)) return "所有者 " + (owner == null ? "未知" : owner.Value);
+            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+            {
+                if (rule.AccessControlType != AccessControlType.Allow) continue;
+                // Inherit-only entries (e.g. CREATOR OWNER) do not apply to the root itself.
+                if ((rule.PropagationFlags & PropagationFlags.InheritOnly) != 0) continue;
+                if (GrantsReplace(rule) && !IsTrustedSid(rule.IdentityReference)) return rule.IdentityReference.Value;
+            }
+            return null;
+        }
+
+        private static DirectorySecurity PrivateDirectorySecurity()
+        {
+            DirectorySecurity security = new DirectorySecurity();
+            security.SetAccessRuleProtection(true, false);
+            security.SetOwner(WindowsIdentity.GetCurrent().User);
+            InheritanceFlags inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+            foreach (SecurityIdentifier sid in TrustedSids())
+            {
+                security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            }
+            return security;
+        }
+
+        private static void VerifyPrivateDirectory(string directory)
+        {
+            DirectorySecurity security = Directory.GetAccessControl(directory, AccessControlSections.Access | AccessControlSections.Owner);
+            IdentityReference owner = security.GetOwner(typeof(SecurityIdentifier));
+            if (!security.AreAccessRulesProtected || owner == null || !IsTrustedSid(owner))
+                throw new UnauthorizedAccessException("无法为安装器临时目录设置私有权限");
+            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+            {
+                if (rule.AccessControlType == AccessControlType.Allow && !IsTrustedSid(rule.IdentityReference))
+                    throw new UnauthorizedAccessException("安装器临时目录仍允许其他账户访问：" + rule.IdentityReference.Value);
+            }
+        }
+
         private static string CreatePrivateStagingDirectory()
         {
             List<string> stagingRoots = new List<string>();
@@ -122,7 +204,13 @@ namespace Zhiying
                 try
                 {
                     Directory.CreateDirectory(stagingRoot);
-                    Directory.CreateDirectory(stagingDirectory);
+                    string untrusted = UntrustedControllerOf(stagingRoot);
+                    if (untrusted != null)
+                        throw new UnauthorizedAccessException("其他账户可替换该目录中的内容（" + untrusted + "）");
+                    // CreateDirectory ignores the ACL when the path already exists, so never reuse one.
+                    if (Directory.Exists(stagingDirectory)) throw new IOException("临时目录已存在：" + stagingDirectory);
+                    Directory.CreateDirectory(stagingDirectory, PrivateDirectorySecurity());
+                    VerifyPrivateDirectory(stagingDirectory);
                     // Check real file creation before extraction or launching Inno Setup.
                     string probe = Path.Combine(stagingDirectory, ".write-probe-" + Guid.NewGuid().ToString("N"));
                     using (new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }

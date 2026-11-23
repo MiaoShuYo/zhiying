@@ -14,6 +14,13 @@ const root = join(repo, 'data/backups');
 const publicRoot = join(repo, 'apps/web/public');
 const safeId = (id: string) => { if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id)) throw new Error('无效 ID'); return id; };
 const inside = (base: string, path: string) => { if (typeof path !== 'string' || path.includes('\\') || path.includes('\0') || path.split('/').some(part => !part || part === '.' || part === '..' || /[. ]$/.test(part))) throw new Error('备份路径无效'); const target = resolve(base, path); const rel = relative(base, target); if (!rel || rel.startsWith('..') || rel.includes(':') || rel.startsWith(sep)) throw new Error('备份路径无效'); return target; };
+/**
+ * Files copied into apps/web/public are served from the studio's own origin with a MIME type
+ * chosen by their extension. A crafted package could otherwise publish `payload.html` or an SVG
+ * and run its script against the local APIs (#300), so only the raster image and audio formats
+ * the studio itself accepts are ever published.
+ */
+const PUBLISHABLE_MEDIA = /\.(?:png|jpe?g|webp|gif|mp3|wav|m4a|ogg|flac)$/i;
 // Windows reports EPERM for a directory rename while a scanner or editor still holds
 // a handle on a freshly written file inside it, so a snapshot used to fail intermittently.
 const renameWithRetry = async (from: string, to: string) => {
@@ -356,6 +363,10 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
     if (board) for (const scene of board.scenes) if (scene.audioSrc && !audioTargets.has(scene.audioSrc)) missingMedia.push(`旁白音频 ${scene.audioSrc}`);
     if (board?.bgmSrc && !audioTargets.has(board.bgmSrc) && !projectAssetTargets.has(board.bgmSrc)) missingMedia.push(`背景音乐 ${board.bgmSrc}`);
     if (missingMedia.length) throw new RestoreError('files', `备份缺少媒体文件：${missingMedia.join('、')}`, missingMedia);
+    // Narration audio only ever lives in public/audio, so a non-audio entry there can only be an
+    // attempt to publish active content and the whole package is refused.
+    const unsafeAudio = manifest.files.filter(file => file.path.startsWith('public/audio/') && !PUBLISHABLE_MEDIA.test(file.path)).map(file => file.path);
+    if (unsafeAudio.length) throw new RestoreError('validate', `备份包含不支持的音频格式：${unsafeAudio.join('、')}`, unsafeAudio);
     if (board) board.scenes.forEach(scene => { scene.id = randomUUID(); });
     const voiceId = manifest.files.some(file => file.path.startsWith('voice/')) ? `backup-${newId}` : null;
     const restoredName = await nextRestoredName(manifest.project.name);
@@ -396,7 +407,9 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
       try {
         await mkdir(resolve(target, '..'), { recursive: true });
         await copyFile(source, target);
-        if (file.path.startsWith('project/assets/')) {
+        // Project assets of any other type stay in the private project folder and are never
+        // published, so they cannot be opened as a page on the studio's origin (#300).
+        if (file.path.startsWith('project/assets/') && PUBLISHABLE_MEDIA.test(file.path)) {
           const pub = inside(join(publicRoot, 'projects', newId), file.path.slice(8));
           await mkdir(resolve(pub, '..'), { recursive: true });
           await copyFile(target, pub);

@@ -4,7 +4,8 @@ import { NextResponse } from 'next/server';
 import {
   BrandKitError,
   readBrandKits,
-  updateBrandKit,
+  updateBrandKitHoldingLock,
+  withBrandKitLock,
 } from '@/lib/brand-kits';
 import {
   replaceBrandKitLogoFiles,
@@ -48,9 +49,7 @@ export async function POST(request: Request) {
   if (file.size > MAX_LOGO_BYTES) return NextResponse.json({ error: 'Logo 文件不能超过 5 MiB' }, { status: 413 });
 
   try {
-    const kits = await readBrandKits();
-    const brandKit = kits.find(kit => kit.id === brandKitId);
-    if (!brandKit) throw new BrandKitError('找不到这个 Brand Kit', 404);
+    if (!(await readBrandKits()).some(kit => kit.id === brandKitId)) throw new BrandKitError('找不到这个 Brand Kit', 404);
 
     const extension = extname(file.name).toLowerCase() as keyof typeof accepted;
     const expected = accepted[extension];
@@ -86,12 +85,19 @@ export async function POST(request: Request) {
 
     const logoExtension: BrandLogoExtension = extension.slice(1) as BrandLogoExtension;
     let updatedBrandKit;
-    await replaceBrandKitLogoFiles({
-      brandKitId,
-      extension: logoExtension,
-      bytes: normalized,
-      previousSrc: brandKit.logo?.src,
-      commit: async src => { updatedBrandKit = await updateBrandKit(brandKitId, { logo: { src } }); },
+    // #184: the whole replacement (file swap, metadata commit, rollback and removal of the old
+    // format) runs under the kit lock, and the previous Logo is read inside it. Two uploads can
+    // no longer delete each other's committed file or leave the two mirrors with different bytes.
+    await withBrandKitLock(brandKitId, async () => {
+      const brandKit = (await readBrandKits()).find(kit => kit.id === brandKitId);
+      if (!brandKit) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
+      await replaceBrandKitLogoFiles({
+        brandKitId,
+        extension: logoExtension,
+        bytes: normalized,
+        previousSrc: brandKit.logo?.src,
+        commit: async src => { updatedBrandKit = await updateBrandKitHoldingLock(brandKitId, { logo: { src } }); },
+      });
     });
     return NextResponse.json({ brandKit: updatedBrandKit });
   } catch (error) {

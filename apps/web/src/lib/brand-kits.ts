@@ -13,6 +13,7 @@ import {
 } from '@m2v/schema';
 import { z } from 'zod';
 import { copyBrandKitLogo, removeBrandKitLogoFiles } from './brand-kit-logo-files';
+import { withKeyedLock } from './keyed-mutex';
 
 export const MAX_BRAND_KITS = 30;
 export const BrandKitInputSchema = BrandSnapshotSchema.strict();
@@ -118,113 +119,153 @@ async function writeStore(kits: BrandKit[]): Promise<void> {
   }
 }
 
-export async function saveBrandKit(input: unknown): Promise<BrandKit> {
-  const value = parseSnapshot(input);
-  const kits = await readBrandKits();
-  if (nameTaken(kits, value.name)) throw new BrandKitError(`已存在名为「${value.name}」的 Brand Kit，请换一个名称`, 409);
-  if (kits.length >= MAX_BRAND_KITS) throw new BrandKitError(`Brand Kit 最多保存 ${MAX_BRAND_KITS} 个，请先删除不用的项目`, 409);
+/**
+ * Lock order (#184, #188): a kit's own lock first, then the store lock. Kit locks serialize Logo
+ * file replacement, duplication and deletion of one kit; the store lock serializes every
+ * read/validate/modify/write of brand-kits.json. Neither is re-entrant.
+ */
+const STORE_LOCK = 'brand-kits:store';
+const mutateStore = <T>(operation: () => Promise<T>) => withKeyedLock(STORE_LOCK, operation);
 
-  const now = new Date().toISOString();
-  const created: BrandKit = {
-    ...value,
-    id: randomUUID(),
-    isDefault: kits.length === 0,
-    createdAt: now,
-    updatedAt: now,
-  };
-  const next = withDefault([created, ...kits]);
-  await writeStore(next);
-  return next[0];
+/** Runs `operation` while no other Logo upload, duplication, update or deletion of this kit runs. */
+export function withBrandKitLock<T>(id: string, operation: () => Promise<T>): Promise<T> {
+  return withKeyedLock(`brand-kit:${id}`, operation);
 }
 
-export async function updateBrandKit(id: string, patch: unknown): Promise<BrandKit> {
+export async function saveBrandKit(input: unknown): Promise<BrandKit> {
+  const value = parseSnapshot(input);
+  return mutateStore(async () => {
+    const kits = await readBrandKits();
+    if (nameTaken(kits, value.name)) throw new BrandKitError(`已存在名为「${value.name}」的 Brand Kit，请换一个名称`, 409);
+    if (kits.length >= MAX_BRAND_KITS) throw new BrandKitError(`Brand Kit 最多保存 ${MAX_BRAND_KITS} 个，请先删除不用的项目`, 409);
+
+    const now = new Date().toISOString();
+    const created: BrandKit = {
+      ...value,
+      id: randomUUID(),
+      isDefault: kits.length === 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const next = withDefault([created, ...kits]);
+    await writeStore(next);
+    return next[0];
+  });
+}
+
+/**
+ * Same as updateBrandKit, for callers that already hold this kit's lock (the Logo upload commit).
+ * Calling updateBrandKit there would wait for the lock the caller itself holds.
+ */
+export async function updateBrandKitHoldingLock(id: string, patch: unknown): Promise<BrandKit> {
   const parsedPatch = BrandKitPatchSchema.safeParse(patch);
   if (!parsedPatch.success) throw new BrandKitError(parsedPatch.error.issues[0]?.message ?? 'Brand Kit 更新内容无效');
 
-  const kits = await readBrandKits();
-  const index = kits.findIndex(kit => kit.id === id);
-  if (index < 0) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
+  return mutateStore(async () => {
+    const kits = await readBrandKits();
+    const index = kits.findIndex(kit => kit.id === id);
+    if (index < 0) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
 
-  const current = kits[index];
-  const patchValue = parsedPatch.data;
-  if (patchValue.name && nameTaken(kits, patchValue.name, id)) {
-    throw new BrandKitError(`已存在名为「${patchValue.name}」的 Brand Kit，请换一个名称`, 409);
-  }
+    const current = kits[index];
+    const patchValue = parsedPatch.data;
+    if (patchValue.name && nameTaken(kits, patchValue.name, id)) {
+      throw new BrandKitError(`已存在名为「${patchValue.name}」的 Brand Kit，请换一个名称`, 409);
+    }
 
-  const { logo: patchLogo, ...rest } = patchValue;
-  const merged = {
-    ...current,
-    ...rest,
-    colors: { ...current.colors, ...patchValue.colors },
-    typography: { ...current.typography, ...patchValue.typography },
-    ...(patchLogo === null ? { logo: undefined } : patchLogo ? { logo: { ...current.logo, ...patchLogo } } : {}),
-    updatedAt: timestampAfter(current.updatedAt),
-  };
-  const parsed = BrandKitSchema.safeParse(merged);
-  if (!parsed.success) throw new BrandKitError(parsed.error.issues[0]?.message ?? 'Brand Kit 更新内容无效');
+    const { logo: patchLogo, ...rest } = patchValue;
+    const merged = {
+      ...current,
+      ...rest,
+      colors: { ...current.colors, ...patchValue.colors },
+      typography: { ...current.typography, ...patchValue.typography },
+      ...(patchLogo === null ? { logo: undefined } : patchLogo ? { logo: { ...current.logo, ...patchLogo } } : {}),
+      updatedAt: timestampAfter(current.updatedAt),
+    };
+    const parsed = BrandKitSchema.safeParse(merged);
+    if (!parsed.success) throw new BrandKitError(parsed.error.issues[0]?.message ?? 'Brand Kit 更新内容无效');
 
-  kits[index] = parsed.data;
-  await writeStore(kits);
-  return kits[index];
+    kits[index] = parsed.data;
+    await writeStore(kits);
+    return kits[index];
+  });
+}
+
+export async function updateBrandKit(id: string, patch: unknown): Promise<BrandKit> {
+  return withBrandKitLock(id, () => updateBrandKitHoldingLock(id, patch));
 }
 
 export async function duplicateBrandKit(id: string): Promise<BrandKit> {
-  const kits = await readBrandKits();
-  const source = kits.find(kit => kit.id === id);
-  if (!source) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
-  if (kits.length >= MAX_BRAND_KITS) throw new BrandKitError(`Brand Kit 最多保存 ${MAX_BRAND_KITS} 个，请先删除不用的项目`, 409);
+  // The source kit lock keeps its Logo file stable while it is copied.
+  return withBrandKitLock(id, async () => {
+    const source = (await readBrandKits()).find(kit => kit.id === id);
+    if (!source) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
 
-  let name = copyName(source.name, 1);
-  for (let attempt = 2; nameTaken(kits, name); attempt++) name = copyName(source.name, attempt);
-  const now = timestampAfter(source.createdAt, source.updatedAt);
-  const newId = randomUUID();
-  let copiedLogoSrc: string | null = null;
-  try {
-    copiedLogoSrc = await copyBrandKitLogo(id, newId, source.logo?.src);
-  } catch {
-    throw new BrandKitError('Brand Kit Logo 文件缺失或无法复制，原 Brand Kit 未更改', 500);
-  }
-  const copy: BrandKit = {
-    ...source,
-    ...(source.logo ? { logo: { ...source.logo, ...(copiedLogoSrc ? { src: copiedLogoSrc } : {}) } } : {}),
-    id: newId,
-    name,
-    isDefault: false,
-    createdAt: now,
-    updatedAt: now,
-  };
-  try {
-    await writeStore([copy, ...kits]);
-  } catch (error) {
-    if (copiedLogoSrc) await removeBrandKitLogoFiles(newId).catch(() => undefined);
-    throw error;
-  }
-  return copy;
+    const newId = randomUUID();
+    let copiedLogoSrc: string | null = null;
+    try {
+      copiedLogoSrc = await copyBrandKitLogo(id, newId, source.logo?.src);
+    } catch {
+      throw new BrandKitError('Brand Kit Logo 文件缺失或无法复制，原 Brand Kit 未更改', 500);
+    }
+    try {
+      return await mutateStore(async () => {
+        // Name, limit and source are checked again on the list that is actually written.
+        const kits = await readBrandKits();
+        const current = kits.find(kit => kit.id === id);
+        if (!current) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
+        if (kits.length >= MAX_BRAND_KITS) throw new BrandKitError(`Brand Kit 最多保存 ${MAX_BRAND_KITS} 个，请先删除不用的项目`, 409);
+
+        let name = copyName(current.name, 1);
+        for (let attempt = 2; nameTaken(kits, name); attempt++) name = copyName(current.name, attempt);
+        const now = timestampAfter(current.createdAt, current.updatedAt);
+        const copy: BrandKit = {
+          ...current,
+          ...(current.logo ? { logo: { ...current.logo, ...(copiedLogoSrc ? { src: copiedLogoSrc } : {}) } } : {}),
+          id: newId,
+          name,
+          isDefault: false,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await writeStore([copy, ...kits]);
+        return copy;
+      });
+    } catch (error) {
+      if (copiedLogoSrc) await removeBrandKitLogoFiles(newId).catch(() => undefined);
+      throw error;
+    }
+  });
 }
 
 export async function setDefaultBrandKit(id: string): Promise<BrandKit> {
-  const kits = await readBrandKits();
-  const index = kits.findIndex(kit => kit.id === id);
-  if (index < 0) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
+  return mutateStore(async () => {
+    const kits = await readBrandKits();
+    const index = kits.findIndex(kit => kit.id === id);
+    if (index < 0) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
 
-  const next = kits.map((kit, at) => ({
-    ...kit,
-    isDefault: at === index,
-    updatedAt: at === index ? timestampAfter(kit.updatedAt) : kit.updatedAt,
-  }));
-  await writeStore(next);
-  return next[index];
+    const next = kits.map((kit, at) => ({
+      ...kit,
+      isDefault: at === index,
+      updatedAt: at === index ? timestampAfter(kit.updatedAt) : kit.updatedAt,
+    }));
+    await writeStore(next);
+    return next[index];
+  });
 }
 
 export async function deleteBrandKit(id: string): Promise<void> {
-  const kits = await readBrandKits();
-  const next = kits.filter(kit => kit.id !== id);
-  if (next.length === kits.length) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
-
-  await writeStore(withDefault(next));
-  try {
-    await removeBrandKitLogoFiles(id);
-  } catch {
-    throw new BrandKitError('Brand Kit 已删除，但 Logo 文件未能清理', 500);
-  }
+  // Holding the kit lock means no Logo upload can recreate files after they are removed.
+  await withBrandKitLock(id, async () => {
+    await mutateStore(async () => {
+      const kits = await readBrandKits();
+      const next = kits.filter(kit => kit.id !== id);
+      if (next.length === kits.length) throw new BrandKitError('找不到这个 Brand Kit，可能已被删除', 404);
+      await writeStore(withDefault(next));
+    });
+    try {
+      await removeBrandKitLogoFiles(id);
+    } catch {
+      throw new BrandKitError('Brand Kit 已删除，但 Logo 文件未能清理', 500);
+    }
+  });
 }

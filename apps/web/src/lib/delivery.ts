@@ -142,7 +142,22 @@ async function resolveCover(options: { video: string; seconds: number; projectId
   return null;
 }
 
+/**
+ * Removes `.partial.zip` files left by an interrupted or failed attempt (#285). They hold up to
+ * the whole MP4 and the retention pass below ignores hidden files, so they used to pile up.
+ * Callers hold the project's `building` slot, so no partial in this directory is in use.
+ */
+async function removeStalePartials(directory: string, keep?: string) {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.startsWith('.') || !entry.name.endsWith('.partial.zip')) continue;
+    const path = join(directory, entry.name);
+    if (path !== keep) await rm(path, { force: true }).catch(() => {});
+  }
+}
+
 async function trim(directory: string) {
+  await removeStalePartials(directory);
   const entries = (await readdir(directory, { withFileTypes: true }).catch(() => []))
     .filter(entry => entry.isFile() && entry.name.endsWith('.zip') && !entry.name.startsWith('.'))
     .map(entry => entry.name);
@@ -255,6 +270,7 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
     await mkdir(directory, { recursive: true });
     const partial = join(directory, `.${stamp}-${jobId}.partial.zip`);
     const final = join(directory, `${stamp}-${jobId}.zip`);
+    await removeStalePartials(directory);
     temp = await mkdtemp(join(tmpdir(), 'm2v-delivery-'));
     const cover = await resolveCover({
       video,
@@ -278,7 +294,13 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
     } catch (error) {
       return failDelivery({ projectId, jobId, stamp, previous, status: 500, error: `项目备份生成失败：${errorText(error)}`, missing: [{ step: 'backup', message: errorText(error) }] });
     }
-    const writer = await ZipWriter.create(partial);
+    let writer: ZipWriter;
+    try {
+      writer = await ZipWriter.create(partial);
+    } catch (error) {
+      await rm(partial, { force: true }).catch(() => {});
+      return failDelivery({ projectId, jobId, stamp, previous, status: 500, error: `交付包写入失败：${errorText(error)}`, missing: [{ step: 'package', message: errorText(error) }] });
+    }
     try {
       await writer.addFile(videoName, video);
       for (const [index, format] of (['srt', 'vtt', 'ass'] as const).entries()) {
@@ -297,11 +319,17 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
       }));
       await writer.finish();
     } catch (error) {
-      await writer.abort();
+      // abort() can itself fail; the partial archive must be removed either way.
+      await writer.abort().catch(() => {});
       await rm(partial, { force: true }).catch(() => {});
       return failDelivery({ projectId, jobId, stamp, previous, status: 500, error: `交付包写入失败：${errorText(error)}`, missing: [{ step: 'package', message: errorText(error) }] });
     }
-    await rename(partial, final);
+    try {
+      await rename(partial, final);
+    } catch (error) {
+      await rm(partial, { force: true }).catch(() => {});
+      return failDelivery({ projectId, jobId, stamp, previous, status: 500, error: `交付包写入失败：${errorText(error)}`, missing: [{ step: 'package', message: errorText(error) }] });
+    }
     await trim(directory);
     const files = [videoName, ...subtitleNames, coverName, backupName, noteName];
     const bytes = (await stat(final)).size;

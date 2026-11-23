@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -53,9 +54,41 @@ def local_llm_config() -> dict:
     }
 
 
+def _windows_pid_alive(pid: int) -> bool:
+    # On Windows os.kill(pid, 0) is not a probe: any signal other than CTRL_C/CTRL_BREAK
+    # calls TerminateProcess, so a waiting request used to kill the slot owner (#198).
+    # Query the process instead; this never affects it.
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    ERROR_ACCESS_DENIED = 5
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        # Access denied means the process exists but belongs to someone else.
+        return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_alive(pid: object) -> bool:
     if type(pid) is not int or pid < 1:
         return False
+    if sys.platform == 'win32':
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -63,6 +96,70 @@ def _pid_alive(pid: object) -> bool:
         return True
     except OSError:
         return False
+
+
+STALE_SLOT_MS = 5000
+# A reclaimer holds the guard for milliseconds; an older guard was left by a crashed process.
+STALE_GUARD_SECONDS = 30
+
+
+def _slot_is_stale(candidate: Path) -> bool:
+    try:
+        raw = candidate.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return False
+    except OSError:
+        raw = None
+    if raw is not None:
+        try:
+            owner = json.loads(raw)
+            age = time.time() * 1000 - owner.get('createdAt', 0)
+            return age > STALE_SLOT_MS and not _pid_alive(owner.get('pid'))
+        except (ValueError, TypeError, AttributeError):
+            pass
+    # Unreadable or half-written: a fresh lock is written right after creation, so only an old
+    # file without a readable owner is stale.
+    try:
+        return time.time() - candidate.stat().st_mtime > STALE_SLOT_MS / 1000
+    except OSError:
+        return False
+
+
+def _reclaim_stale_slot(candidate: Path) -> None:
+    """Remove a dead owner's slot file without ever deleting a live replacement (#197).
+
+    Checking the owner and then unlinking used to race: two waiters saw the same dead owner, the
+    first removed it and acquired the slot, and the second then deleted that new, live lock, so
+    both generated despite max_concurrency. Reclaimers now take `slot-<n>.reclaim` (O_EXCL) and
+    re-check the slot under it. While the stale file exists nobody can acquire the slot, and only
+    one reclaimer runs at a time, so the file that is unlinked is the one that was judged stale.
+    apps/web/src/lib/local-llm-config.ts follows exactly the same protocol.
+    """
+    if not _slot_is_stale(candidate):
+        return
+    guard = candidate.with_name(candidate.name[:-len('.lock')] + '.reclaim')
+    try:
+        descriptor = os.open(guard, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        try:
+            if time.time() - guard.stat().st_mtime > STALE_GUARD_SECONDS:
+                guard.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return
+    except OSError:
+        return
+    try:
+        os.close(descriptor)
+        if _slot_is_stale(candidate):
+            candidate.unlink(missing_ok=True)
+    except OSError:
+        pass
+    finally:
+        try:
+            guard.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @contextmanager
@@ -82,17 +179,7 @@ def local_llm_slot(config: dict | None = None):
                 lock_path = candidate
                 break
             except FileExistsError:
-                try:
-                    owner = json.loads(candidate.read_text(encoding='utf-8'))
-                    age = time.time() * 1000 - owner.get('createdAt', 0)
-                    if age > 5000 and not _pid_alive(owner.get('pid')):
-                        candidate.unlink(missing_ok=True)
-                except (OSError, ValueError, TypeError):
-                    try:
-                        if time.time() - candidate.stat().st_mtime > 5:
-                            candidate.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                _reclaim_stale_slot(candidate)
         if lock_path is None:
             time.sleep(0.1)
     try:

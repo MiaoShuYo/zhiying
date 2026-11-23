@@ -58,7 +58,8 @@ export async function GET() {
   if (worker.status === 'fulfilled') {
     const age = Math.round((Date.now() - worker.value.time) / 1000);
     const alive = typeof worker.value.pid === 'number' && processAlive(worker.value.pid);
-    if (age >= 20_000) { workerStatus = 'fail'; workerDetail = `心跳已过期（${age} 秒前）`; }
+    // #308: `age` is in seconds; 20_000 accepted heartbeats more than five hours old.
+    if (age >= 20) { workerStatus = 'fail'; workerDetail = `心跳已过期（${age} 秒前）`; }
     else if (!alive) { workerStatus = 'warn'; workerDetail = `心跳文件时间较新（${age} 秒前），但记录的进程 PID ${worker.value.pid ?? '未知'} 已不存在，多半是上次运行遗留的旧心跳；请启动 Worker 后重新检查`; }
     else { workerStatus = 'ok'; workerDetail = `心跳正常（PID ${worker.value.pid}，${age} 秒前）`; }
   } else if (!/ENOENT/.test(String(worker.reason))) workerDetail = `无法读取心跳文件：${String(worker.reason)}`;

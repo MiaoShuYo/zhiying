@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { Storyboard } from '@m2v/schema';
 import { assetFilePath } from '@/lib/asset-usage';
 import { db } from '@/lib/db';
+import { mutateProjectAssets } from '@/lib/project-assets';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 
 export const runtime = 'nodejs';
@@ -19,9 +20,7 @@ async function saveAsset(id: string, name: string, bytes: Uint8Array, metadata: 
   await mkdir(resolve(process.cwd(), 'public', 'projects', id, 'assets'), { recursive: true });
   await writeFile(resolve(process.cwd(), 'public', 'projects', id, 'assets', safeName), bytes);
   const asset = { ...metadata, displayName: name, name: safeName, path: `projects/${id}/assets/${safeName}` };
-  const project = await db.project.findUniqueOrThrow({ where: { id }, select: { assetsJson: true } });
-  const assets = JSON.parse(project.assetsJson || '[]') as Asset[];
-  await db.project.update({ where: { id }, data: { assetsJson: JSON.stringify([...assets, asset]) } });
+  await mutateProjectAssets<Asset>(id, assets => [...assets, asset]);
   return asset;
 }
 
@@ -30,15 +29,12 @@ async function archiveAsset(id: string, asset: Asset) {
   await mkdir(resolve(root, id, 'assets', 'archive'), { recursive: true });
   await rename(assetFilePath(id, { name: asset.name, archived: false }), assetFilePath(id, { name: asset.name, archived: true })).catch(() => {});
   await rm(assetFilePath(id, { name: asset.name, archived: false }, 'public'), { force: true });
-  const project = await db.project.findUniqueOrThrow({ where: { id }, select: { assetsJson: true } });
-  const assets = JSON.parse(project.assetsJson || '[]') as Asset[];
-  await db.project.update({ where: { id }, data: { assetsJson: JSON.stringify(assets.map(item => item.path === asset.path ? { ...item, archived: true, archivedAt: new Date().toISOString() } : item)) } });
+  const archivedAt = new Date().toISOString();
+  await mutateProjectAssets<Asset>(id, assets => assets.map(item => item.path === asset.path ? { ...item, archived: true, archivedAt } : item));
 }
 
 async function dropRecord(id: string, path: string) {
-  const project = await db.project.findUniqueOrThrow({ where: { id }, select: { assetsJson: true } });
-  const assets = JSON.parse(project.assetsJson || '[]') as Asset[];
-  await db.project.update({ where: { id }, data: { assetsJson: JSON.stringify(assets.filter(item => item.path !== path)) } });
+  await mutateProjectAssets<Asset>(id, assets => assets.filter(item => item.path !== path));
 }
 
 function remainingReferences(board: Storyboard | null, path: string) {
@@ -131,7 +127,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       await rename(assetFilePath(id, { name: asset.name, archived: true }), assetFilePath(id, { name: asset.name, archived: false })).catch(error => { throw new Error(`归档文件无法恢复：${error instanceof Error ? error.message : '文件缺失'}`); });
       await mkdir(resolve(process.cwd(), 'public', 'projects', id, 'assets'), { recursive: true });
       await copyFile(assetFilePath(id, { name: asset.name, archived: false }), assetFilePath(id, { name: asset.name, archived: false }, 'public'));
-      await db.project.update({ where: { id }, data: { assetsJson: JSON.stringify(assets.map(item => item.path === asset.path ? { ...item, archived: undefined, archivedAt: undefined } : item)) } });
+      await mutateProjectAssets<Asset>(id, current => current.map(item => item.path === asset.path ? { ...item, archived: undefined, archivedAt: undefined } : item));
       return NextResponse.json({ ok: true, restored: asset.path });
     }
     if (body.confirm !== true) return NextResponse.json({ error: '彻底删除需要再次确认' }, { status: 400 });
@@ -143,7 +139,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       rm(assetFilePath(id, asset, 'public'), { force: true }),
       rm(assetFilePath(id, { name: asset.name, archived: true }), { force: true }),
     ]);
-    await db.project.update({ where: { id }, data: { assetsJson: JSON.stringify(assets.filter(item => item.path !== asset.path)) } });
+    await mutateProjectAssets<Asset>(id, current => current.filter(item => item.path !== asset.path));
     return NextResponse.json({ ok: true, purged: asset.path });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : '素材操作失败' }, { status: 500 }); }
 }
@@ -158,7 +154,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   if (!asset) return Response.json({ error: '素材不存在' }, { status: 404 });
   if (project.storyboardJson?.includes(JSON.stringify(path))) return Response.json({ error: '素材正在被场景或背景音乐引用，请先替换或移除引用' }, { status: 409 });
   if (!asset.name || /[\\/]/.test(asset.name) || asset.name === '.' || asset.name === '..') return Response.json({ error: '素材路径无效' }, { status: 400 });
-  await db.project.update({ where: { id }, data: { assetsJson: JSON.stringify(assets.filter(item => item.path !== path)) } });
+  await mutateProjectAssets<Asset>(id, current => current.filter(item => item.path !== path));
   await Promise.all([
     rm(assetFilePath(id, asset), { force: true }),
     rm(assetFilePath(id, asset, 'public'), { force: true }),

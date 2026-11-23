@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { readdir, rm, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { db } from '@/lib/db';
+import { mutateProjectAssets } from '@/lib/project-assets';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 import { listSnapshots } from '@/lib/backups';
 
@@ -77,9 +78,8 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   const paths = Array.isArray(requested) ? requested.filter((path): path is string => typeof path === 'string') : [];
   if (!paths.length) return NextResponse.json({ error: '请选择要清理的素材' }, { status: 400 });
 
-  const project = await db.project.findUniqueOrThrow({ where: { id }, select: { storyboardJson: true, assetsJson: true } });
+  const project = await db.project.findUniqueOrThrow({ where: { id }, select: { storyboardJson: true } });
   const referenced = referencedPaths(project.storyboardJson);
-  const assets = (() => { try { return JSON.parse(project.assetsJson) as Asset[]; } catch { return [] as Asset[]; } })();
   // Sources, exports and snapshots live outside the asset folder, so only
   // `projects/<id>/assets/<file>` can ever be deleted here.
   const allowed = new RegExp(`^projects/${id}/assets/[^/\\\\]+$`);
@@ -97,6 +97,6 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     deleted.push(path);
   }
   if (!deleted.length) return NextResponse.json({ error: '所选素材仍被场景引用或路径无效，未删除任何文件' }, { status: 409 });
-  await db.project.update({ where: { id }, data: { assetsJson: JSON.stringify(assets.filter(asset => !deleted.includes(`projects/${id}/assets/${asset.name}`))) } });
+  await mutateProjectAssets<Asset>(id, current => current.filter(asset => !deleted.includes(`projects/${id}/assets/${asset.name}`)));
   return NextResponse.json({ deleted, bytes });
 }

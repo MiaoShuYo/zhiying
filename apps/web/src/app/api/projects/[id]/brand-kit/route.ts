@@ -56,11 +56,14 @@ function brandSnapshotFromKit(kit: BrandKit): BrandSnapshot {
   });
 }
 
-async function readProjectBoard(projectId: string): Promise<Storyboard | null> {
-  const project = await db.project.findUnique({ where: { id: projectId }, select: { storyboardJson: true } });
+const SAVE_CONFLICT = '保存冲突：项目已在其他窗口更新，请重新加载后合并修改';
+
+/** The storyboard together with the revision it was read at, the fallback CAS guard (#179). */
+async function readProjectBoard(projectId: string): Promise<{ board: Storyboard; revision: number } | null> {
+  const project = await db.project.findUnique({ where: { id: projectId }, select: { storyboardJson: true, revision: true } });
   if (!project) return null;
   if (!project.storyboardJson) throw new RequestError('项目还没有分镜，无法应用 Brand Kit', 400);
-  return StoryboardSchema.parse(JSON.parse(project.storyboardJson));
+  return { board: StoryboardSchema.parse(JSON.parse(project.storyboardJson)), revision: project.revision };
 }
 
 async function saveAndReadRevision(projectId: string, board: Storyboard, revision: number | undefined) {
@@ -86,12 +89,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const kit = (await readBrandKits()).find(item => item.id === brandKitId);
     if (!kit) return NextResponse.json({ error: '找不到这个 Brand Kit，可能已被删除' }, { status: 404 });
 
-    const board = await readProjectBoard(id);
-    if (!board) return NextResponse.json({ error: '项目不存在' }, { status: 404 });
+    const read = await readProjectBoard(id);
+    if (!read) return NextResponse.json({ error: '项目不存在' }, { status: 404 });
+    if (revision !== undefined && revision !== read.revision) throw new RequestError(SAVE_CONFLICT, 409);
 
     // Brand is a pure visual snapshot: styleId, scenes, narration and audio timing stay untouched.
-    const next: Storyboard = { ...board, brandKitId: kit.id, brand: brandSnapshotFromKit(kit) };
-    return await saveAndReadRevision(id, next, revision);
+    // Without if-match the save is still guarded by the revision this board was read at, so a
+    // scene edit that lands in between is never overwritten by this branding-only change (#179).
+    const next: Storyboard = { ...read.board, brandKitId: kit.id, brand: brandSnapshotFromKit(kit) };
+    return await saveAndReadRevision(id, next, revision ?? read.revision);
   } catch (error) {
     return failure(error, '应用 Brand Kit 失败');
   }
@@ -110,6 +116,8 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     if (!project) return NextResponse.json({ error: '项目不存在' }, { status: 404 });
     if (!project.storyboardJson) throw new RequestError('项目还没有分镜，无法移除 Brand Kit', 400);
 
+    // #183: an outdated if-match is a conflict even when there is nothing left to remove.
+    if (revision !== undefined && revision !== project.revision) throw new RequestError(SAVE_CONFLICT, 409);
     const board = StoryboardSchema.parse(JSON.parse(project.storyboardJson));
     if (!board.brandKitId && !board.brand) {
       // Already brand-free: idempotent success that must not bump the revision.
@@ -119,7 +127,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const next: Storyboard = { ...board };
     delete next.brandKitId;
     delete next.brand;
-    return await saveAndReadRevision(id, next, revision);
+    return await saveAndReadRevision(id, next, revision ?? project.revision);
   } catch (error) {
     return failure(error, '移除 Brand Kit 失败');
   }

@@ -88,7 +88,7 @@ async function createHarness(t: test.TestContext): Promise<Harness> {
     if (!state.server) throw new Error('server 尚未 start()');
     const response = await fetch(`${state.server.url}${pathname}`, {
       method,
-      headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+      headers: method === 'POST' || body !== undefined ? { 'content-type': 'application/json' } : undefined,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await response.text();
@@ -254,4 +254,28 @@ test('[#105-18] GET /api/events SSE：推送 event: progress + JSON 快照', asy
   const parsed = JSON.parse(result.payload) as { installRoot: string; models: Array<{ id: string }> };
   assert.equal(parsed.installRoot, h.root);
   assert.ok(Array.isArray(parsed.models) && parsed.models.some((m) => m.id === 'sse'));
+});
+
+test('[#137] 拒绝跨站表单、外部 Origin 与非本机 Host（防 CSRF / DNS 重绑定）', async (t) => {
+  const h = await createHarness(t);
+  h.addModel({ id: 'csrf' });
+  await h.start();
+  const port = Number(new URL(h.server.url).port);
+  const raw = (method: string, pathname: string, headers: Record<string, string>, body?: string) =>
+    new Promise<number>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.on('error', reject);
+      req.end(body);
+    });
+
+  assert.equal(await raw('POST', '/api/models/csrf/start', { 'content-type': 'application/x-www-form-urlencoded' }, 'a=1'), 415);
+  assert.equal(await raw('POST', '/api/models/csrf/start', { 'content-type': 'text/plain' }, '{}'), 415);
+  assert.equal(await raw('POST', '/api/models/csrf/start', { 'content-type': 'application/json', origin: 'https://evil.example' }, '{}'), 403);
+  assert.equal(await raw('POST', '/api/models/csrf/start', { 'content-type': 'application/json', origin: 'null' }, '{}'), 403);
+  assert.equal(await raw('GET', '/api/models', { host: `evil.example:${port}` }), 421);
+  assert.equal(await raw('GET', '/api/models', { origin: `http://127.0.0.1:${port}` }), 200);
+  assert.equal(h.manager.get('csrf')?.status, 'not_installed', '被拒绝的请求不得启动下载');
 });

@@ -14,10 +14,26 @@ export const SceneSourceRefSchema = z.object({
   page: z.number().int().min(1).optional(),
 });
 
+/**
+ * Fingerprint of a narration (FNV-1a over UTF-16 code units, 8 hex digits). An occurrence rule
+ * stores the fingerprint of the narration it was selected in, so saving can tell a rule made for
+ * the current text from one left over from an earlier text (#330). Not a security hash.
+ */
+export function narrationFingerprint(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
 export const PronunciationRuleSchema = z.object({
   text: z.string().regex(/^[\u3400-\u9fff]{1,80}$/, '纠音词组需为 1 到 80 个汉字'),
   pinyin: z.array(z.string().regex(/^[a-züv]+[1-5]$/, '请填写带声调数字的拼音，如 hang2')).min(1).max(80),
   occurrence: z.number().int().positive().optional(),
+  /** narrationFingerprint() of the narration an occurrence rule was created against. */
+  narrationHash: z.string().regex(/^[a-f0-9]{8}$/).optional(),
 }).refine(rule => rule.text.length === rule.pinyin.length, '每个汉字需要一个拼音');
 export type PronunciationRule = z.infer<typeof PronunciationRuleSchema>;
 
@@ -54,6 +70,18 @@ const BaseSceneSchema = z.object({
   styleOverride: z.record(z.unknown()).optional(),
 });
 
+const STRUCTURED_CODE_KEYS = ['code', 'mode', 'beats', 'beforeCode', 'afterCode', 'buildSteps', 'diffBeats', 'traceSteps'] as const;
+
+/** A code visual from before V1.6.8: explanation text and/or steps, and none of the structured fields. */
+export function isLegacyCodeVisual(visual: Record<string, unknown>): boolean {
+  if (STRUCTURED_CODE_KEYS.some(key => visual[key] !== undefined)) return false;
+  const explanation = visual.explanation;
+  const steps = visual.steps;
+  const hasExplanation = typeof explanation === 'string' && explanation.trim().length > 0;
+  const hasSteps = Array.isArray(steps) && steps.length > 0 && steps.every(step => typeof step === 'string');
+  return (hasExplanation || hasSteps) && (explanation === undefined || typeof explanation === 'string') && (steps === undefined || hasSteps);
+}
+
 export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
   if (scene.type === 'html' && (typeof scene.visual.html !== 'string' || !scene.visual.html.trim() || scene.visual.html.length > 20000)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'html'], message: 'html 场景需要不超过 20000 个字符的 HTML 片段' });
@@ -78,13 +106,29 @@ export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
   if (scene.type === 'chart' && (!Array.isArray(scene.visual.data) || scene.visual.data.length < 1) && (!Array.isArray(scene.visual.nodes) || scene.visual.nodes.length < 2)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual'], message: '图表/图示场景需要 data 或至少两个 nodes' });
   }
-  if (scene.type === 'timeline' && (!Array.isArray(scene.visual.items) || scene.visual.items.length < 2)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'timeline 场景至少需要两个时间节点' });
+  if (scene.type === 'timeline') {
+    // #326: SceneView reads `item.date` / `item.label` directly, so `[null, null]` used to pass
+    // here and crash preview and export. Every node must be an object with text fields.
+    const items = scene.visual.items;
+    const textField = (value: unknown) => typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value));
+    const validNode = (item: unknown): boolean => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const node = item as { date?: unknown; label?: unknown };
+      return textField(node.date) && textField(node.label);
+    };
+    if (!Array.isArray(items) || items.length < 2 || !items.every(validNode)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'items'], message: 'timeline 场景至少需要两个时间节点，且每个节点都要有 date 和 label 文本' });
+    }
   }
   if (scene.type === 'table') {
-    const headers = scene.visual.headers;
-    const rows = scene.visual.rows;
-    if (!Array.isArray(headers) || headers.length < 1 || !Array.isArray(rows) || rows.length < 1 || !rows.every(row => Array.isArray(row) && row.length === headers.length && row.every(cell => typeof cell === 'string'))) {
+    // #214: headers are rendered as React children, so an object-valued header crashed the
+    // preview/export. The width is captured once so the row callback stays type-safe.
+    const headers: unknown = scene.visual.headers;
+    const rows: unknown = scene.visual.rows;
+    const width = Array.isArray(headers) ? headers.length : 0;
+    const validHeaders = Array.isArray(headers) && width >= 1 && headers.every(header => typeof header === 'string');
+    const validRows = Array.isArray(rows) && rows.length >= 1 && rows.every(row => Array.isArray(row) && row.length === width && row.every(cell => typeof cell === 'string'));
+    if (!validHeaders || !validRows) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual'], message: 'table 场景需要 headers 和列数一致的非空 rows' });
     }
   }
@@ -97,7 +141,10 @@ export const SceneSchema = BaseSceneSchema.superRefine((scene, ctx) => {
   if (scene.type === 'media' && (typeof scene.visual.src !== 'string' || !/^(projects\/[A-Za-z0-9_-]+\/assets\/[^/]+)$/.test(scene.visual.src))) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['visual', 'src'], message: 'media 场景需要本地素材路径' });
   }
-  if (scene.type === 'code') {
+  if (scene.type === 'code' && isLegacyCodeVisual(scene.visual)) {
+    // #162: pre-V1.6.8 code scenes only carry `explanation`/`steps`. The renderer still draws
+    // them with the legacy layout, so they must keep loading, saving, rendering and restoring.
+  } else if (scene.type === 'code') {
     // Code scenes share one structured visual between the Standard and HTML renderers; a code
     // scene without source or with illegal beat line numbers must never reach the timeline.
     const parsed = CodeVisualSchema.safeParse(scene.visual);

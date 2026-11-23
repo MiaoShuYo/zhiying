@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createStagingDir, stageExecutable, removeStagingDir, spawnVisible, waitForChildWindow, listProcesses } from './gui';
+import { commandLineUsesOwnedPath, isOwnedTestPath } from './temp';
 import { spawnCollect, waitExit, killTree } from './processes';
 import { listUninstallEntries, deleteUninstallEntry } from './registry';
 
@@ -131,34 +132,43 @@ export function defaultPerUserInstallRoot(): string {
 }
 
 /**
+ * 卸载项基线：本进程第一次清理时记录已有的卸载键。之后只删除本次运行新建的键，
+ * 已有的键（包括用户真实安装、其他软件、其他测试进程留下的键）一律保留（#131）。
+ */
+let baselineUninstallKeys: Set<string> | undefined;
+
+function uninstallBaseline(): Set<string> {
+  if (!baselineUninstallKeys) baselineUninstallKeys = new Set(listUninstallEntries().map((entry) => entry.key.toLowerCase()));
+  return baselineUninstallKeys;
+}
+
+/**
  * 测试隔离清理（Lead 协调要求，避免与 acceptor/impl 并发冲突）：
- * - 结束遗留 Inno Setup 进程（Zhiying-Setup.exe/.tmp、is-*.tmp 内的 setup）
- * - 删除 InstallLocation 指向测试临时目录的 HKCU 卸载项（固定 AppId 键）
- * - 删除指向测试临时目录的桌面/开始菜单快捷方式
- * 只匹配 `%TEMP%`/`data\tmp\v21`/`zhiying-test` 等测试路径，不动真实用户安装。
+ * - 结束本次运行启动的 Inno Setup 进程：命令行必须指向本进程创建的 staging/临时目录（#132）。
+ *   不再按进程名判断，用户从“下载”目录打开的 Zhiying-Setup.exe、其他测试进程的安装器都不受影响。
+ * - 删除本次运行新建、且 InstallLocation 位于本进程测试目录内的 HKCU 卸载项（#131）。
+ * - 删除指向本进程测试目录的桌面/开始菜单快捷方式。
  */
 export async function cleanupInnoTestState(): Promise<{ killedPids: number[]; removedRegistryKeys: string[]; removedShortcuts: string[] }> {
+  const baseline = uninstallBaseline();
   const killedPids: number[] = [];
   for (const entry of listProcesses()) {
+    if (entry.pid === process.pid) continue;
     const name = entry.name.toLowerCase();
     const cmd = entry.commandLine.toLowerCase();
     const isSetupProcess = /^zhiying-setup(\.exe|\.tmp)?$/.test(name) || (name.endsWith('.tmp') && cmd.includes('zhiying-setup'));
-    if (isSetupProcess) {
+    // Inno 的 is-*.tmp 子进程通过 /SL5="...,<原 Setup.exe 路径>" 携带 staging 路径，因此同样能被识别。
+    if (isSetupProcess && commandLineUsesOwnedPath(entry.commandLine)) {
       killTree(entry.pid);
       killedPids.push(entry.pid);
     }
   }
-  const tempRoot = os.tmpdir().toLowerCase();
-  const testMarkers = [tempRoot, path.join('data', 'tmp', 'v21').toLowerCase(), 'zhiying-test', '_m2v_test'];
-  const matchesTestPath = (value: string | undefined): boolean => {
-    if (!value) return false;
-    const normalized = value.toLowerCase().replace(/[\\/]+$/, '');
-    return testMarkers.some((marker) => normalized.includes(marker));
-  };
+  const matchesTestPath = (value: string | undefined): boolean => isOwnedTestPath(value);
   const removedRegistryKeys: string[] = [];
   for (const entry of listUninstallEntries()) {
+    if (baseline.has(entry.key.toLowerCase())) continue;
     const location = entry.values.InstallLocation?.value;
-    if (matchesTestPath(location) || (location && /zhiying-/i.test(location))) {
+    if (matchesTestPath(location)) {
       try {
         deleteUninstallEntry(entry.key);
         removedRegistryKeys.push(entry.key);

@@ -1,9 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { PronunciationRuleSchema, type PronunciationRule } from '@m2v/schema';
+import { PronunciationRuleSchema, narrationFingerprint, type PronunciationRule } from '@m2v/schema';
 
-export function PronunciationEditor({ selection, sceneRules, projectRules, disabled, onSceneRules, onProjectRules, onGlobalChange }: {
+export function PronunciationEditor({ selection, narration, sceneRules, projectRules, disabled, onSceneRules, onProjectRules, onGlobalChange }: {
   selection: { text: string; occurrence: number } | null;
+  /** Current narration of the scene; occurrence rules are bound to it (#330). */
+  narration: string;
   sceneRules: PronunciationRule[]; projectRules: PronunciationRule[]; disabled: boolean;
   onSceneRules: (rules: PronunciationRule[]) => void;
   onProjectRules: (rules: PronunciationRule[]) => void;
@@ -40,7 +42,7 @@ export function PronunciationEditor({ selection, sceneRules, projectRules, disab
   }
   function add() {
     try {
-      const rule = PronunciationRuleSchema.parse({ text: text.trim(), pinyin: sounds.trim().toLowerCase().split(/\s+/), ...(scope === 'occurrence' ? { occurrence: selection?.occurrence } : {}) });
+      const rule = PronunciationRuleSchema.parse({ text: text.trim(), pinyin: sounds.trim().toLowerCase().split(/\s+/), ...(scope === 'occurrence' ? { occurrence: selection?.occurrence, narrationHash: narrationFingerprint(narration) } : {}) });
       if (scope === 'occurrence' && (!selection || rule.text !== selection.text)) throw new Error('请先在旁白中选中要纠音的汉字');
       const rules = scope === 'global' ? globalRules : scope === 'project' ? projectRules : sceneRules;
       const next = [...rules.filter(item => item.text !== rule.text || item.occurrence !== rule.occurrence), rule];

@@ -63,6 +63,30 @@ function declaration(property: string, value: string | number | undefined | null
   return `${property}:${value}`;
 }
 
+/**
+ * Raw characters per escaped text piece. Escaping grows a character to at most 5 (`&amp;`), so
+ * one piece stays below SANITIZE_BLOCK_TARGET however the text is composed (#152).
+ */
+const TOKEN_TEXT_CHUNK = 600;
+
+/** Split text at code-point boundaries, so a surrogate pair is never cut in half. */
+function textChunks(value: string): string[] {
+  const chunks: string[] = [];
+  let current = '';
+  let count = 0;
+  for (const char of value) {
+    current += char;
+    count += 1;
+    if (count >= TOKEN_TEXT_CHUNK) {
+      chunks.push(current);
+      current = '';
+      count = 0;
+    }
+  }
+  if (current || !chunks.length) chunks.push(current);
+  return chunks;
+}
+
 /** Token spans of one line as complete pieces (each span is sanitizer-safe on its own). */
 function tokenPieces(tokens: Array<{ text: string; type: string }>, tokenColors: Record<string, string>): string[] {
   const pieces: string[] = [];
@@ -71,7 +95,15 @@ function tokenPieces(tokens: Array<{ text: string; type: string }>, tokenColors:
       declaration('color', tokenColors[token.type]),
       token.type === 'function' ? declaration('font-weight', 700) : null,
     ]);
-    pieces.push(`<span class="tok-${token.type}"${tokenStyle ? ` style="${tokenStyle}"` : ''}>${escapeHtmlText(token.text)}</span>`);
+    const open = `<span class="tok-${token.type}"${tokenStyle ? ` style="${tokenStyle}"` : ''}>`;
+    if ([...token.text].length <= TOKEN_TEXT_CHUNK) {
+      pieces.push(`${open}${escapeHtmlText(token.text)}</span>`);
+      continue;
+    }
+    // A very long token (e.g. an 8,000-character string literal of `&`) stays one span, but its
+    // opening tag, bounded text pieces and closing tag are separate pieces. sanitizeInBlocks then
+    // never sees an oversized piece, so it can no longer truncate the text or drop `</span>`.
+    pieces.push(open, ...textChunks(token.text).map(escapeHtmlText), '</span>');
   }
   return pieces;
 }

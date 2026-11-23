@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { db } from '@/lib/db';
+import { mutateProjectAssets } from '@/lib/project-assets';
 import { readCredit } from '@/lib/commons-license';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 
@@ -33,7 +33,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (warnings.length && body.confirmed !== true) return NextResponse.json({ error: '导入前请确认许可与署名提示', warnings, credit }, { status: 400 });
     const download = await fetch(info.url, { signal: AbortSignal.timeout(30_000) });
     if (!download.ok) throw new Error(`图片下载失败 (${download.status})`);
-    if (!download.headers.get('content-type')?.startsWith('image/')) throw new Error('Commons 返回的素材不是图片');
+    // The file is published under apps/web/public, where its extension decides the MIME type.
+    // SVG (or anything else that can carry script) would run on the studio's origin (#300).
+    const rasterExtensions: Record<string, string> = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif' };
+    const contentType = (download.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+    if (!contentType.startsWith('image/')) throw new Error('Commons 返回的素材不是图片');
+    const extension = rasterExtensions[contentType];
+    if (!extension) throw new Error('Commons 素材仅支持 PNG、JPG、WebP 或 GIF 图片');
     const contentLength = Number(download.headers.get('content-length') ?? 0);
     if (contentLength > 20 * 1024 * 1024) throw new Error('图片大于 20 MB，无法导入');
     const reader = download.body?.getReader();
@@ -48,12 +54,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     const bytes = new Uint8Array(total); let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    const filename = `${randomUUID()}${new URL(info.url).pathname.match(/\.[a-z0-9]+$/i)?.[0] ?? '.img'}`;
+    const filename = `${randomUUID()}${extension}`;
     const directory = resolve(root, id, 'assets'); await mkdir(directory, { recursive: true }); await writeFile(resolve(directory, filename), bytes);
     const publicDirectory = resolve(process.cwd(), 'public', 'projects', id, 'assets'); await mkdir(publicDirectory, { recursive: true }); await writeFile(resolve(publicDirectory, filename), bytes);
     const asset = { name: filename, path: `projects/${id}/assets/${filename}`, kind: 'image', ...credit, attribution: attributionOverride || credit.attribution, warnings };
-    const project = await db.project.findUniqueOrThrow({ where: { id }, select: { assetsJson: true } }); const assets = JSON.parse(project.assetsJson || '[]') as object[];
-    await db.project.update({ where: { id }, data: { assetsJson: JSON.stringify([...assets, asset]) } });
+    await mutateProjectAssets<object>(id, assets => [...assets, asset]);
     return NextResponse.json({ asset, warnings: credit.warnings });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Commons 图片导入失败' }, { status: 502 }); }
 }

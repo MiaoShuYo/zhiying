@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import { registerOwnedTestRoot } from './temp';
 
 export interface PeInfo {
   machine: number;
@@ -362,6 +363,7 @@ export function createStagingDir(label = 'zhiying-test'): string {
   const base = os.tmpdir();
   const dir = path.join(base, `${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   fs.mkdirSync(dir, { recursive: true });
+  registerOwnedTestRoot(dir);
   return dir;
 }
 

@@ -11,7 +11,11 @@ async function migrate() {
   const project = await prisma.$queryRawUnsafe('PRAGMA table_info("Project")');
   const job = await prisma.$queryRawUnsafe('PRAGMA table_info("Job")');
   if (!project.length || !job.length) throw new Error('数据库尚未初始化，请先运行 pnpm db:push');
-  const changes = [!project.some(column => column.name === 'revision') && 'ALTER TABLE "Project" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0', !job.some(column => column.name === 'inputJson') && 'ALTER TABLE "Job" ADD COLUMN "inputJson" TEXT', !job.some(column => column.name === 'outputPath') && 'ALTER TABLE "Job" ADD COLUMN "outputPath" TEXT'].filter(Boolean);
+  const changes = [!project.some(column => column.name === 'revision') && 'ALTER TABLE "Project" ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 0', !job.some(column => column.name === 'inputJson') && 'ALTER TABLE "Job" ADD COLUMN "inputJson" TEXT', !job.some(column => column.name === 'outputPath') && 'ALTER TABLE "Job" ADD COLUMN "outputPath" TEXT',
+    // #271: later Prisma models added these columns; start.ps1 only runs this script, so without
+    // them an upgraded database fails every Job/Project query from the regenerated client.
+    !job.some(column => column.name === 'validationJson') && 'ALTER TABLE "Job" ADD COLUMN "validationJson" TEXT',
+    !project.some(column => column.name === 'importMode') && 'ALTER TABLE "Project" ADD COLUMN "importMode" TEXT NOT NULL DEFAULT \'rebuild\''].filter(Boolean);
   if (!changes.length) { console.log('V1.1 数据库已是最新版本'); return; }
   const backupDir = resolve(__dirname, '../data/database-backups'); mkdirSync(backupDir, { recursive: true });
   const backup = resolve(backupDir, `before-v11-${Date.now()}.db`);

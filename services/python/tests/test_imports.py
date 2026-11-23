@@ -41,6 +41,32 @@ class ImportTests(unittest.TestCase):
         with patch("app.main.socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 443))]):
             self.assertEqual("https://example.com/article", _validate_public_url("https://example.com/article"))
 
+    def test_connection_is_pinned_to_the_validated_address(self):
+        # #322: a rebinding DNS server answers public first, loopback on the second lookup.
+        from app.main import _connect_public
+        answers = iter([
+            [(None, None, None, None, ("93.184.216.34", 443))],
+            [(None, None, None, None, ("127.0.0.1", 443))],
+        ])
+        with patch("app.main.socket.getaddrinfo", side_effect=lambda *args, **kwargs: next(answers)), \
+                patch("app.main.socket.create_connection") as connect:
+            _validate_public_url("https://rebind.example/article")
+            with self.assertRaises(ValueError):
+                _connect_public("rebind.example", 443, 5, None)
+            connect.assert_not_called()
+        with patch("app.main.socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 443))]), \
+                patch("app.main.socket.create_connection") as connect:
+            _connect_public("example.com", 443, 5, None)
+            connect.assert_called_once_with(("93.184.216.34", 443), 5, None)
+
+    def test_service_rejects_foreign_origins(self):
+        # #196: a cross-origin HTML form must not reach the local service.
+        from fastapi.testclient import TestClient
+        from app.main import app
+        client = TestClient(app)
+        response = client.post("/synthesize", data={"text": "x", "voice_id": "v"}, headers={"Origin": "https://evil.example"})
+        self.assertEqual(403, response.status_code)
+
     def test_pptx_extraction_reads_text_notes_and_relationship_images(self):
         buffer = io.BytesIO()
         slide_xml = b'''<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:sp><p:txBody><a:p><a:r><a:t>Slide title</a:t></a:r></a:p></p:txBody></p:sp></p:sld>'''

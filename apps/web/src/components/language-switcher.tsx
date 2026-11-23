@@ -660,8 +660,74 @@ function applyLanguage(language: Language) {
   document.querySelectorAll<HTMLElement>('[placeholder],[title],[aria-label],[alt]').forEach(el => translateElement(el, language));
 }
 
+type FormField = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+
+/**
+ * #239：切换语言需要整页刷新（界面文字是在 DOM 上就地翻译的，无法再从英文译回日文），
+ * 而很多表单（如通用设置里的声音名称、参考文本、所选音频）只保存在组件状态里。
+ * 这里记录用户改过、且当前值与开始编辑前不同的输入框，刷新前先请用户确认。
+ */
+const fieldBaselines = new WeakMap<FormField, string>();
+const editedFields = new Set<FormField>();
+
+function isFormField(target: EventTarget | null): target is FormField {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+}
+
+function fieldValue(field: FormField): string {
+  if (field instanceof HTMLInputElement) {
+    if (field.type === 'checkbox' || field.type === 'radio') return String(field.checked);
+    if (field.type === 'file') return String(field.files?.length ?? 0);
+  }
+  return field.value;
+}
+
+function tracked(target: EventTarget | null): target is FormField {
+  return isFormField(target) && !target.closest('.language-switcher') && !(target instanceof HTMLInputElement && ['button', 'submit', 'reset', 'hidden'].includes(target.type));
+}
+
+function rememberBaseline(event: Event) {
+  const target = event.target;
+  if (tracked(target) && !fieldBaselines.has(target)) fieldBaselines.set(target, fieldValue(target));
+}
+
+function markEdited(event: Event) {
+  const target = event.target;
+  if (!tracked(target)) return;
+  if (!fieldBaselines.has(target)) fieldBaselines.set(target, target instanceof HTMLInputElement && target.type === 'file' ? '0' : '');
+  editedFields.add(target);
+}
+
+/** True while a form field on the page still holds input that differs from its value before editing. */
+export function hasUnsavedFormInput(): boolean {
+  for (const field of editedFields) {
+    if (!field.isConnected) {
+      editedFields.delete(field);
+      continue;
+    }
+    if (fieldValue(field) !== fieldBaselines.get(field)) return true;
+  }
+  return false;
+}
+
+const unsavedPrompt: Record<Language, string> = {
+  zh: '切换语言会重新加载页面，尚未保存的输入将会丢失。确定要切换吗？',
+  en: 'Switching the language reloads the page and unsaved input will be lost. Switch anyway?',
+  ja: '言語を切り替えるとページが再読み込みされ、未保存の入力は失われます。切り替えますか？',
+};
+
 export function LanguageSwitcher() {
   const [language, setLanguage] = useState<Language>('zh');
+  useEffect(() => {
+    document.addEventListener('focusin', rememberBaseline, true);
+    document.addEventListener('input', markEdited, true);
+    document.addEventListener('change', markEdited, true);
+    return () => {
+      document.removeEventListener('focusin', rememberBaseline, true);
+      document.removeEventListener('input', markEdited, true);
+      document.removeEventListener('change', markEdited, true);
+    };
+  }, []);
   useEffect(() => {
     const saved = localStorage.getItem('m2v-language');
     const initial: Language = saved === 'en' || saved === 'ja' ? saved : 'zh';
@@ -693,6 +759,9 @@ export function LanguageSwitcher() {
     return () => observer.disconnect();
   }, []);
   function change(value: Language) {
+    if (value === language) return;
+    // The select is controlled, so returning here keeps the previous language selected.
+    if (hasUnsavedFormInput() && !window.confirm(unsavedPrompt[language])) return;
     setLanguage(value);
     localStorage.setItem('m2v-language', value);
     applyLanguage(value);

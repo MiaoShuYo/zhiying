@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
+import { processProject } from '@/lib/pipeline';
 import { recoverInterruptedJobs } from '@/lib/project-recovery';
 
 export const runtime = 'nodejs';
@@ -11,6 +12,9 @@ export const runtime = 'nodejs';
  */
 export async function POST() {
   const { restarted, released, render } = await recoverInterruptedJobs();
+  // #288: recovery only claims the stale storyboard jobs; without scheduling them they stayed
+  // "running" with no processor. Start them the same way GET /api/projects does.
+  if (restarted.length) after(async () => { await Promise.all(restarted.map(job => processProject(job.projectId, job.stage))); });
   const projects = new Set([...restarted.map(item => item.projectId), ...released, ...render.projectIds]);
   return NextResponse.json({ resumed: restarted.length + render.failed, released: released.length, projects: projects.size, pending: render.pending });
 }

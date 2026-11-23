@@ -102,6 +102,8 @@ The app is designed for local use and does not provide cloud generation or compl
 
 V1.8.0 ships a Windows desktop edition that end users can install directly: the installer bundles the runtime, so **Node.js / pnpm / Python / uv / Git are not required and no command line is needed**. Development mode (see "Windows setup" below) keeps working unchanged.
 
+> **Validation-only build:** the frozen `dist/Zhiying-Setup.exe` in this repository is built with the **lite** profile. It starts fixture services and a placeholder Web page to verify install, launch, model download and uninstall; it is **not** the studio, and downloading models does not make it capable of the PDF-to-video workflow. A full-runtime installer must be built with `node scripts/build-installer.mjs --profile full` (which requires the Web standalone build, Python, FFmpeg and Ollama artifacts). Until such a build is published, use development mode to create videos.
+
 ![Zhiying installer: choose install directory](docs/screenshots/v1.8.0-setup-directory.png)
 ![Zhiying installer: model download choice](docs/screenshots/v1.8.0-setup-model-download.png)
 - **System requirements:** Windows 10/11 x64; install into a user-writable directory (default `%LOCALAPPDATA%\Programs\Zhiying`), no administrator rights needed; ~0.1–1 GB for program/runtime plus ~5.3 GB for models (allow ≥ 10 GB); installing needs no network, downloading models does (pause/resume/retry), and the app runs offline once models are downloaded.
@@ -213,7 +215,7 @@ cd ..\..
 .\start.ps1
 ```
 
-This starts the Python service, Next.js app, and render Worker, and writes logs to `logs`. Open [http://127.0.0.1:3000](http://127.0.0.1:3000). The script does not start Ollama; keep Ollama running for storyboard generation. Stop the services with `.stop.ps1`.
+This starts the Python service, Next.js app, and render Worker, and writes logs to `logs`. Open [http://127.0.0.1:3000](http://127.0.0.1:3000). The script does not start Ollama; keep Ollama running for storyboard generation. Stop the services with `.\stop.ps1`.
 
 To start only the Web app and Worker, run `pnpm dev` from the repository root. To run the Python service separately, from `services\python` run:
 

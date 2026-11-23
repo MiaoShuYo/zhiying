@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, codeLines, codeVisualOf, normalizeCodeVisualInput, resolveCodeSceneMode, type Scene, type Storyboard } from '@m2v/schema';
+import { narrationFingerprint, sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, codeLines, codeVisualOf, normalizeCodeVisualInput, resolveCodeSceneMode, type Scene, type Storyboard } from '@m2v/schema';
 import { db } from './db';
 import { copyBrandLogoToProject } from './brand-kit-logo-files';
 import { applyPendingBrandSnapshot, consumePendingBrandKitId, readImportSettings, resolveCreationBrandKitId, writeImportSettings } from './brand-kit-pending';
@@ -1681,7 +1681,12 @@ export async function saveStoryboard(projectId: string, storyboard: unknown, exp
   for (const scene of parsed.scenes) {
     const old = previous?.scenes.find(item => item.id === scene.id);
     const textChanged = old && old.narration !== scene.narration;
-    if (textChanged) scene.pronunciationOverrides = scene.pronunciationOverrides?.filter(rule => rule.occurrence === undefined);
+    // #330: keep occurrence rules created against the narration being saved (the editor already
+    // dropped the old ones when the text changed); only rules bound to other text are stale.
+    if (textChanged) {
+      const current = narrationFingerprint(scene.narration);
+      scene.pronunciationOverrides = scene.pronunciationOverrides?.filter(rule => rule.occurrence === undefined || rule.narrationHash === current);
+    }
     if (textChanged || (old && ((old.speechSpeed ?? 1) !== (scene.speechSpeed ?? 1) || (old.sentencePause ?? 0.12) !== (scene.sentencePause ?? 0.12))) || (old && JSON.stringify(old.pronunciationOverrides ?? []) !== JSON.stringify(scene.pronunciationOverrides ?? [])) || changedPhrases.some(text => scene.narration.includes(text))) {
       scene.audioSrc = undefined;
       scene.audioDuration = undefined; scene.audioKey = undefined;

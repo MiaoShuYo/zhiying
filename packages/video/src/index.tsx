@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useLayoutEffect, useRef, useState } from '
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { AbsoluteFill, Audio, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig, delayRender, continueRender } from 'remotion';
-import { sanitizeSceneHtml, SubtitleSchema, SceneSchema, layoutMetrics, timelineFrames, codeVisualOf, type Scene, type Storyboard, type StyleId, type FrameCard } from '@m2v/schema';
+import { sanitizeSceneHtml, SubtitleSchema, layoutMetrics, timelineFrames, codeVisualOf, type Scene, type Storyboard, type StyleId, type FrameCard } from '@m2v/schema';
 import { resolveSceneTheme } from './theme';
 import { captionDuration, captionAt, resolveCaptionCues } from './captions';
 import { rendererScale, CAPTION_EDGE_RATIO, CAPTION_LINE_HEIGHT, CAPTION_PADDING_Y, captionSafeArea } from './safe-area';
@@ -199,8 +199,13 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
   </AbsoluteFill>;
 }
 
+/**
+ * Intro/outro cards are internal presentation scenes, not narrated scenes. #290: running them
+ * through SceneSchema threw on an empty subtitle (narration must be non-empty) and on a
+ * fallback storyboard title over 50 characters, so valid card settings broke preview and MP4.
+ */
 function frameCardScene(card: FrameCard, id: string, fallbackTitle: string): Scene {
-  return SceneSchema.parse({ id, type: 'title', title: card.title?.trim() || fallbackTitle, narration: card.subtitle ?? '', duration: card.duration });
+  return { id, type: 'title', title: card.title?.trim() || fallbackTitle, narration: card.subtitle ?? '', duration: card.duration, visual: {} } as Scene;
 }
 
 function BrandLogoOverlay({ logo, subtitles }: { logo: NonNullable<Storyboard['brand']>['logo']; subtitles: Storyboard['subtitles'] }) {
@@ -209,7 +214,9 @@ function BrandLogoOverlay({ logo, subtitles }: { logo: NonNullable<Storyboard['b
   if (!placement || !logo) return null;
   const horizontal = placement.edge === 'left' ? { left: placement.edgeOffset } : { right: placement.edgeOffset };
   const vertical = placement.verticalEdge === 'top' ? { top: placement.verticalOffset } : { bottom: placement.verticalOffset };
-  return <Img src={staticFile(logo.src)} style={{ position: 'absolute', zIndex: placement.zIndex, ...horizontal, ...vertical, width: placement.width, height: 'auto', opacity: placement.opacity, objectFit: 'contain', pointerEvents: 'none' }} />;
+  // #182: the Logo is decorative. Passing onError keeps a missing or unreadable file from
+  // failing the whole render; the render route also drops a Logo whose file is gone.
+  return <Img src={staticFile(logo.src)} onError={() => { console.warn(`[brand-logo] 无法加载 Logo：${logo.src}`); }} style={{ position: 'absolute', zIndex: placement.zIndex, ...horizontal, ...vertical, width: placement.width, height: 'auto', opacity: placement.opacity, objectFit: 'contain', pointerEvents: 'none' }} />;
 }
 
 export function ExplainerVideo({ storyboard, onOverflow }: { storyboard: Storyboard; onOverflow?: (sceneId: string, overflowing: boolean) => void }) {

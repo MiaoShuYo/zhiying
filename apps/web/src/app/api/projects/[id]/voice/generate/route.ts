@@ -41,6 +41,33 @@ function requestSynthesis(service: string, text: string, voiceId: string, speed:
   });
 }
 
+/**
+ * #304: synthesis may take 30 minutes per scene and alignment 20, but the job used to be written
+ * only between scenes. After 15 silent minutes recovery failed the job and unlocked the project
+ * while this handler kept writing audio, racing with edits or a new run. A heartbeat now keeps a
+ * live job fresh, and every write checks that recovery has not ended this run.
+ */
+class RunEndedError extends Error {
+  constructor() {
+    super('语音生成任务已被恢复流程结束（长时间没有进展），本次结果未写入；请重新生成语音');
+    this.name = 'RunEndedError';
+  }
+}
+
+async function assertRunActive(jobId: string) {
+  const job = await db.job.findUnique({ where: { id: jobId }, select: { status: true } });
+  if (job?.status !== 'running') throw new RunEndedError();
+}
+
+function startJobHeartbeat(jobId: string) {
+  const timer = setInterval(() => {
+    void db.job.updateMany({ where: { id: jobId, status: 'running' }, data: { updatedAt: new Date() } })
+      .catch(error => console.warn('[voice] job heartbeat failed:', error));
+  }, 60_000);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 type AudioPatch = {
   /** Narration this audio was synthesized from; skip if the scene text changed meanwhile. */
   narration: string;
@@ -65,7 +92,7 @@ type AudioPatch = {
  * (caption colours, title tweaks) even though the client had already saved them.
  * Compare-and-swap on `revision` keeps a concurrent editor save intact.
  */
-async function mergeSceneAudio(projectId: string, patches: Map<string, AudioPatch>, options: { status?: string } = {}) {
+async function mergeSceneAudio(projectId: string, patches: Map<string, AudioPatch>, options: { status?: string; jobId?: string } = {}) {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const current = await db.project.findUnique({ where: { id: projectId }, select: { storyboardJson: true, revision: true } });
     if (!current?.storyboardJson) return null;
@@ -79,9 +106,14 @@ async function mergeSceneAudio(projectId: string, patches: Map<string, AudioPatc
       appliedPatch = true;
     }
     if (patches.size > 0 && !appliedPatch) return null;
-    const updated = await db.project.updateMany({
-      where: { id: projectId, revision: current.revision },
-      data: { revision: { increment: 1 }, storyboardJson: JSON.stringify(board), ...(options.status ? { status: options.status } : {}) },
+    // The run check and the storyboard write share one SQLite transaction, so recovery cannot
+    // end the job between them.
+    const updated = await db.$transaction(async tx => {
+      if (options.jobId && !(await tx.job.count({ where: { id: options.jobId, status: 'running' } }))) throw new RunEndedError();
+      return tx.project.updateMany({
+        where: { id: projectId, revision: current.revision },
+        data: { revision: { increment: 1 }, storyboardJson: JSON.stringify(board), ...(options.status ? { status: options.status } : {}) },
+      });
     });
     if (updated.count) return board;
   }
@@ -118,8 +150,8 @@ async function finishCaptionAlignment(input: {
   const updateProgress = async () => {
     const done = alignedScenes + failedScenes + skippedScenes;
     const percent = 90 + Math.floor((done / input.pending.length) * 9);
-    await db.job.update({
-      where: { id: input.jobId },
+    await db.job.updateMany({
+      where: { id: input.jobId, status: 'running' },
       data: {
         stage: 'aligning_captions',
         sceneId: current?.sceneId ?? null,
@@ -161,10 +193,11 @@ async function finishCaptionAlignment(input: {
         const merged = await mergeSceneAudio(input.projectId, new Map([[
           pending.sceneId,
           { narration: pending.narration, audioSrc: pending.audioSrc, audio: { wordTimings } },
-        ]]));
+        ]]), { jobId: input.jobId });
         if (merged) alignedScenes += 1;
         else skippedScenes += 1;
       } catch (error) {
+        if (error instanceof RunEndedError) throw error;
         failedScenes += 1;
         console.warn(`[caption-align] ${pending.sceneId}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -174,14 +207,14 @@ async function finishCaptionAlignment(input: {
 
     clearInterval(heartbeat);
     await heartbeatPromise;
-    await mergeSceneAudio(input.projectId, new Map(), { status: 'awaiting_review' });
+    await mergeSceneAudio(input.projectId, new Map(), { status: 'awaiting_review', jobId: input.jobId });
     const message = [
       `语音已生成；${alignedScenes} 个场景完成逐词对齐`,
       failedScenes ? `${failedScenes} 个场景对齐失败并保留估算字幕时间` : '',
       skippedScenes ? `${skippedScenes} 个场景内容已变化，舍弃过期对齐结果` : '',
     ].filter(Boolean).join('；');
-    await db.job.update({
-      where: { id: input.jobId },
+    await db.job.updateMany({
+      where: { id: input.jobId, status: 'running' },
       data: {
         status: 'completed',
         stage: 'awaiting_review',
@@ -203,6 +236,8 @@ async function finishCaptionAlignment(input: {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error('[caption-align] background task failed:', detail);
+    // Recovery already closed this run and released the project; another run may own it now.
+    if (error instanceof RunEndedError) return;
     await db.project.update({ where: { id: input.projectId }, data: { status: 'awaiting_review' } }).catch(() => undefined);
     await db.job.update({
       where: { id: input.jobId },
@@ -249,11 +284,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const message = currentScene
       ? `第 ${batchIndex}/${batchCount} 批：正在生成「${currentScene}」(${completedScenes}/${targetScenes.length})`
       : `第 ${batchIndex}/${batchCount} 批已完成 (${completedScenes}/${targetScenes.length} 个场景)`;
-    await db.job.update({ where: { id: job.id }, data: { progress: JSON.stringify({ message, batchIndex, batchCount, completedScenes, totalScenes: targetScenes.length, ...(currentScene ? { currentScene } : {}) }) } });
+    await db.job.updateMany({ where: { id: job.id, status: 'running' }, data: { progress: JSON.stringify({ message, batchIndex, batchCount, completedScenes, totalScenes: targetScenes.length, ...(currentScene ? { currentScene } : {}) }) } });
   };
   // Windows Node may resolve localhost to ::1 while FastAPI listens on IPv4.
   const service = process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000';
   const pendingAlignments: PendingAlignment[] = [];
+  const stopHeartbeat = startJobHeartbeat(job.id);
   try {
     const globalRules = await readPronunciationRules();
     const voiceDir = resolve(process.cwd(), '../../data/voices', voiceId);
@@ -274,7 +310,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             await access(existing);
             if (!scene.wordTimings?.length || scene.wordTimings.some(word => /<\s*unk\s*>/i.test(word.text))) {
               scene.wordTimings = undefined;
-              await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, audioSrc: scene.audioSrc!, audio: { wordTimings: undefined } }]]));
+              await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, audioSrc: scene.audioSrc!, audio: { wordTimings: undefined } }]]), { jobId: job.id });
               pendingAlignments.push({ sceneId: scene.id, narration: scene.narration, audioPath: existing, audioSrc: scene.audioSrc!, title: scene.title ?? '未命名场景' });
             }
             completedScenes += 1;
@@ -282,15 +318,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             continue;
           } catch { /* Regenerate missing audio assets. */ }
         }
-        await db.job.update({ where: { id: job.id }, data: { sceneId: scene.id } });
+        await db.job.updateMany({ where: { id: job.id, status: 'running' }, data: { sceneId: scene.id } });
         const result = await requestSynthesis(service, scene.narration, voiceId, effectiveSpeed, scopes, scene.sentencePause ?? .12);
+        await assertRunActive(job.id);
         if (!result.ok || !result.audioPath) throw new Error(result.detail ?? result.error ?? `场景 ${scene.id} 语音生成失败`);
         scene.pronunciationWarnings = result.warnings ?? [];
         const filename = `${id}-${scene.id}-${Date.now()}.wav`; const publicPath = join(publicAudio, filename); await copyFile(result.audioPath, publicPath);
         scene.audioSrc = `audio/${filename}`; scene.audioKey = key; if (result.duration && result.duration > 0) { scene.audioDuration = result.duration; scene.duration = Math.max(3, result.duration + 0.5); }
         scene.wordTimings = undefined;
         await db.scene.update({ where: { id: scene.id }, data: { audioPath: `audio/${filename}`, duration: scene.duration } });
-        await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, resetCaptions: true, audio: { audioSrc: scene.audioSrc, audioKey: scene.audioKey, audioDuration: scene.audioDuration, duration: scene.duration, wordTimings: scene.wordTimings, pronunciationWarnings: scene.pronunciationWarnings } }]]));
+        await mergeSceneAudio(id, new Map([[scene.id, { narration: scene.narration, resetCaptions: true, audio: { audioSrc: scene.audioSrc, audioKey: scene.audioKey, audioDuration: scene.audioDuration, duration: scene.duration, wordTimings: scene.wordTimings, pronunciationWarnings: scene.pronunciationWarnings } }]]), { jobId: job.id });
         pendingAlignments.push({ sceneId: scene.id, narration: scene.narration, audioPath: publicPath, audioSrc: scene.audioSrc!, title: scene.title ?? '未命名场景' });
         completedScenes += 1;
         await reportProgress(batchIndex);
@@ -301,13 +338,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const pronunciationNote = [...new Set(targetScenes.flatMap(scene => scene.pronunciationWarnings ?? []))].join('；');
     const generatedMessage = generatedScene ? `场景「${generatedScene.title ?? '未命名'}」语音已生成` : '逐场景语音已生成';
     if (pendingAlignments.length === 0) {
-      const persisted = await mergeSceneAudio(id, new Map(), { status: 'awaiting_review' });
-      await db.job.update({ where: { id: job.id }, data: { status: 'completed', stage: 'awaiting_review', sceneId: null, progress: JSON.stringify({ message: `${batchCount} 批语音已生成 (${targetScenes.length}/${targetScenes.length} 个场景)`, batchIndex: batchCount, batchCount, completedScenes: targetScenes.length, totalScenes: targetScenes.length, percent: 100 }) } });
+      const persisted = await mergeSceneAudio(id, new Map(), { status: 'awaiting_review', jobId: job.id });
+      await db.job.updateMany({ where: { id: job.id, status: 'running' }, data: { status: 'completed', stage: 'awaiting_review', sceneId: null, progress: JSON.stringify({ message: `${batchCount} 批语音已生成 (${targetScenes.length}/${targetScenes.length} 个场景)`, batchIndex: batchCount, batchCount, completedScenes: targetScenes.length, totalScenes: targetScenes.length, percent: 100 }) } });
       return NextResponse.json({ storyboard: persisted ?? storyboard, message: `${generatedMessage}${pronunciationNote ? `；${pronunciationNote}` : ''}` });
     }
 
-    await db.job.update({
-      where: { id: job.id },
+    await db.job.updateMany({
+      where: { id: job.id, status: 'running' },
       data: {
         stage: 'aligning_captions',
         sceneId: null,
@@ -324,10 +361,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         }),
       },
     });
-    const persisted = await mergeSceneAudio(id, new Map(), { status: 'generating_audio' });
+    const persisted = await mergeSceneAudio(id, new Map(), { status: 'generating_audio', jobId: job.id });
     after(() => finishCaptionAlignment({ projectId: id, jobId: job.id, service, pending: pendingAlignments, sceneCount: targetScenes.length, batchCount }));
     return NextResponse.json({ storyboard: persisted ?? storyboard, message: `${generatedMessage}；逐词字幕正在后台补齐${pronunciationNote ? `；${pronunciationNote}` : ''}` });
   } catch (error) {
+    if (error instanceof RunEndedError) return NextResponse.json({ error: error.message }, { status: 409 });
     const rawMessage = error instanceof Error ? error.message : '语音生成失败';
     // FileNotFoundError contains the substring "NotFound"; don't mistake a
     // Python inference error for a network/DNS failure.
@@ -335,6 +373,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const message = isConnectionError
       ? `无法连接本地 Python 语音服务（${service}）：${rawMessage}。请确认 http://127.0.0.1:8000/health 可正常返回。`
       : rawMessage;
-    await db.job.update({ where: { id: job.id }, data: { status: 'failed', stage: 'generating_audio', error: message } }); await db.project.update({ where: { id }, data: { status: sceneId ? 'awaiting_review' : 'failed' } }); return NextResponse.json({ error: message, completedScenes: storyboard.scenes.filter(s => s.audioSrc).length }, { status: 503 });
+    // Only the run that still owns the job may fail it and release the project.
+    const closed = await db.job.updateMany({ where: { id: job.id, status: 'running' }, data: { status: 'failed', stage: 'generating_audio', error: message } });
+    if (closed.count) await db.project.update({ where: { id }, data: { status: sceneId ? 'awaiting_review' : 'failed' } });
+    return NextResponse.json({ error: message, completedScenes: storyboard.scenes.filter(s => s.audioSrc).length }, { status: 503 });
+  } finally {
+    stopHeartbeat();
   }
 }

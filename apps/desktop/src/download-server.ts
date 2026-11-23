@@ -40,6 +40,20 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 const MAX_BODY_BYTES = 64 * 1024;
 const ACTIONS = new Set(['start', 'pause', 'resume', 'cancel', 'retry', 'verify']);
 
+/**
+ * #137：任何网页都能向 127.0.0.1 提交普通表单（不触发 CORS 预检），DNS 重绑定还能让外部域名
+ * 解析到本机。因此 Host 必须是本机回环地址加实际端口；带 Origin 的请求只接受本服务自己的源；
+ * 写操作只接受 application/json，普通表单（urlencoded、multipart、text/plain）一律拒绝。
+ */
+function localAuthorities(port: number): Set<string> {
+  return new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
+}
+
+function isJsonRequest(request: IncomingMessage): boolean {
+  const type = String(request.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+  return type === 'application/json';
+}
+
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   response.statusCode = status;
@@ -117,6 +131,7 @@ export async function createModelManagerServer(input: ModelManagerServerInput): 
   const sseClients = new Set<ServerResponse>();
   let keepAlive: NodeJS.Timeout | undefined;
   let closed = false;
+  let listeningPort = 0;
 
   const sendEvent = (client: ServerResponse, payload: ModelsPayload): void => {
     client.write(`event: progress\ndata: ${JSON.stringify(payload)}\n\n`);
@@ -133,6 +148,16 @@ export async function createModelManagerServer(input: ModelManagerServerInput): 
   });
 
   const handleRequest = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const authorities = localAuthorities(listeningPort);
+    if (!authorities.has(String(request.headers.host ?? '').toLowerCase())) {
+      sendJson(response, 421, { ok: false, error: '模型管理器只接受本机地址访问' });
+      return;
+    }
+    const origin = request.headers.origin;
+    if (origin !== undefined && !Array.from(authorities).some(authority => origin.toLowerCase() === `http://${authority}`)) {
+      sendJson(response, 403, { ok: false, error: '不允许其他网页操作模型管理器' });
+      return;
+    }
     const url = new URL(request.url ?? '/', `http://${host}`);
     const pathname = decodeURIComponent(url.pathname);
     const method = request.method ?? 'GET';
@@ -167,6 +192,10 @@ export async function createModelManagerServer(input: ModelManagerServerInput): 
       const action = actionMatch[2];
       if (!ACTIONS.has(action)) {
         sendJson(response, 400, { ok: false, error: `不支持的模型操作：${action}` });
+        return;
+      }
+      if (!isJsonRequest(request)) {
+        sendJson(response, 415, { ok: false, error: '模型操作只接受 application/json 请求' });
         return;
       }
       let body: Record<string, unknown> = {};
@@ -223,6 +252,7 @@ export async function createModelManagerServer(input: ModelManagerServerInput): 
     throw new Error('模型管理器服务未能获得监听端口');
   }
   const actualPort = (address as AddressInfo).port;
+  listeningPort = actualPort;
   keepAlive = setInterval(() => {
     for (const client of sseClients) {
       try {

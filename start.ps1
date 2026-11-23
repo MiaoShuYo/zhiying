@@ -136,6 +136,9 @@ if (-not $pnpm) { throw '未找到 pnpm.cmd。请先安装并启用 pnpm。' }
 
 & node (Join-Path $repoRoot 'scripts\migrate-v11.cjs')
 if ($LASTEXITCODE -ne 0) { throw 'V1.1 数据库迁移失败，请检查提示后重试。' }
+# #271: V1.6 Job 列（startedAt、failedStage、failureCode、renderPlanJson、logPath）同样需要在启动时补齐。
+& node (Join-Path $repoRoot 'scripts\migrate-v16.cjs')
+if ($LASTEXITCODE -ne 0) { throw 'V1.6 数据库迁移失败，请检查提示后重试。' }
 
 $pathFFmpeg = Get-Command ffmpeg.exe -ErrorAction SilentlyContinue
 $ffmpegCandidates = @($FFmpegBin, $env:M2V_FFMPEG_BIN, 'D:\Tools\ffmpeg-8.1.2-full-shared\bin', $(if ($pathFFmpeg) { Split-Path -Parent $pathFFmpeg.Source }))

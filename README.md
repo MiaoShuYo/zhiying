@@ -242,6 +242,8 @@
 
 V1.8.0 起提供普通用户可直接使用的 Windows 桌面发行版：安装版自带运行环境，**无需预装 Node.js / pnpm / Python / uv / Git，也不需要命令行操作**。开发模式（下文「初始化项目」）仍可继续使用，安装版规则不会破坏开发环境。
 
+> **仅供验证的构建：** 仓库中冻结的 `dist/Zhiying-Setup.exe` 使用 **lite** profile 构建，只会启动 fixture 服务和占位 Web 页面，用于验证安装、启动、模型下载与卸载流程；它**不是**完整的工作室，下载模型后也无法完成从 PDF 到视频的正常流程。完整运行时安装包需要用 `node scripts/build-installer.mjs --profile full` 构建（需要 Web standalone、Python、FFmpeg、Ollama 产物）。在完整安装包发布前，请使用开发模式制作视频。
+
 ### 系统要求
 
 | 项目 | 要求 |

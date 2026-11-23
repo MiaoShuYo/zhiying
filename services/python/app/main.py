@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import hashlib
+import http.client
 import ipaddress
 import json
 import logging
@@ -11,6 +12,7 @@ import platform
 import posixpath
 import re
 import socket
+import ssl
 import shutil
 import subprocess
 import sys
@@ -26,7 +28,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.request import HTTPHandler, HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 import xml.etree.ElementTree as ET
 
 import pymupdf
@@ -34,6 +36,7 @@ from app.presentation import converters, presentation_capabilities, MISSING_REND
 from app.local_llm_config import local_llm_config
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 DATA = Path(os.environ.get("M2V_DATA_DIR", "../../data")).resolve()
@@ -77,7 +80,19 @@ async def _service_lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="M2V Local Services", version="0.1.0", lifespan=_service_lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_methods=["*"], allow_headers=["*"])
+# Browsers attach Origin to cross-site requests, including plain HTML form posts that CORS
+# never preflights. Only the local studio may drive this service; the Next.js API routes call
+# it server-side without an Origin header and are unaffected (#196).
+_ALLOWED_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
+app.add_middleware(CORSMiddleware, allow_origins=list(_ALLOWED_ORIGINS), allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def _reject_foreign_origin(request, call_next):
+    origin = request.headers.get("origin")
+    if origin is not None and origin not in _ALLOWED_ORIGINS:
+        return JSONResponse({"detail": "不允许其他网页调用本地服务"}, status_code=403)
+    return await call_next(request)
 
 def _register_dll_directory(path: Path) -> None:
     if not hasattr(os, "add_dll_directory") or not path.is_dir():
@@ -368,16 +383,31 @@ def _extract_pdf_page(page, number: int, force_ocr: bool = False, with_tables: b
         text = page.get_text("text", sort=True).strip()
         method = "ocr" if force_ocr else "text"
         used_ocr = force_ocr
+        warnings = []
         if force_ocr or (len(re.sub(r"\s+", "", text)) < 30 and images):
+            # #318: OCR is only a fallback for pages with little native text. When it is not
+            # installed (or fails) the native text of a searchable page is kept with a warning;
+            # only a page with no text at all, or an explicit OCR request, is reported as failed.
+            keep_native = bool(text) and not force_ocr
             tessdata = _ocr_data_dir()
             if not tessdata:
-                raise ValueError("扫描页需要本地 Tesseract OCR，请安装 chi_sim、eng 语言包并设置 TESSDATA_PREFIX")
-            textpage = page.get_textpage_ocr(language="chi_sim+eng", dpi=150, full=True, tessdata=tessdata)
-            text = page.get_text("text", textpage=textpage, sort=True).strip()
-            used_ocr = True
-            method = "ocr"
+                if not keep_native:
+                    raise ValueError("扫描页需要本地 Tesseract OCR，请安装 chi_sim、eng 语言包并设置 TESSDATA_PREFIX")
+                warnings.append("未安装 Tesseract OCR，已保留此页可直接读取的文字；如有图片中的文字未被提取，请安装 OCR 后重新识别此页")
+            else:
+                try:
+                    textpage = page.get_textpage_ocr(language="chi_sim+eng", dpi=150, full=True, tessdata=tessdata)
+                    ocr_text = page.get_text("text", textpage=textpage, sort=True).strip()
+                except Exception as exc:
+                    if not keep_native:
+                        raise
+                    warnings.append(f"OCR 识别失败（{exc}），已保留此页可直接读取的文字")
+                else:
+                    if ocr_text or not keep_native:
+                        text = ocr_text
+                        used_ocr = True
+                        method = "ocr"
         chars = len(re.sub(r"\s+", "", text))
-        warnings = []
         if used_ocr:
             warnings.append("此页来自 OCR 识别，请核对数字、公式与专有名词")
         if chars == 0:
@@ -619,37 +649,97 @@ def _headline(title: str, body: str) -> str:
     return "" if first and first == stem else title
 
 
+_BLOCKED_HOSTNAMES = {"localhost", "localhost.localdomain"}
+
+
+def _public_addresses(hostname: str, port: int) -> list:
+    """Resolve a host once and refuse it unless every address it resolves to is public."""
+    host = hostname.rstrip(".").lower()
+    if host in _BLOCKED_HOSTNAMES or host.endswith(".local"):
+        raise ValueError("不允许访问本机或内网地址")
+    try:
+        addresses = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ValueError("无法解析网页主机名") from exc
+        addresses = list(dict.fromkeys(ipaddress.ip_address(str(item[4][0]).split("%", 1)[0]) for item in infos))
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("不允许访问本机或内网地址")
+    return addresses
+
+
 def _validate_public_url(value: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("只支持无需登录的公开 HTTP/HTTPS 网页")
-    if parsed.port is not None and parsed.port != (443 if parsed.scheme == "https" else 80):
+    default_port = 443 if parsed.scheme == "https" else 80
+    if parsed.port is not None and parsed.port != default_port:
         raise ValueError("网页链接只能使用标准 HTTP/HTTPS 端口")
-    host = parsed.hostname.rstrip(".").lower()
-    if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
-        raise ValueError("不允许访问本机或内网地址")
-    try:
-        addresses = {ipaddress.ip_address(host)}
-    except ValueError:
-        try: addresses = {ipaddress.ip_address(item[4][0]) for item in socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)}
-        except OSError as exc: raise ValueError("无法解析网页主机名") from exc
-    if not addresses or any(not address.is_global for address in addresses):
-        raise ValueError("不允许访问本机或内网地址")
+    _public_addresses(parsed.hostname, default_port)
     return value
 
+
+def _connect_public(host: str, port: int, timeout, source_address) -> socket.socket:
+    """Connect only to addresses validated in this same call (#322).
+
+    Validating a hostname and then letting http.client resolve it again lets a hostile DNS
+    server answer with a public address first and a loopback/private one second. Resolving
+    once and connecting to exactly those addresses closes that gap; the Host header and the
+    TLS server name still use the original hostname, and redirects go through the same path.
+    """
+    last_error: OSError | None = None
+    for address in _public_addresses(host, port):
+        try:
+            return socket.create_connection((str(address), port), timeout, source_address)
+        except OSError as exc:
+            last_error = exc
+    raise last_error or OSError("无法连接网页主机")
+
+
+class _PublicHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = _connect_public(self.host, self.port, self.timeout, self.source_address)
+
+
+class _PublicHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        sock = _connect_public(self.host, self.port, self.timeout, self.source_address)
+        try:
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        except BaseException:
+            sock.close()
+            raise
+
+
+class _PublicHTTPHandler(HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_PublicHTTPConnection, req)
+
+
+class _PublicHTTPSHandler(HTTPSHandler):
+    def __init__(self):
+        super().__init__(context=ssl.create_default_context())
+
+    def https_open(self, req):
+        return self.do_open(_PublicHTTPSConnection, req, context=self._context)
+
+
 class _SafeRedirect(HTTPRedirectHandler):
+    # Scheme/port of a redirect are checked here; the pinned handlers above resolve and
+    # validate the new host again when the redirected connection is actually opened.
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         _validate_public_url(urljoin(req.full_url, newurl))
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
-@app.post("/extract/url")
-async def extract_url(payload: dict):
+def _extract_url_sync(payload: dict) -> dict:
     try:
         url = _validate_public_url(str(payload.get("url", "")))
         request = Request(url, headers={"User-Agent": "ZhiyingLocalStudio/1.0 (public article text extraction)", "Accept": "text/html,application/xhtml+xml"})
         def load() -> tuple[bytes, str]:
             try:
-                with build_opener(ProxyHandler({}), _SafeRedirect()).open(request, timeout=45) as response:
+                with build_opener(ProxyHandler({}), _PublicHTTPHandler(), _PublicHTTPSHandler(), _SafeRedirect()).open(request, timeout=45) as response:
                     if "text/html" not in response.headers.get("Content-Type", "").lower(): raise ValueError("链接不是 HTML 文章页面")
                     raw = response.read(5 * 1024 * 1024 + 1)
                     if len(raw) > 5 * 1024 * 1024: raise ValueError("网页超过 5 MB，无法导入")
@@ -681,6 +771,13 @@ async def extract_url(payload: dict):
         return {"text": f"# {heading}\n\n{body}" if heading else body, "title": title, "url": url, "pages": 1}
     except (ValueError, HTTPError, URLError, TimeoutError, OSError) as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/extract/url")
+async def extract_url(payload: dict):
+    # #331: DNS resolution, the HTTP request (up to 45 s) and parsing are all blocking; running
+    # them on the event loop froze /health, /synthesize and every other request meanwhile.
+    return await run_in_threadpool(_extract_url_sync, payload)
 
 def _pptx_slide_text(archive: zipfile.ZipFile, slide_path: str, slide_number: int) -> tuple[str, str, list[tuple[str, bytes]]]:
     ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main", "p": "http://schemas.openxmlformats.org/presentationml/2006/main", "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
@@ -762,38 +859,44 @@ async def extract_pptx(file: UploadFile = File(...), projectId: str = Form(...),
     project_root = (PROJECT_DIR / projectId).resolve()
     asset_root = (project_root / "assets").resolve(); asset_root.mkdir(parents=True, exist_ok=True)
     public_prefix = f"projects/{projectId}/assets"
-    try:
-        with tempfile.TemporaryDirectory(dir=PROJECT_DIR) as temp_dir:
-            source = Path(temp_dir) / Path(file.filename).name; source.write_bytes(raw)
-            with zipfile.ZipFile(source) as archive:
-                if sum(info.file_size for info in archive.infolist()) > 500 * 1024 * 1024: raise ValueError("PPTX 解压后内容不能超过 500 MB")
-                if any(info.file_size > 100 * 1024 * 1024 for info in archive.infolist()): raise ValueError("PPTX 内单个文件不能超过 100 MB")
-                slide_names = _pptx_slide_order(archive)
-                if not slide_names: raise ValueError("PPTX 中没有可读取的幻灯片")
-                if len(slide_names) > 100: raise ValueError("单个 PPTX 最多支持 100 张幻灯片")
-                blocks = []; assets = []
-                for index, slide_path in enumerate(slide_names, 1):
-                    slide_text, notes, images = _pptx_slide_text(archive, slide_path, index)
-                    if not slide_text.strip() and not notes.strip(): slide_text = "此页没有可提取的文本内容。"
-                    blocks.append(f"## 幻灯片 {index}\n标题和正文：\n{slide_text}\n\n演讲者备注（优先作为旁白依据）：\n{notes or '（无备注，请根据页面内容生成旁白）'}")
-                    for image_index, (image_name, image_bytes) in enumerate(images, 1):
-                        suffix = Path(image_name).suffix.lower()
-                        if suffix not in {".png", ".jpg", ".jpeg", ".webp"}: continue
-                        name = f"slide-{index:03d}-image-{image_index:02d}{suffix}"
-                        (asset_root / name).write_bytes(image_bytes)
-                        web_asset_root = WEB_PUBLIC_ASSETS / projectId / "assets"; web_asset_root.mkdir(parents=True, exist_ok=True); (web_asset_root / name).write_bytes(image_bytes)
-                        assets.append({"path": f"{public_prefix}/{name}", "name": name})
-            if mode == "preserve":
-                pdf_path = _render_pptx_pdf(source, Path(temp_dir))
-                with pymupdf.open(pdf_path) as doc:
-                    for index, page in enumerate(doc, 1):
-                        name = f"slide-{index:03d}.png"
-                        page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False).save(asset_root / name)
-                        web_asset_root = WEB_PUBLIC_ASSETS / projectId / "assets"; web_asset_root.mkdir(parents=True, exist_ok=True); shutil.copyfile(asset_root / name, web_asset_root / name)
-                        assets.append({"path": f"{public_prefix}/{name}", "name": name})
-        return {"text": "\n\n".join(blocks), "pages": len(slide_names), "assets": assets, "filename": file.filename}
-    except (zipfile.BadZipFile, ET.ParseError, ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
-        raise HTTPException(422, f"PPTX 解析失败：{exc}") from exc
+
+    # #329: unzipping, LibreOffice/PowerPoint conversion (subprocess, up to 180 s each) and page
+    # rasterization are blocking; they run in the threadpool so other requests stay responsive.
+    def work() -> dict:
+        try:
+            with tempfile.TemporaryDirectory(dir=PROJECT_DIR) as temp_dir:
+                source = Path(temp_dir) / Path(file.filename).name; source.write_bytes(raw)
+                with zipfile.ZipFile(source) as archive:
+                    if sum(info.file_size for info in archive.infolist()) > 500 * 1024 * 1024: raise ValueError("PPTX 解压后内容不能超过 500 MB")
+                    if any(info.file_size > 100 * 1024 * 1024 for info in archive.infolist()): raise ValueError("PPTX 内单个文件不能超过 100 MB")
+                    slide_names = _pptx_slide_order(archive)
+                    if not slide_names: raise ValueError("PPTX 中没有可读取的幻灯片")
+                    if len(slide_names) > 100: raise ValueError("单个 PPTX 最多支持 100 张幻灯片")
+                    blocks = []; assets = []
+                    for index, slide_path in enumerate(slide_names, 1):
+                        slide_text, notes, images = _pptx_slide_text(archive, slide_path, index)
+                        if not slide_text.strip() and not notes.strip(): slide_text = "此页没有可提取的文本内容。"
+                        blocks.append(f"## 幻灯片 {index}\n标题和正文：\n{slide_text}\n\n演讲者备注（优先作为旁白依据）：\n{notes or '（无备注，请根据页面内容生成旁白）'}")
+                        for image_index, (image_name, image_bytes) in enumerate(images, 1):
+                            suffix = Path(image_name).suffix.lower()
+                            if suffix not in {".png", ".jpg", ".jpeg", ".webp"}: continue
+                            name = f"slide-{index:03d}-image-{image_index:02d}{suffix}"
+                            (asset_root / name).write_bytes(image_bytes)
+                            web_asset_root = WEB_PUBLIC_ASSETS / projectId / "assets"; web_asset_root.mkdir(parents=True, exist_ok=True); (web_asset_root / name).write_bytes(image_bytes)
+                            assets.append({"path": f"{public_prefix}/{name}", "name": name})
+                if mode == "preserve":
+                    pdf_path = _render_pptx_pdf(source, Path(temp_dir))
+                    with pymupdf.open(pdf_path) as doc:
+                        for index, page in enumerate(doc, 1):
+                            name = f"slide-{index:03d}.png"
+                            page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False).save(asset_root / name)
+                            web_asset_root = WEB_PUBLIC_ASSETS / projectId / "assets"; web_asset_root.mkdir(parents=True, exist_ok=True); shutil.copyfile(asset_root / name, web_asset_root / name)
+                            assets.append({"path": f"{public_prefix}/{name}", "name": name})
+            return {"text": "\n\n".join(blocks), "pages": len(slide_names), "assets": assets, "filename": file.filename}
+        except (zipfile.BadZipFile, ET.ParseError, ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(422, f"PPTX 解析失败：{exc}") from exc
+
+    return await run_in_threadpool(work)
 
 @app.post("/voices")
 async def create_voice(audio: UploadFile | None = File(None), transcript: str = Form(...), voice_id: str = Form("my-voice")):
@@ -884,7 +987,9 @@ async def align_audio(file: UploadFile = File(...), text: str = Form(...), langu
     with tempfile.NamedTemporaryFile(dir=AUDIO_DIR, suffix=suffix, delete=False) as handle:
         handle.write(await file.read()); audio_path = Path(handle.name)
     try:
-        async with _ALIGN_LOCK:
+        # #328: model download/loading, audio decoding and CPU alignment are blocking. The lock still
+        # serializes callers, but the work itself runs in the threadpool, not on the event loop.
+        def run_alignment() -> list:
             if model_id not in _ALIGN_MODELS:
                 # 安装版显式使用 <models>/huggingface 缓存；开发模式保持 V1.7.0 默认行为。
                 cache_dir = str(HF_HUB_CACHE) if PACKAGED_MODELS_ROOT or "HF_HOME" in os.environ or "HF_HUB_CACHE" in os.environ else None
@@ -943,6 +1048,9 @@ async def align_audio(file: UploadFile = File(...), text: str = Form(...), langu
                     if word["text"].casefold() != original.casefold(): raise ValueError("对齐结果与旁白不一致")
                     word["text"] = original
             else: words = [item for item in aligned_tokens if item["text"] != "|"]
+            return words
+        async with _ALIGN_LOCK:
+            words = await run_in_threadpool(run_alignment)
         if not words: raise ValueError("模型未能对齐任何词语")
         return {"words": words, "language": language}
     except Exception as exc:

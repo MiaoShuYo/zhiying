@@ -287,8 +287,9 @@ def resolve(text: str, scopes: list[list[dict]], base: str | None = None, model:
         config['stream'] = runtime['stream']
     if type(runtime.get('max_concurrency')) is int and 1 <= runtime['max_concurrency'] <= 4:
         config['max_concurrency'] = runtime['max_concurrency']
-    if isinstance(runtime.get('lock_dir'), str) and runtime['lock_dir'].strip():
-        config['lock_dir'] = Path(runtime['lock_dir']).resolve()
+    # lock_dir is trusted service configuration (OLLAMA_LOCK_DIR) and is never taken from
+    # the request: a cross-origin form could otherwise point the slot manager at any
+    # directory, which it creates and where it deletes stale slot-*.lock files (#196).
     batch_size = runtime.get('prediction_batch_size', PRONUNCIATION_BATCH_SIZE)
     if type(batch_size) is not int or not 1 <= batch_size <= 128:
         batch_size = PRONUNCIATION_BATCH_SIZE

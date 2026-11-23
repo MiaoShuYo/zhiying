@@ -13,6 +13,51 @@ export const TMP_ROOT = path.join(REPO_ROOT, 'data', 'tmp', 'v21');
 
 const registered = new Set<string>();
 
+/**
+ * Every directory this test process created, kept for the whole run (unlike `registered`, it is
+ * not emptied by cleanup). Cleanup helpers use it as ownership evidence, so they only touch
+ * installers, uninstall entries and shortcuts that point into this run's own folders (#131, #132).
+ */
+const owned = new Set<string>();
+
+function normalizeOwned(value: string): string {
+  return path.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
+}
+
+export function registerOwnedTestRoot(dir: string): void {
+  owned.add(normalizeOwned(dir));
+  try {
+    owned.add(normalizeOwned(fs.realpathSync.native(dir)));
+  } catch {
+    /* 目录可能尚未创建或已删除 */
+  }
+}
+
+/** True when `value` is one of this run's directories or a path inside one. */
+export function isOwnedTestPath(value: string | undefined | null): boolean {
+  if (!value) return false;
+  let normalized: string;
+  try {
+    normalized = normalizeOwned(value.trim().replace(/^"|"$/g, ''));
+  } catch {
+    return false;
+  }
+  for (const root of owned) {
+    if (normalized === root || normalized.startsWith(`${root}\\`) || normalized.startsWith(`${root}/`)) return true;
+  }
+  return false;
+}
+
+/** True when a command line mentions one of this run's directories (quoted or not). */
+export function commandLineUsesOwnedPath(commandLine: string): boolean {
+  const lowered = commandLine.toLowerCase().replace(/\//g, '\\');
+  for (const root of owned) {
+    const rootBackslash = root.replace(/\//g, '\\');
+    if (lowered.includes(`${rootBackslash}\\`) || lowered.includes(`${rootBackslash}"`) || lowered.endsWith(rootBackslash)) return true;
+  }
+  return false;
+}
+
 export function ensureTmpRoot(): string {
   fs.mkdirSync(TMP_ROOT, { recursive: true });
   return TMP_ROOT;
@@ -27,6 +72,7 @@ export function makeTempRoot(label = 'case'): string {
   const dir = path.join(TMP_ROOT, name);
   fs.mkdirSync(dir, { recursive: true });
   registered.add(dir);
+  registerOwnedTestRoot(dir);
   return dir;
 }
 
@@ -35,6 +81,7 @@ export function makeChineseSpaceDir(parent: string, name = '知影 安装 目录
   const dir = path.join(parent, name);
   fs.mkdirSync(dir, { recursive: true });
   registered.add(dir);
+  registerOwnedTestRoot(dir);
   return dir;
 }
 
