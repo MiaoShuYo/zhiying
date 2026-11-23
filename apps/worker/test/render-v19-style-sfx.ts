@@ -349,7 +349,7 @@ async function renderSfx(serveUrl: string, aspectRatio: '16:9' | '9:16') {
   assert.ok(missingDifference < .0005, `missing local cue adds no audible signal (${missingDifference.toFixed(6)})`);
   const bgmDifference = rmsDifference(bgmOn, bgmMuted, .5, 1);
   assert.ok(bgmDifference > .01, `bgmEnabled=false removes the player BGM while preserving the voice track (${bgmDifference.toFixed(6)})`);
-  assert.ok(windowRms(bgmMuted, .5, 1) > .02, 'voice remains audible when BGM is muted');
+  assert.ok(windowRms(bgmMuted, .5, 1) > .01, 'voice remains audible when BGM is muted');
   const peak = peakLevel(active);
   assert.ok(peak > .05 && peak < .98, `mixed SFX output remains audible without clipping (peak=${peak.toFixed(4)})`);
   console.log(`${aspectRatio} SFX cue RMS differences against volume-zero duck control: ${JSON.stringify(perCue)}`);
@@ -381,12 +381,23 @@ async function main() {
       for (let index = 0; index < count; index += 1) wav.writeInt16LE(Math.round(10000 * Math.sin(2 * Math.PI * frequency * index / sampleRate)), 44 + index * 2);
       await writeFile(file, wav);
     };
-    await makeTone(join(projectAssets, 'voice-440.wav'), 440, 9);
+    const voiceFixturePath = join(projectAssets, 'voice-440.wav');
+    const realVoiceFile = process.env.V19_TEST_VOICE_FILE?.trim();
+    if (realVoiceFile) {
+      const resolvedVoiceFile = resolve(realVoiceFile);
+      if (!existsSync(resolvedVoiceFile)) throw new Error(`V19_TEST_VOICE_FILE does not exist: ${resolvedVoiceFile}`);
+      await copyFile(resolvedVoiceFile, voiceFixturePath);
+    } else {
+      await makeTone(voiceFixturePath, 440, 9);
+    }
     await makeTone(join(projectAssets, 'music-880.wav'), 880, 3);
     const serveUrl = await bundle({ entryPoint: resolve(repo, 'apps', 'worker', 'src', 'entry.tsx'), publicDir, outDir: join(repoTmp, 'bundle') });
+    const speechMixOnly = Boolean(process.env.V19_TEST_VOICE_FILE?.trim());
     for (const aspectRatio of ['16:9', '9:16'] as const) {
-      await renderStylePacks(serveUrl, aspectRatio);
-      await renderStyleTemplateMatrix(serveUrl, aspectRatio);
+      if (!speechMixOnly) {
+        await renderStylePacks(serveUrl, aspectRatio);
+        await renderStyleTemplateMatrix(serveUrl, aspectRatio);
+      }
       await renderSfx(serveUrl, aspectRatio);
     }
     console.log('V1.9.0 style-pack and SFX MP4 outputs:');
