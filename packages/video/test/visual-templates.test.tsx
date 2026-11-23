@@ -22,6 +22,10 @@ function render(scene: Scene, templateId: VisualTemplateId, portrait: boolean, o
   return renderToStaticMarkup(createElement(VisualTemplateContent, { scene, templateId, theme, portrait, fps: 30, ...options }));
 }
 
+function renderedFontSizes(markup: string) {
+  return [...markup.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map(match => Number(match[1]));
+}
+
 test('V1.9.0 registry contains five bounded templates for both aspect ratios', () => {
   assert.deepEqual(Object.keys(visualTemplateRegistry).sort(), ['chart', 'comparison', 'diagram', 'hero', 'timeline']);
   for (const [id, entry] of Object.entries(visualTemplateRegistry)) {
@@ -64,6 +68,23 @@ test('portrait comparisons stack while landscape comparisons use independent col
   assert.match(portrait, /grid-template-columns:1fr/);
   assert.ok(landscape.indexOf('同步') < landscape.indexOf('异步'));
   assert.ok(portrait.indexOf('同步') < portrait.indexOf('异步'));
+});
+
+test('all style packs keep chart and comparison text at the aspect-ratio readability floor', () => {
+  const chart = visualQualityStoryboard.scenes.find(item => item.id === templateSceneIds.chart)!;
+  const comparison = visualQualityStoryboard.scenes.find(item => item.id === templateSceneIds.comparison)!;
+  for (const pack of ['editorial-tech', 'clean-data', 'paper-collage-lite'] as const) {
+    const packTheme = resolveBrandTheme('minimal-tech', undefined, pack);
+    for (const portrait of [false, true]) {
+      const minimum = portrait ? 20 : 18;
+      for (const [scene, template] of [[chart, 'chart'], [comparison, 'comparison']] as const) {
+        const markup = renderToStaticMarkup(createElement(VisualTemplateContent, { scene, templateId: template, theme: packTheme, portrait, fps: 30 }));
+        const sizes = renderedFontSizes(markup);
+        assert.ok(sizes.length > 0, `${pack} ${template} has measured text styles`);
+        assert.ok(sizes.every(size => size >= minimum), `${pack} ${template} ${portrait ? 'portrait' : 'landscape'} sizes: ${sizes.join(', ')}`);
+      }
+    }
+  }
 });
 
 test('registry is local-only and template markup does not accept source executable markup', () => {

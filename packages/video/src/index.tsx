@@ -522,8 +522,10 @@ function VisualQaCapture({ enabled }: { enabled: boolean }) {
         try { await image.decode(); } catch { /* A broken or replaced image should not block QA capture. */ }
       }
     }));
-    void Promise.all([document.fonts.ready, imagesReady])
-      .then(() => requestAnimationFrame(() => requestAnimationFrame(measure)), finish);
+    // A font/image readiness rejection must not silently skip the QA marker:
+    // the scene can still be measured with the browser's fallback font/layout.
+    void Promise.allSettled([document.fonts.ready, imagesReady])
+      .then(() => requestAnimationFrame(() => requestAnimationFrame(measure)));
     return () => {
       stopped = true;
       finish();

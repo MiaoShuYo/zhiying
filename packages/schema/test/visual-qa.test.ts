@@ -58,6 +58,20 @@ test('post-render audit identifies readability, collision, contrast, black-frame
   assert.equal(report.evidenceFrames, 2, 'frame and transition evidence are counted');
 });
 
+test('subtitle and logo exactly on the 5% safe-area boundary are not flagged by floating-point noise', () => {
+  const scene = SceneSchema.parse({ id: 'qa-safe-boundary', type: 'title', title: '边界', narration: '边界测试', visual: {} });
+  const report = visualQualityAudit(boardOf([scene]), {
+    fps: 30,
+    renderEvidence: VisualQaRenderEvidenceSchema.parse({
+      layout: [
+        { sceneId: scene.id, targetId: 'subtitle', frame: 0, elementType: 'subtitle', bounds: { x: .05, y: .9177083333333333, width: .9, height: .03229166666666667 } },
+        { sceneId: scene.id, targetId: 'brand-logo', frame: 0, elementType: 'logo', bounds: { x: .05, y: .05, width: .9, height: .9 } },
+      ],
+    }),
+  });
+  assert.equal(report.findings.some(finding => finding.code === 'caption-safe-area' || finding.code === 'logo-safe-area'), false);
+});
+
 test('density auto-fix re-audits, preserves source narration/visual/audio/timings, and is capped at two rounds', () => {
   const scene = longTable();
   const board = boardOf([scene]);

@@ -175,10 +175,15 @@ export function visualQualityAudit(board: Storyboard, input: QaInput = {}): Visu
     if (sample.elementType === 'text' && sample.contrastRatio !== undefined && sample.contrastRatio < 4.5) add({
       sceneId: sample.sceneId, code: 'low-contrast', severity: 'warning', message: `文字对比度 ${sample.contrastRatio.toFixed(2)}:1 低于 4.5:1。`, location, targetIds: sample.targetId ? [sample.targetId] : [], fixable: false,
     });
-    if (sample.elementType === 'subtitle' && (sample.bounds.x < .05 || sample.bounds.y < .05 || sample.bounds.x + sample.bounds.width > .95 || sample.bounds.y + sample.bounds.height > .95)) add({
+    // DOMRect values are normalized floating point measurements. Allow a tiny
+    // tolerance at the exact 5% boundary so a mathematically safe subtitle
+    // (for example bottom=0.05) is not reported outside the safe area due to
+    // binary rounding.
+    const safeAreaEpsilon = 1e-6;
+    if (sample.elementType === 'subtitle' && (sample.bounds.x < .05 - safeAreaEpsilon || sample.bounds.y < .05 - safeAreaEpsilon || sample.bounds.x + sample.bounds.width > .95 + safeAreaEpsilon || sample.bounds.y + sample.bounds.height > .95 + safeAreaEpsilon)) add({
       sceneId: sample.sceneId, code: 'caption-safe-area', severity: 'error', message: '字幕超出 5% 安全边距。', location, targetIds: sample.targetId ? [sample.targetId] : [], fixable: false,
     });
-    if (sample.elementType === 'logo' && (sample.bounds.x < .05 || sample.bounds.y < .05 || sample.bounds.x + sample.bounds.width > .95 || sample.bounds.y + sample.bounds.height > .95)) add({
+    if (sample.elementType === 'logo' && (sample.bounds.x < .05 - safeAreaEpsilon || sample.bounds.y < .05 - safeAreaEpsilon || sample.bounds.x + sample.bounds.width > .95 + safeAreaEpsilon || sample.bounds.y + sample.bounds.height > .95 + safeAreaEpsilon)) add({
       sceneId: sample.sceneId, code: 'logo-safe-area', severity: 'warning', message: 'Logo 超出 5% 安全边距。', location, targetIds: sample.targetId ? [sample.targetId] : [], fixable: false,
     });
   }

@@ -36,6 +36,11 @@ type FramePlanEntry = {
 type TransitionPlan = { fromSceneId: string; toSceneId: string; startFrame: number; frames: number; transition: string };
 type VisualQaPlan = { entries: FramePlanEntry[]; transitions: TransitionPlan[] };
 
+export function visualQaMotionStripEntries(plan: Pick<VisualQaPlan, 'entries'>) {
+  return plan.entries.filter(entry => entry.fromSceneId && entry.toSceneId
+    && (entry.roles.includes('transition') || entry.roles.includes('boundary')));
+}
+
 /** Force Chromium's software GL backend for reproducible CPU-only QA runs. */
 export function visualQaChromiumOptions(cpuOnly = process.env.M2V_VISUAL_QA_CPU_ONLY === '1') {
   return cpuOnly ? { gl: 'swiftshader' as const } : undefined;
@@ -152,6 +157,7 @@ export async function captureVisualQaPreflight(input: {
   const warnings: string[] = [];
   for (const entry of plan.entries.filter(item => item.preflight)) {
     const output = join(preflightDir, frameName(entry.frame));
+    let captureDiagnostic: string | undefined;
     try {
       await renderStill({
         composition: input.composition,
@@ -167,9 +173,10 @@ export async function captureVisualQaPreflight(input: {
         onBrowserLog: log => {
           const payload = parseCapturePayload(log.text);
           if (payload) captures.set(entry.frame, payload);
+          else if (log.text.includes(captureMarker)) captureDiagnostic = `invalid marker payload (${log.type})`;
         },
       });
-      if (!captures.has(entry.frame)) warnings.push('No browser layout capture was received for frame ' + entry.frame);
+      if (!captures.has(entry.frame)) warnings.push('No browser layout capture was received for frame ' + entry.frame + (captureDiagnostic ? `: ${captureDiagnostic}` : ' (marker was not emitted)'));
     } catch (error) {
       const message = 'Visual QA preflight screenshot failed for frame ' + entry.frame + ': ' + String(error);
       warnings.push(message);
@@ -434,8 +441,10 @@ export async function finalizeVisualQaAfterRender(input: {
     return '<figure><img loading="lazy" src="after/' + frameName(entry.frame) + '" alt="' + title.replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '"><figcaption>' + title.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</figcaption></figure>';
   }).join('\n');
   await writeFile(join(input.artifactDir, 'contact-sheet.html'), '<!doctype html><meta charset="utf-8"><title>Visual QA contact sheet</title><style>body{font:14px system-ui;background:#111827;color:#e5e7eb;margin:20px}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}figure{margin:0;background:#1f2937;padding:8px;border-radius:8px}img{width:100%;aspect-ratio:16/9;object-fit:contain;background:#030712}figcaption{padding:6px}</style><main>' + cardHtml + '</main>', 'utf8');
-  const motionCards = input.plan.entries.filter(entry => entry.roles.includes('transition')).map(entry => {
-    return '<figure><img loading="lazy" src="after/' + frameName(entry.frame) + '" alt="' + entry.transition + ' frame ' + entry.frame + '"><figcaption>' + entry.fromSceneId + ' → ' + entry.toSceneId + ' · ' + entry.transition + ' · ' + entry.frame + '</figcaption></figure>';
+  const motionCards = visualQaMotionStripEntries(input.plan).map(entry => {
+    const transition = entry.transition === 'none' ? '直切' : entry.transition ?? 'scene boundary';
+    const role = entry.roles.includes('transition') ? 'transition' : 'boundary';
+    return '<figure><img loading="lazy" src="after/' + frameName(entry.frame) + '" alt="' + transition + ' ' + role + ' frame ' + entry.frame + '"><figcaption>' + entry.fromSceneId + ' → ' + entry.toSceneId + ' · ' + transition + ' · ' + role + ' · frame ' + entry.frame + '</figcaption></figure>';
   }).join('\n');
   await writeFile(join(input.artifactDir, 'motion-strip.html'), '<!doctype html><meta charset="utf-8"><title>Visual QA motion strip</title><style>body{font:13px system-ui;background:#111827;color:#e5e7eb;margin:20px}main{display:flex;flex-wrap:wrap;gap:8px}figure{width:260px;margin:0;background:#1f2937;padding:6px}img{width:100%;aspect-ratio:16/9;object-fit:contain;background:#030712}figcaption{padding:4px}</style><main>' + motionCards + '</main>', 'utf8');
   const finalReport = {

@@ -35,6 +35,7 @@ import dotenv from 'dotenv';
 import { JOB_ID_PATTERN, jobLogFileName, openJobLog } from './job-log';
 import { ensureSegmentDir, pruneSegmentCache, readSegmentIndex, segmentBytes, segmentDir, segmentVideoPath, writeSegmentMeta } from './segment-cache';
 import { captureVisualQaPreflight, finalizeVisualQaAfterRender, visualQaChromiumOptions } from './visual-qa';
+import { boundedRenderFfmpegThreads } from './render-ffmpeg';
 
 const repo = resolve(process.cwd(), '../..');
 dotenv.config({ path: resolve(repo, 'apps/web/.env') });
@@ -259,10 +260,20 @@ async function renderJob(jobId: string, projectId: string) {
       width = composition.width;
       height = composition.height;
       try {
+        // selectComposition resolves/caches component props. Select a dedicated
+        // QA composition so VisualQaCapture is mounted, without enabling its
+        // delayRender/console marker during the actual MP4 render.
+        const qaComposition = await selectComposition({
+          serveUrl,
+          id: 'ExplainerVideo',
+          inputProps: { ...inputProps, visualQaCapture: true },
+          browserExecutable,
+          puppeteerInstance: browser,
+        });
         visualQaPreflight = await captureVisualQaPreflight({
           board: storyboard,
           fps: plan.fps,
-          composition,
+          composition: qaComposition,
           serveUrl,
           browser,
           browserExecutable,
@@ -301,6 +312,7 @@ async function renderJob(jobId: string, projectId: string) {
             frameRange: segmentFrameRange(segment),
             enforceAudioTrack: true,
             forSeamlessAacConcatenation: true,
+            ffmpegOverride: boundedRenderFfmpegThreads,
             cancelSignal,
             onProgress: ({ progress }) => { void tick(((doneFrames + segment.frames * progress) / renderedFrames) * 100).catch(console.error); },
           });
