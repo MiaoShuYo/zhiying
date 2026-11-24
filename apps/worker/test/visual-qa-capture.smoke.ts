@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { bundle } from '@remotion/bundler';
 import { openBrowser, renderStill, selectComposition } from '@remotion/renderer';
 import { StoryboardSchema } from '@m2v/schema';
+import { visualQaChromiumOptions } from '../src/visual-qa';
 
 const repo = process.cwd();
 const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE?.trim()
@@ -25,7 +26,8 @@ async function main() {
     scenes: [{ id: 'qa-capture-smoke', type: 'title', title: '可读标题', narration: '布局捕获验证', duration: 3, visual: { text: '布局捕获验证' } }],
   });
   const inputProps = { storyboard, visualQaCapture: true };
-  browser = await openBrowser('chrome', { browserExecutable: browserExecutable ?? null });
+  const chromiumOptions = visualQaChromiumOptions();
+  browser = await openBrowser('chrome', { browserExecutable: browserExecutable ?? null, chromiumOptions });
   // Mirror the Worker: select a regular composition for the MP4 and a separate
   // QA-enabled composition for renderStill.
   await selectComposition({ serveUrl, id: 'ExplainerVideo', inputProps: { storyboard }, browserExecutable, puppeteerInstance: browser });
@@ -46,7 +48,7 @@ async function main() {
   assert.equal(capture.width, 1080);
   assert.equal(capture.height, 1920);
   assert.ok(capture.layout?.length, 'browser DOM layout capture is non-empty');
-  console.log(`QA capture smoke passed: ${capture.layout.length} layout entries at ${capture.width}×${capture.height}.`);
+  console.log(`QA capture smoke passed${chromiumOptions ? ' (SwiftShader CPU-only)' : ''}: ${capture.layout.length} layout entries at ${capture.width}×${capture.height}.`);
   } finally {
     await browser?.close({ silent: true }).catch(() => {});
     await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

@@ -13,7 +13,7 @@ import { FrameSettings } from './frame-settings';
 import { BrandKitChangeDialog, BrandKitPicker, ProjectBrandBar } from './brand-kit-picker';
 import { Player, type PlayerRef } from '@remotion/player';
 import { ExplainerVideo, getDurationInFrames } from '@m2v/video';
-import { StoryboardSchema, timelineFrames, type BrandKit, type EstimateFinding, type PreflightIssue, type PreflightResult, type Scene, type Storyboard, type StyleId, type SubtitleCue } from '@m2v/schema';
+import { StoryboardSchema, timelineFrames, visualTemplateSupportsScene, type BrandKit, type EstimateFinding, type PreflightIssue, type PreflightResult, type Scene, type Storyboard, type StyleId, type SubtitleCue } from '@m2v/schema';
 import { renderPercent } from '@/lib/task-actions';
 import { styles } from '@m2v/styles';
 
@@ -413,12 +413,18 @@ export function ProjectEditor({ initial }: { initial: Data }) {
       || (patch.speechSpeed !== undefined && patch.speechSpeed !== current.speechSpeed)
       || (patch.sentencePause !== undefined && patch.sentencePause !== current.sentencePause);
     if (narrationChanged) setPronunciationSelection(null);
-    scenes[index] = {
+    const nextScene: Scene = {
       ...current,
       ...patch,
       ...(voiceChanged ? { audioSrc: undefined, audioKey: undefined, audioDuration: undefined, wordTimings: undefined, pronunciationWarnings: undefined, subtitleCues: undefined } : {}),
       ...(narrationChanged ? { pronunciationOverrides: current.pronunciationOverrides?.filter(rule => !rule.occurrence) } : {}),
     };
+    // A type edit can make the old template invalid. Drop only that incompatible plan
+    // so the editor can still save the user's scene type change without stale metadata.
+    if (patch.type && nextScene.visualPlan && !visualTemplateSupportsScene(nextScene.visualPlan.templateId, nextScene.type)) {
+      nextScene.visualPlan = undefined;
+    }
+    scenes[index] = nextScene;
     const groupKey = Object.keys(patch).length === 1 ? `scene:${index}:${Object.keys(patch)[0]}` : undefined;
     commitBoard({ ...storyboard, scenes }, groupKey);
   }

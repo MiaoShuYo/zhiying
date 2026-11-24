@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   SceneSchema,
   StoryboardSchema,
@@ -185,4 +186,39 @@ test('project density settings are schema-validated and produce deterministic sc
   assert.deepEqual(once.visualDensity, defaultVisualDensitySettings);
   assert.ok(once.scenes[0]!.visualBeats!.length > 0);
   assert.deepEqual(once.scenes, twice.scenes);
+});
+
+test('density controls wire preview, all strategies, disabled state, manual locks, undo and preserve scenes', () => {
+  const tools = readFileSync(new URL('../../../apps/web/src/components/production-tools.tsx', import.meta.url), 'utf8');
+  assert.match(tools, /checked=\{densityDraft\.autoSplit\}[\s\S]*?setDensityDraft\(\{ \.\.\.densityDraft, autoSplit: e\.target\.checked \}\)[\s\S]*?setDensityPreview\(null\)/, 'auto-split toggle updates draft and invalidates stale preview');
+  assert.match(tools, /value=\{densityDraft\.strategy\}[\s\S]*?<option value="concise">精炼<\/option>[\s\S]*?<option value="balanced">平衡<\/option>[\s\S]*?<option value="complete">完整<\/option>/, 'the editor exposes all three supported density strategies');
+  assert.match(tools, /const densityCandidate = applyDensitySettings\(board, densityDraft\)/, 'preview uses the current draft through the production density pipeline');
+  assert.match(tools, /onClick=\{\(\) => setDensityPreview\(densityCandidate\)\}>预览影响范围/, 'preview is user-triggered before changes are applied');
+  assert.match(tools, /onClick=\{\(\) => \{ setUndoBoard\(board\); onChange\(densityPreview\); setDensityPreview\(null\); \}\}>应用分步方案/, 'applying a density plan snapshots the board for undo');
+  assert.match(tools, /async function undoBatch\(\)[\s\S]*?const target = undoBoard[\s\S]*?onChange\(target\)[\s\S]*?save\(target\)/, 'undo restores and persists the previous board');
+
+  const scene = longTableScene();
+  const locked = SceneSchema.parse({
+    id: 'density-mixed-locked', type: 'chart', title: '用户图表', narration: '用户手工节奏。',
+    visual: { data: Array.from({ length: 12 }, (_, index) => ({ label: `${index + 1}月`, value: index + 1 })) },
+    visualPlan: VisualPlanSchema.parse({ templateId: 'chart', manualOverride: true, provenance: 'user' }),
+    visualBeats: [{ id: 'locked-beat', narrationText: '用户手工节奏。', targetIds: ['handmade'] }],
+    visualBeatsProvenance: 'user',
+  });
+  const html = SceneSchema.parse({ id: 'density-html-preserve', type: 'html', title: 'HTML 保真', narration: '用户 HTML。', visual: { html: '<main>keep</main>' } });
+  const code = SceneSchema.parse({ id: 'density-code-preserve', type: 'code', title: 'Code 保真', narration: '用户代码。', visual: { code: 'const keep = true;' } });
+  const ppt = SceneSchema.parse({ id: 'density-ppt-preserve', type: 'media', title: 'PPT 保真', narration: '原始页面。', visual: { src: 'projects/demo/assets/page-1.png', sourceType: 'pptx' } });
+  const mixed = StoryboardSchema.parse({ title: '密度交互回归', styleId: 'minimal-tech', transition: 'none', scenes: [scene, locked, html, code, ppt] });
+  const before = JSON.parse(JSON.stringify(mixed)) as typeof mixed;
+  const candidate = applyDensitySettings(mixed, { autoSplit: true, strategy: 'balanced' });
+  assert.ok((candidate.scenes[0]!.visualBeats?.length ?? 0) > 1, 'ordinary long table appears in the preview candidate');
+  assert.deepEqual(candidate.scenes.slice(1).map(item => item), mixed.scenes.slice(1), 'user-locked and preserve scenes are unchanged');
+  const restored = applyDensitySettings(candidate, { autoSplit: false, strategy: 'balanced' });
+  assert.deepEqual(restored.scenes[0]!.visualBeats, undefined, 'disabling auto split restores rule-generated beats');
+  assert.deepEqual(restored.scenes.slice(1), mixed.scenes.slice(1));
+  assert.deepEqual(StoryboardSchema.parse(before), mixed, 'the original board snapshot remains suitable for undo');
+  for (const strategy of ['concise', 'balanced', 'complete'] as const) {
+    const result = applyDensitySettings(mixed, { autoSplit: true, strategy });
+    assert.deepEqual(result.scenes.slice(1), mixed.scenes.slice(1), `${strategy} never rewrites locked or preserved scenes`);
+  }
 });

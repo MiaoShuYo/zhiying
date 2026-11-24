@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { bundle } from '@remotion/bundler';
 import { openBrowser, renderMedia, renderStill, selectComposition } from '@remotion/renderer';
+import { visualQaChromiumOptions } from '../src/visual-qa';
 import {
   StoryboardSchema,
   applyVisualDensity,
@@ -291,6 +292,38 @@ async function extractFrame(video: string, frame: number, output: string): Promi
   assert.ok(metadata.width && metadata.height, `MP4 frame ${frame} can be decoded from ${video}`);
 }
 
+function auditAdjacentMp4Frames(video: string, label: string): { frameCount: number; maxAdjacentMeanDiff: number; maxDiffFrame: number; minMeanLuminance: number } {
+  const width = 96, height = 54, frameBytes = width * height * 3;
+  const pixels = execFileSync('ffmpeg', [
+    '-v', 'error', '-i', video, '-vf', `scale=${width}:${height}:flags=area`, '-fps_mode', 'passthrough',
+    '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1',
+  ], { windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  const frameCount = Math.floor(pixels.length / frameBytes);
+  assert.ok(frameCount >= 119, `${label} exports enough decoded frames to audit adjacent motion (${frameCount})`);
+  const means: number[] = [];
+  const diffs: number[] = [];
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const start = frame * frameBytes;
+    let sum = 0;
+    for (let index = start; index < start + frameBytes; index += 3) sum += (pixels[index]! + pixels[index + 1]! + pixels[index + 2]!) / 3;
+    means.push(sum / (width * height));
+    if (frame === 0) continue;
+    let delta = 0;
+    const previous = start - frameBytes;
+    for (let index = 0; index < frameBytes; index += 1) delta += Math.abs(pixels[previous + index]! - pixels[start + index]!);
+    diffs.push(delta / frameBytes);
+  }
+  const withinBeat = diffs.filter((_, index) => index !== 59);
+  const maxAdjacentMeanDiff = Math.max(...withinBeat);
+  const maxDiffFrame = withinBeat.indexOf(maxAdjacentMeanDiff) + 1;
+  const minMeanLuminance = Math.min(...means);
+  assert.ok(minMeanLuminance > 3, `${label} has no black/empty flash across ${frameCount} decoded frames (minimum mean RGB ${minMeanLuminance.toFixed(2)})`);
+  assert.ok(maxAdjacentMeanDiff < 24, `${label} has no abrupt within-beat frame jump (max adjacent mean RGB delta ${maxAdjacentMeanDiff.toFixed(2)} at frame ${maxDiffFrame})`);
+  const beatBoundaryDiff = diffs[59];
+  assert.ok(beatBoundaryDiff !== undefined && beatBoundaryDiff < 64, `${label} beat boundary has no full-frame flash (59→60 mean RGB delta ${beatBoundaryDiff?.toFixed(2) ?? 'missing'})`);
+  return { frameCount, maxAdjacentMeanDiff, maxDiffFrame, minMeanLuminance };
+}
+
 async function renderMotionSamples(serveUrl: string, browser: Awaited<ReturnType<typeof openBrowser>>) {
   for (const aspect of ['16:9', '9:16'] as const) {
     for (const templateId of templates) {
@@ -307,6 +340,8 @@ async function renderMotionSamples(serveUrl: string, browser: Awaited<ReturnType
       assert.deepEqual({ width: probed.width, height: probed.height }, dimensions(aspect));
       assert.ok(Math.abs(probed.duration - 4) < .3, `${templateId} ${aspect} motion MP4 is four seconds`);
       outputs.push({ path: video, sha256: sha256(video), ...probed });
+      const continuity = auditAdjacentMp4Frames(video, `${templateId}/${aspect}`);
+      console.log(`${templateId}/${aspect}: decoded ${continuity.frameCount} consecutive MP4 frames; max within-beat adjacent RGB delta ${continuity.maxAdjacentMeanDiff.toFixed(2)} at frame ${continuity.maxDiffFrame}; minimum frame mean RGB ${continuity.minMeanLuminance.toFixed(2)}.`);
 
       const frameFiles: string[] = [];
       const labels: string[] = [];
@@ -377,7 +412,9 @@ async function main() {
     const publicDir = join(temp, 'public');
     await mkdir(publicDir, { recursive: true });
     const serveUrl = await bundle({ entryPoint: resolve(repo, 'apps', 'worker', 'src', 'entry.tsx'), publicDir, outDir: join(temp, 'bundle') });
-    const browser = await openBrowser('chrome', { browserExecutable: browserExecutable ?? null });
+    const chromiumOptions = visualQaChromiumOptions();
+    const browser = await openBrowser('chrome', { browserExecutable: browserExecutable ?? null, chromiumOptions });
+    console.log(`Motion/density MP4 rendering uses ${chromiumOptions ? 'SwiftShader CPU-only Chromium' : 'the default Chromium backend'}.`);
     try {
       for (const aspect of ['16:9', '9:16'] as const) await renderDensitySamples(serveUrl, browser, aspect);
       await renderMotionSamples(serveUrl, browser);

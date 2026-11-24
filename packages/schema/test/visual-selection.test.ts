@@ -58,4 +58,23 @@ test('rule selection applies to generated scenes and preserves a user lock until
   assert.match(editor, /boardUndo\.current = \[\.\.\.boardUndo\.current\.slice\(-49\), JSON\.parse\(JSON\.stringify\(previous\)\) as Storyboard\]/, 'editor snapshots the previous storyboard before an edit');
   assert.match(editor, /const undoBoard = useCallback\(\(\) => \{[\s\S]*?boardUndo\.current\.pop\(\)[\s\S]*?setData\(current => \(\{ \.\.\.current, storyboard: previous \}\)\)/, 'editor undo restores the previous storyboard snapshot');
   assert.match(editor, /title="撤销上一步分镜修改（Ctrl\+Z）" onClick=\{undoBoard\}/, 'the undo control is visible in the project editor');
+  assert.match(editor, /if \(patch\.type && nextScene\.visualPlan && !visualTemplateSupportsScene\(nextScene\.visualPlan\.templateId, nextScene\.type\)\)\s*\{\s*nextScene\.visualPlan = undefined;\s*\}/, 'changing scene type clears only a plan that is incompatible with the new type');
+
+  const chartBoard = StoryboardSchema.parse({
+    title: '类型更改可撤销', styleId: 'minimal-tech', transition: 'none', scenes: [SceneSchema.parse({
+      id: 'type-change-chart', type: 'chart', title: '请求数', narration: '请求数为 12。',
+      visual: { data: [{ label: '请求', value: 12 }] },
+      visualPlan: { templateId: 'chart', provenance: 'rule', manualOverride: false },
+    })],
+  });
+  const snapshot = JSON.parse(JSON.stringify(chartBoard)) as typeof chartBoard;
+  const changed = StoryboardSchema.parse({
+    ...chartBoard,
+    scenes: [{
+      ...chartBoard.scenes[0]!, type: 'comparison', visual: { columns: [{ title: '之前', items: ['12'] }, { title: '之后', items: ['18'] }] },
+      visualPlan: undefined,
+    }],
+  });
+  assert.equal(changed.scenes[0]!.visualPlan, undefined, 'the new scene type saves without a stale chart plan');
+  assert.equal(StoryboardSchema.parse(snapshot).scenes[0]!.visualPlan?.templateId, 'chart', 'undo restores the previous valid template snapshot');
 });

@@ -13,6 +13,13 @@ test('all three visual packs are schema-valid, offline, and materially distinct'
     assert.ok(pack.colors.bg.startsWith('#'));
     assert.ok(pack.typography.maxWordsPerScreen > 0);
     assert.ok(pack.layout.padding > 0);
+    assert.deepEqual(pack.provenance, {
+      version: '1.0.0',
+      source: 'm2v-procedural',
+      license: 'MIT',
+      assets: 'procedural-only',
+      fonts: 'system-fonts-not-bundled',
+    });
     return resolveBrandTheme('minimal-tech', undefined, id);
   });
   assert.equal(new Set(resolved.map(theme => theme.colors.bg)).size, 3);

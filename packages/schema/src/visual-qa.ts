@@ -252,6 +252,7 @@ export function autoFixVisualQuality(board: Storyboard, input: QaInput & { maxRo
   let storyboard = board;
   let autoFixRounds = 0;
   const staticFallbacks = new Map<string, string>();
+  const fontGuardedOverflowIds = new Set<string>();
   let currentInput: QaInput = input;
   for (let round = 0; round < maxRounds; round += 1) {
     const report = visualQualityAudit(storyboard, currentInput);
@@ -265,7 +266,13 @@ export function autoFixVisualQuality(board: Storyboard, input: QaInput & { maxRo
       if (overflowIds.has(scene.id)) {
         const current = next.visualFitScale ?? 1;
         const scale = Math.max(.78, Math.round((current - .1) * 100) / 100);
-        if (scale < current) next = { ...next, visualFitScale: scale };
+        if (scale < current) {
+          const minimumFont = storyboard.aspectRatio === '9:16' ? 20 : 18;
+          const fontSamples = currentInput.renderEvidence?.layout.filter(sample => sample.sceneId === scene.id && sample.elementType === 'text' && sample.fontSizePx !== undefined) ?? [];
+          const wouldMakeTextUnreadable = fontSamples.some(sample => sample.fontSizePx! * scale / current < minimumFont);
+          if (wouldMakeTextUnreadable) fontGuardedOverflowIds.add(scene.id);
+          else next = { ...next, visualFitScale: scale };
+        }
       }
       return next;
     });
@@ -323,6 +330,14 @@ export function autoFixVisualQuality(board: Storyboard, input: QaInput & { maxRo
   }
   if (JSON.stringify(protectedBefore) !== JSON.stringify(protectedSceneData(storyboard.scenes))) throw new Error('视觉 QA 修复不得改写旁白、画面事实或音频时间信息');
   for (const [index, locked] of lockedBefore.entries()) if (locked && storyboard.scenes[index] !== locked) throw new Error('视觉 QA 修复不得改写用户锁定的场景');
-  const report = VisualQaReportSchema.parse({ ...visualQualityAudit(storyboard, currentInput), autoFixRounds, staticFallbacks: [...staticFallbacks].map(([sceneId, reason]) => ({ sceneId, reason })) });
+  const finalAudit = visualQualityAudit(storyboard, currentInput);
+  const report = VisualQaReportSchema.parse({
+    ...finalAudit,
+    findings: finalAudit.findings.map(finding => fontGuardedOverflowIds.has(finding.sceneId) && finding.code === 'render-overflow'
+      ? { ...finding, fixable: false, message: `${finding.message} 为保护文字可读性，自动修复未继续缩小字号；请拆分场景或手工调整布局。` }
+      : finding),
+    autoFixRounds,
+    staticFallbacks: [...staticFallbacks].map(([sceneId, reason]) => ({ sceneId, reason })),
+  });
   return { storyboard, report };
 }

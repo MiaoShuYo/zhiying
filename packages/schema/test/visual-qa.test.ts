@@ -102,6 +102,31 @@ test('auto-fix leaves manually locked content unchanged and reports it as non-fi
   assert.deepEqual(result.storyboard.scenes[0], lockedScene);
 });
 
+test('auto-fix refuses to shrink a 9.92px rendered label and keeps its located overflow unresolved', () => {
+  const scene = SceneSchema.parse({
+    id: 'qa-unreadable-overflow', type: 'chart', title: '请求量', narration: '十二个月的请求量需要完整阅读。', duration: 6,
+    visual: { data: Array.from({ length: 12 }, (_, index) => ({ label: `${index + 1}月`, value: index + 1 })) },
+  });
+  const board = boardOf([scene], { aspectRatio: '9:16' });
+  const evidence = VisualQaRenderEvidenceSchema.parse({ layout: [{
+    sceneId: scene.id, beatId: 'qa-beat', targetId: 'chart-label-1', frame: 30,
+    screenshotPath: 'docs/screenshots/v1.9.0/qa-9.92px-overflow.png', elementType: 'text',
+    bounds: { x: -.01, y: .3, width: .82, height: .04 }, fontSizePx: 9.92, overflow: true,
+  }] });
+  const result = autoFixVisualQuality(board, { maxRounds: 2, fps: 30, renderEvidence: evidence });
+  const finding = result.report.findings.find(item => item.sceneId === scene.id && item.code === 'render-overflow');
+  assert.ok(finding);
+  assert.equal(result.storyboard.scenes[0]!.visualFitScale ?? 1, scene.visualFitScale ?? 1, 'the unreadable layout is not scaled down further');
+  assert.equal(evidence.layout[0]!.fontSizePx, 9.92, 'the original browser-measured font size is retained as evidence');
+  assert.ok(result.report.autoFixRounds <= 2, 'the normal repair round limit still applies');
+  assert.equal(finding.fixable, false, 'unresolved overflow is not presented as repaired');
+  assert.match(finding.message, /拆分场景或手工调整布局/);
+  assert.deepEqual(finding.location, {
+    sceneId: scene.id, beatId: 'qa-beat', targetId: 'chart-label-1', frame: 30,
+    screenshotPath: 'docs/screenshots/v1.9.0/qa-9.92px-overflow.png',
+  });
+});
+
 test('two failed visual repair rounds end in a located static fallback without changing facts or locked scenes', () => {
   const beat = { id: 'metric-beat', narrationText: '请求量为十。', targetIds: ['chart-bar-1'] };
   const repairable = SceneSchema.parse({
