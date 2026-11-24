@@ -70,7 +70,7 @@ async function main() {
     const chapters = limitChapters(splitIntoChapters('资料', pagedSource), 100);
     assert.deepEqual(chapters.map(chapter => chapter.page), [1, 2, 3], '章节必须记住来源页，方便回查与单页重跑');
     const paragraphChapters = splitIntoChapters('无标题资料', '## 第 1 页\n甲段。\n\n## 第 2 页\n乙段。');
-    assert.deepEqual(paragraphChapters.map(chapter => chapter.page), [1], '无标题资料同样按页标记分章');
+    assert.deepEqual(paragraphChapters.map(chapter => chapter.page), [1, 2], '无标题资料同样按页标记分章');
     assert.ok(paragraphChapters.every(chapter => !chapter.text.includes('## 第')), '页标记不能污染正文');
 
     const stored = { ...reloaded, scenes: [{ ...reloaded.scenes[0], sourcePage: 2 }, reloaded.scenes[1]] };
