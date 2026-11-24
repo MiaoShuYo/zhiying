@@ -25,7 +25,7 @@ import {
 import { probeVideoFile } from '@m2v/video/probe';
 import dotenv from 'dotenv';
 import { JOB_ID_PATTERN, jobLogFileName, openJobLog } from './job-log';
-import { ensureSegmentDir, pruneSegmentCache, readSegmentIndex, segmentBytes, segmentDir, segmentVideoPath, writeSegmentMeta } from './segment-cache';
+import { ensureSegmentDir, pruneSegmentCache, readSegmentIndex, segmentBytes, segmentDir, segmentMetaPath, segmentVideoPath, writeSegmentMeta } from './segment-cache';
 
 const repo = resolve(process.cwd(), '../..');
 dotenv.config({ path: resolve(repo, 'apps/web/.env') });
@@ -103,7 +103,9 @@ async function syncPublicAssets(projectId: string, assetsJson: string) {
   }
 }
 
-async function bundleHasAssets(storyboard: { scenes: { audioSrc?: string; visual?: unknown }[] }, projectId: string, assetsJson: string) {
+type BundleStoryboard = { scenes: { audioSrc?: string; visual?: unknown }[]; brand?: { logo?: { enabled?: boolean; src?: string } } };
+
+async function bundleHasAssets(storyboard: BundleStoryboard, projectId: string, assetsJson: string) {
   if (!bundleLocation) return false;
   const paths = storyboard.scenes.flatMap(scene => {
     const result: string[] = [];
@@ -117,14 +119,19 @@ async function bundleHasAssets(storyboard: { scenes: { audioSrc?: string; visual
     return result;
   });
   for (const asset of (JSON.parse(assetsJson || '[]') as { name: string; archived?: boolean }[]).filter(item => !item.archived)) paths.push(`projects/${projectId}/assets/${asset.name}`);
+  // #190 / #181: the snapshot Logo is stored apart from scene media (project-owned under
+  // assets/brand-logos/, or a managed brand-kits/<id>/logo.* file). A bundle built before the Logo
+  // was added or replaced does not contain it, so it is part of the bundle check too.
+  const logo = storyboard.brand?.logo;
+  if (logo?.enabled !== false && typeof logo?.src === 'string' && logo.src) paths.push(logo.src);
   for (const path of paths) {
-    if (!/^(?:audio|projects\/[a-zA-Z0-9_-]+\/assets)\/[a-zA-Z0-9_.-]+$/.test(path)) throw new Error(`渲染素材路径无效：${path}`);
+    if (!/^(?:audio\/[a-zA-Z0-9_.-]+|projects\/[a-zA-Z0-9_-]+\/assets\/(?:brand-logos\/(?:[a-zA-Z0-9_-]{1,64}\/)?)?[a-zA-Z0-9_.-]+|brand-kits\/[a-zA-Z0-9_-]{1,64}\/logo\.(?:png|jpe?g|webp))$/i.test(path)) throw new Error(`渲染素材路径无效：${path}`);
     try { await access(join(bundleLocation, 'public', path)); } catch { return false; }
   }
   return true;
 }
 
-async function ensureBundle(storyboard: { scenes: { audioSrc?: string; visual?: unknown }[] }, projectId: string, assetsJson: string): Promise<string> {
+async function ensureBundle(storyboard: BundleStoryboard, projectId: string, assetsJson: string): Promise<string> {
   await syncPublicAssets(projectId, assetsJson);
   if (await bundleHasAssets(storyboard, projectId, assetsJson)) return bundleLocation!;
   const oldBundle = bundleLocation;
@@ -275,13 +282,19 @@ async function renderJob(jobId: string, projectId: string, lease: Date) {
       for (const segment of pending) {
         await ensureActive();
         const target = segmentVideoPath(cacheDir, segment);
+        // #227: a restart renders to the same fingerprint path. Drop the old sidecar first and render
+        // to a temporary file that is published only after rendering succeeds, so a worker killed
+        // mid-write never leaves an incomplete MP4 next to a sidecar that marks it reusable.
+        const rendering = target.replace(/\.mp4$/, '.rendering.mp4');
+        await rm(segmentMetaPath(cacheDir, segment), { force: true }).catch(() => {});
+        await rm(rendering, { force: true }).catch(() => {});
         const label = segmentLabel(segment, storyboard);
         try {
           await renderMedia({
             composition,
             serveUrl,
             codec: 'h264',
-            outputLocation: target,
+            outputLocation: rendering,
             inputProps,
             browserExecutable,
             puppeteerInstance: browser,
@@ -293,8 +306,10 @@ async function renderJob(jobId: string, projectId: string, lease: Date) {
             cancelSignal,
             onProgress: ({ progress }) => { void tick(((doneFrames + segment.frames * progress) / renderedFrames) * 100).catch(console.error); },
           });
-        } catch (error) {
           await rm(target, { force: true }).catch(() => {});
+          await rename(rendering, target);
+        } catch (error) {
+          await rm(rendering, { force: true }).catch(() => {});
           throw new RenderFailure('rendering', 'render_failed', `片段「${label}」渲染失败：${describeError(error)}`);
         }
         const bytes = await segmentBytes(target);
@@ -363,7 +378,7 @@ async function renderJob(jobId: string, projectId: string, lease: Date) {
     await log.info('渲染完成');
     const terminal = await prisma.job.findUnique({ where: { id: jobId } });
     if (terminal?.status === 'cancelling' && terminal.startedAt?.getTime() === lease.getTime()) { await rm(final, { force: true }); await finishJob(jobId, projectId, 'cancelled', null, undefined, lease); await log.warn('成片已按取消请求删除'); }
-    const pruned = await pruneSegmentCache(cacheDir, await keepFingerprints(projectId, jobId, plan)).catch(() => null);
+    const pruned = await pruneSegmentCache(cacheDir, await keepFingerprints(projectId, jobId, plan), undefined, new Set(plan.segments.map(segment => segment.fingerprint))).catch(() => null);
     if (pruned) await log.info('片段缓存已整理', pruned);
     if (terminal?.status === 'completed' || (await prisma.job.count({ where: { id: jobId, status: 'completed' } }))) {
       const stale = await removeStaleOutputs(dir, projectId, jobId).catch(() => null);

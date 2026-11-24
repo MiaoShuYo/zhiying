@@ -161,10 +161,13 @@ export function segmentPlan(input: SegmentPlanInput): RenderPlan {
     // are provenance only; only the snapshot can affect rendered pixels.
     ...(storyboard.brand ? { brand: storyboard.brand } : {}),
   }));
-  const cachedByFingerprint = new Map<string, CachedSegment>();
+  // #234: an intro and an outro with identical card settings share a fingerprint, so a cached
+  // intro could mark a newly enabled outro reusable and the worker then opened a file that does not
+  // exist. A cache hit needs the same key, fingerprint and frame count.
+  const cachedByKeyAndFingerprint = new Map<string, CachedSegment>();
   const cachedByKey = new Map<string, CachedSegment>();
   for (const item of input.cached ?? []) {
-    cachedByFingerprint.set(item.fingerprint, item);
+    cachedByKeyAndFingerprint.set(`${item.key}\u0000${item.fingerprint}`, item);
     cachedByKey.set(item.key, item);
   }
   const { segments, totalFrames } = timelineFrames(storyboard, fps);
@@ -188,7 +191,7 @@ export function segmentPlan(input: SegmentPlanInput): RenderPlan {
       audio: fingerprintOf(audio),
     };
     const fingerprint = fingerprintOf(`${parts.global}:${parts.content}:${parts.audio}`);
-    const reuse = cachedByFingerprint.has(fingerprint);
+    const reuse = cachedByKeyAndFingerprint.get(`${key}\u0000${fingerprint}`)?.frames === segment.frames;
     return {
       key,
       kind: segment.kind,

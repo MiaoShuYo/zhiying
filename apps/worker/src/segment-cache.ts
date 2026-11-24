@@ -49,10 +49,14 @@ export async function writeSegmentMeta(dir: string, segment: PlannedSegment, byt
 export const segmentBytes = async (file: string) => (await stat(file).catch(() => null))?.size ?? 0;
 
 /**
- * Drops cache files that no longer belong to a render, then trims the oldest
- * remaining files until the directory fits into the budget.
+ * Drops cache files that no longer belong to a render, then trims whole MP4/sidecar pairs, oldest
+ * first, until the directory fits into the budget.
+ *
+ * #231: the budget pass used to skip every fingerprint in `keep`, but by then only kept files
+ * were left, so the cache could grow past the budget forever. Kept segments of earlier renders
+ * are now evicted first, and segments of the current plan (`current`) only as a last resort.
  */
-export async function pruneSegmentCache(dir: string, keep: Set<string>, maxBytes = MAX_SEGMENT_CACHE_BYTES): Promise<{ removed: number; bytes: number }> {
+export async function pruneSegmentCache(dir: string, keep: Set<string>, maxBytes = MAX_SEGMENT_CACHE_BYTES, current: Set<string> = new Set()): Promise<{ removed: number; bytes: number }> {
   const entries = await readdir(dir).catch(() => [] as string[]);
   const files: { path: string; size: number; mtimeMs: number; fingerprint: string }[] = [];
   let removed = 0;
@@ -75,12 +79,24 @@ export async function pruneSegmentCache(dir: string, keep: Set<string>, maxBytes
     files.push({ path, size: info.size, mtimeMs: info.mtimeMs, fingerprint });
   }
   let total = files.reduce((sum, file) => sum + file.size, 0);
-  for (const file of files.sort((left, right) => left.mtimeMs - right.mtimeMs)) {
+  if (total <= maxBytes) return { removed, bytes: total };
+  // Group into pairs so an MP4 is never left without its sidecar (or the other way round).
+  const pairs = new Map<string, { base: string; size: number; mtimeMs: number; fingerprint: string; paths: string[] }>();
+  for (const file of files) {
+    const base = file.path.replace(/\.(mp4|json)$/, '');
+    const pair = pairs.get(base) ?? { base, size: 0, mtimeMs: file.mtimeMs, fingerprint: file.fingerprint, paths: [] };
+    pair.size += file.size;
+    pair.mtimeMs = Math.min(pair.mtimeMs, file.mtimeMs);
+    pair.paths.push(file.path);
+    pairs.set(base, pair);
+  }
+  const order = [...pairs.values()].sort((left, right) =>
+    Number(current.has(left.fingerprint)) - Number(current.has(right.fingerprint)) || left.mtimeMs - right.mtimeMs);
+  for (const pair of order) {
     if (total <= maxBytes) break;
-    if (keep.has(file.fingerprint)) continue;
-    await rm(file.path, { force: true }).catch(() => {});
-    total -= file.size;
-    removed += 1;
+    for (const path of pair.paths) await rm(path, { force: true }).catch(() => {});
+    total -= pair.size;
+    removed += pair.paths.length;
   }
   return { removed, bytes: total };
 }

@@ -9,7 +9,7 @@ import { qcCodeLabels } from '@m2v/video/qc';
 import { db } from '@/lib/db';
 import { ffmpegPath } from '@/lib/audio-qc';
 import { fileStamp, outputDirFor, ownedVideoPath, safeFileBaseName } from '@/lib/job-video';
-import { parseValidation, validateExport } from '@/lib/render-validation';
+import { validateExport } from '@/lib/render-validation';
 import { currentQcView } from '@/lib/qc-report';
 import {
   deliveryDirFor,
@@ -205,17 +205,16 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
     if (job.status !== 'completed') {
       return failDelivery({ projectId, jobId, stamp, previous, status: 409, error: '成片还没有渲染完成，暂时无法打包交付', missing: [{ step: 'render', message: `导出任务状态为 ${job.status}` }] });
     }
-    let validation = parseValidation(job.validationJson);
-    if (!validation) {
-      const outcome = await validateExport(projectId, jobId);
-      if (!outcome) {
-        return failDelivery({ projectId, jobId, stamp, previous, status: 404, error: '找不到这条导出记录', missing: [{ step: 'render', message: '导出记录不存在' }] });
-      }
-      if (!outcome.ok) {
-        return failDelivery({ projectId, jobId, stamp, previous, status: outcome.status, error: outcome.error, missing: [{ step: 'validation', message: outcome.error }] });
-      }
-      validation = outcome.validation;
+    // #272: the file is re-read every time a package is built. A stored verdict can be stale (the
+    // MP4 may have been truncated or replaced since), and packaging trusted it blindly.
+    const outcome = await validateExport(projectId, jobId);
+    if (!outcome) {
+      return failDelivery({ projectId, jobId, stamp, previous, status: 404, error: '找不到这条导出记录', missing: [{ step: 'render', message: '导出记录不存在' }] });
     }
+    if (!outcome.ok) {
+      return failDelivery({ projectId, jobId, stamp, previous, status: outcome.status, error: outcome.error, missing: [{ step: 'validation', message: outcome.error }] });
+    }
+    const validation = outcome.validation;
     const blocking = validation.issues.filter(issue => issue.blocking);
     if (blocking.length) {
       const reasons = blocking.map(issue => renderValidationLabels[issue.code]).join('、');
@@ -373,7 +372,16 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
         warnings: qc.report?.summary.warnings ?? 0,
       },
     });
-    await writeDeliveryRecord(record).catch(() => {});
+    // #263: downloads find the ZIP only through this record. If it cannot be written, the new
+    // package is not downloadable (the download would 404 or serve the previous ZIP), so this is a
+    // failure: the new ZIP is removed and the caller is told why.
+    try {
+      await writeDeliveryRecord(record);
+    } catch (error) {
+      await rm(final, { force: true }).catch(() => {});
+      const message = `交付包已生成，但交付记录写入失败（${errorText(error)}），新包无法下载。请检查磁盘空间或文件权限后重新打包。`;
+      return { ok: false, status: 500, error: message, missing: [{ step: 'package', message }] };
+    }
     return { ok: true, file: final, name: record.name ?? `${base}-交付包-${stamp}.zip`, stamp, bytes, files, record };
   } finally {
     building.delete(projectId);

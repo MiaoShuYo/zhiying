@@ -350,13 +350,14 @@ async function main() {
         assert.ok(resealedMovie, '重新生成的包里同样要有成片');
         assert.deepEqual(resealedMovie!.data, await readFile(video), '重新生成的包仍然是最新成片');
 
-        // 校验通过后视频消失：交付包要指出缺的是成片文件，而不是笼统失败。
+        // 校验通过后视频消失：#272 打包前会重新校验成片，不再沿用旧的“通过”结论，
+        // 要明确指出成片文件无法读取，而不是笼统失败。
         await rm(video, { force: true });
         const goneDelivery = await buildDeliveryRoute(post({ jobId: filmJob.id }), params(filmProject.id));
         assert.equal(goneDelivery.status, 409);
         const goneBody = await body(goneDelivery);
-        assert.equal(goneBody.missing[0].step, 'video', '要指出缺少成片文件');
-        assert.match(goneBody.error, /成片文件不存在或为空/);
+        assert.equal(goneBody.missing[0].step, 'validation', '要指出成片校验未通过');
+        assert.match(goneBody.error, /成片文件校验未通过（文件无法读取）/);
         assert.equal(goneBody.record.status, 'failed');
         assert.equal(goneBody.record.attempts, 7);
         const brokenRow = ((await body(await readExports(new Request(url('/')), params(filmProject.id)))) as any[]).find(item => item.id === filmJob.id);

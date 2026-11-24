@@ -117,10 +117,22 @@ async function collectSources(projectId: string, storyboard: Storyboard | null, 
   return sources;
 }
 
-const pending = new Map<string, Promise<string | null>>();
-export function createSnapshot(projectId: string, automatic = false): Promise<string | null> {
-  const existing = pending.get(projectId); if (existing) return existing;
-  const task = snapshot(projectId, automatic).finally(() => pending.delete(projectId)); pending.set(projectId, task); return task;
+const pending = new Map<string, { task: Promise<string | null>; automatic: boolean }>();
+/**
+ * #309: concurrent requests share one snapshot run, but an automatic run may return null because of
+ * its 5-minute throttle. A manual request (download, duplication) that joined such a run now starts
+ * its own unthrottled run instead of receiving null.
+ */
+export async function createSnapshot(projectId: string, automatic = false): Promise<string | null> {
+  const existing = pending.get(projectId);
+  if (existing) {
+    const joined = await existing.task;
+    if (joined !== null || automatic || !existing.automatic) return joined;
+    return createSnapshot(projectId, false);
+  }
+  const task = snapshot(projectId, automatic).finally(() => pending.delete(projectId));
+  pending.set(projectId, { task, automatic });
+  return task;
 }
 async function snapshot(projectId: string, automatic: boolean) {
   safeId(projectId);
@@ -361,7 +373,7 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
     const rewrite = (value: unknown): unknown => typeof value === 'string' ? remap.get(value) ?? value.replaceAll(`projects/${oldId}/`, `projects/${newId}/`) : Array.isArray(value) ? value.map(rewrite) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rewrite(v)])) : value;
     const rewrittenRawStoryboard = rawStoryboard ? rewrite(rawStoryboard) as Record<string, unknown> : null;
     const board = rewrittenRawStoryboard ? StoryboardSchema.parse(rewrittenRawStoryboard) : null;
-    const assets = JSON.parse(manifest.project.assetsJson) as { path: string; name: string }[];
+    const assets = JSON.parse(manifest.project.assetsJson) as { path: string; name: string; archived?: boolean }[];
     const audioTargets = new Set(remap.values());
     // Uploaded BGM is stored as a project asset (`projects/<id>/assets/...`),
     // while generated narration is stored under `public/audio`. Both are valid
@@ -372,14 +384,28 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
     const missingMedia: string[] = [];
     for (const asset of assets) {
       if (asset.path !== `projects/${oldId}/assets/${asset.name}`) throw new RestoreError('validate', '素材引用不完整', [asset.name]);
+      // #241: a replaced asset keeps its record but its bytes move to assets/archive/, which is
+      // where the backup collected them; the archived location is the one to require.
+      const archivePath = asset.archived ? `project/assets/archive/${asset.name}` : `project/assets/${asset.name}`;
       let readable = false;
       try {
-        inside(filesRoot, `project/assets/${asset.name}`);
+        inside(filesRoot, archivePath);
         readable = true;
       } catch {
         // Reported below with the same wording as a missing media file.
       }
-      if (!readable || !manifest.files.some(file => file.path === `project/assets/${asset.name}`)) missingMedia.push(`素材 ${asset.name}`);
+      if (!readable || !manifest.files.some(file => file.path === archivePath)) missingMedia.push(`素材 ${asset.name}`);
+    }
+    // #185: the snapshot Logo is validated like other media. A managed Logo must travel as its
+    // brand-kits/ entry, a project-owned one as its project/assets/ file; otherwise the restored
+    // project would point at a library file or a rewritten path that does not exist.
+    const logoSrc = referencedBrandLogoSrc(rawStoryboard);
+    const logoEnabled = board?.brand?.logo ? board.brand.logo.enabled !== false : false;
+    if (logoSrc && logoEnabled) {
+      const managed = referencedLogo;
+      const projectPrefix = `projects/${oldId}/assets/`;
+      const required = managed ? managed.src : logoSrc.startsWith(projectPrefix) ? `project/assets/${logoSrc.slice(projectPrefix.length)}` : null;
+      if (!required || !manifest.files.some(file => file.path === required)) missingMedia.push(`品牌 Logo ${logoSrc}`);
     }
     if (board) for (const scene of board.scenes) if (scene.audioSrc && !audioTargets.has(scene.audioSrc)) missingMedia.push(`旁白音频 ${scene.audioSrc}`);
     if (board?.bgmSrc && !audioTargets.has(board.bgmSrc) && !projectAssetTargets.has(board.bgmSrc)) missingMedia.push(`背景音乐 ${board.bgmSrc}`);
@@ -430,7 +456,8 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
         await copyFile(source, target);
         // Project assets of any other type stay in the private project folder and are never
         // published, so they cannot be opened as a page on the studio's origin (#300).
-        if (file.path.startsWith('project/assets/') && PUBLISHABLE_MEDIA.test(file.path)) {
+        // Archived assets stay private; they were removed from public when they were archived.
+        if (file.path.startsWith('project/assets/') && !file.path.startsWith('project/assets/archive/') && PUBLISHABLE_MEDIA.test(file.path)) {
           const pub = inside(join(publicRoot, 'projects', newId), file.path.slice(8));
           await mkdir(resolve(pub, '..'), { recursive: true });
           await copyFile(target, pub);
