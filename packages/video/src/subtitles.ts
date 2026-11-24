@@ -1,4 +1,4 @@
-import { SubtitleSchema, subtitleCues as storyboardCues, timelineFor, type Storyboard } from '@m2v/schema';
+import { SubtitleSchema, subtitleCues as storyboardCues, timelineFrames, type Storyboard } from '@m2v/schema';
 import { captionDuration, resolveCaptionCues } from './captions';
 
 const clock = (seconds: number, ass = false) => {
@@ -18,20 +18,24 @@ export type SubtitleTimelineIssue = {
 
 /** Checks the exact cue list that the subtitle exporters write, so a package can never ship a broken timeline silently. */
 export function validateSubtitleTimeline(storyboard: Storyboard, duration?: number) {
-  const timeline = timelineFor(storyboard);
+  // The rendered length is the frame-aligned total, the same clock the cues are placed on.
+  const frames = timelineFrames(storyboard);
   const cues = subtitleCues(storyboard);
-  const total = Math.max(0, duration ?? timeline.totalSeconds);
+  const total = Math.max(0, duration ?? frames.totalFrames / 30);
   const issues: SubtitleTimelineIssue[] = [];
+  // #283: compare with the earlier cue that ends last, not just the previous one, so a cue nested
+  // under a long earlier cue (0–6, 1–2, 3–4) is reported even though its neighbour ends sooner.
+  let furthest: { end: number; index: number } | null = null;
   cues.forEach((cue, cueIndex) => {
     const at = cueIndex + 1;
     if (!Number.isFinite(cue.start) || !Number.isFinite(cue.end) || cue.end <= cue.start || cue.start < 0) {
       issues.push({ code: 'invalid_range', cueIndex, message: `第 ${at} 条字幕时间轴无效（${cue.start.toFixed(2)}s → ${cue.end.toFixed(2)}s）` });
     }
     if (!cue.text.trim()) issues.push({ code: 'empty_text', cueIndex, message: `第 ${at} 条字幕内容为空` });
-    const previous = cues[cueIndex - 1];
-    if (previous && cue.start < previous.end - 0.02) {
-      issues.push({ code: 'overlap', cueIndex, message: `第 ${at} 条字幕与上一条重叠（${cue.start.toFixed(2)}s < ${previous.end.toFixed(2)}s）` });
+    if (furthest && cue.start < furthest.end - 0.02) {
+      issues.push({ code: 'overlap', cueIndex, message: `第 ${at} 条字幕与第 ${furthest.index + 1} 条重叠（${cue.start.toFixed(2)}s < ${furthest.end.toFixed(2)}s）` });
     }
+    if (Number.isFinite(cue.end) && (!furthest || cue.end > furthest.end)) furthest = { end: cue.end, index: cueIndex };
     if (total > 0 && cue.end > total + 0.05) {
       issues.push({ code: 'past_end', cueIndex, message: `第 ${at} 条字幕超出成片时长（${cue.end.toFixed(2)}s > ${total.toFixed(2)}s）` });
     }

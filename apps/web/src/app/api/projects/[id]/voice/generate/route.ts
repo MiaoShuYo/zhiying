@@ -9,6 +9,7 @@ import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 import { StoryboardSchema } from '@m2v/schema';
 import { readPronunciationRules } from '@/lib/pronunciation';
 import { readLocalLlmConfig } from '@/lib/local-llm-config';
+import { voiceDirectoryName } from '@/lib/voice-id';
 export const runtime = 'nodejs';
 
 type SynthesisResult = { ok: boolean; audioPath?: string; duration?: number; error?: string; detail?: string; warnings?: string[] };
@@ -135,6 +136,18 @@ async function alignNarration(service: string, audioPath: string, text: string):
   return result.words;
 }
 
+/** Aligns scenes that were synthesized before a run failed; never touches the job or project status. */
+async function alignAfterFailure(projectId: string, service: string, pending: PendingAlignment[]) {
+  for (const item of pending) {
+    try {
+      const wordTimings = await alignNarration(service, item.audioPath, item.narration);
+      await mergeSceneAudio(projectId, new Map([[item.sceneId, { narration: item.narration, audioSrc: item.audioSrc, audio: { wordTimings } }]]));
+    } catch (error) {
+      console.warn(`[caption-align] after failure ${item.sceneId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 async function finishCaptionAlignment(input: {
   projectId: string;
   jobId: string;
@@ -251,14 +264,19 @@ async function finishCaptionAlignment(input: {
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params; const lock = await getProjectLock(id); if (!lock.exists) return NextResponse.json({ error: '项目不存在' }, { status: 404 }); if (lock.locked) return projectLockedResponse(lock.reason); const project = await db.project.findUnique({ where: { id } });
   let speed = 1;
+  // #302: a retry without an explicit speed reuses the speed saved for this project below.
+  let speedFromSettings = false;
   let forceRegenerate = false;
   let sceneId: string | undefined;
   try {
     const body = await request.json() as { speed?: unknown; force?: unknown; sceneId?: unknown };
-    if (typeof body.speed === 'number' && Number.isFinite(body.speed) && body.speed >= 0.5 && body.speed <= 3) speed = body.speed;
+    if (body.speed === undefined) speedFromSettings = true;
+    else if (typeof body.speed === 'number' && Number.isFinite(body.speed) && body.speed >= 0.5 && body.speed <= 3) speed = body.speed;
     else return NextResponse.json({ error: '语速需在 0.5× 到 3× 之间' }, { status: 400 });
-    forceRegenerate = body.force === true;
     if (typeof body.sceneId === 'string' && body.sceneId.trim()) sceneId = body.sceneId.trim();
+    // #310: an explicit single-scene regeneration always synthesizes; the audio-key cache only
+    // serves bulk generation, where unchanged scenes should be skipped.
+    forceRegenerate = body.force === true || sceneId !== undefined;
   } catch { /* Older clients may omit the optional speed body. */ }
   if (!project?.storyboardJson) return NextResponse.json({ error: '请先生成并保存故事板' }, { status: 400 });
   let voiceId = project.voiceId;
@@ -275,6 +293,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const settingsPath = resolve(process.cwd(), '../..', 'data', 'projects', id, 'voice-settings.json');
   let voiceSettings: { speed?: number; generatedSpeed?: number } = {};
   try { voiceSettings = JSON.parse(await readFile(settingsPath, 'utf8')); } catch { /* First synthesis uses the selected speed. */ }
+  if (speedFromSettings) {
+    const saved = voiceSettings.generatedSpeed ?? voiceSettings.speed;
+    if (typeof saved === 'number' && Number.isFinite(saved) && saved >= 0.5 && saved <= 3) speed = saved;
+  }
   const job = await db.job.create({ data: { projectId: id, kind: 'tts', status: 'running', stage: 'generating_audio' } });
   await db.project.update({ where: { id }, data: { status: 'generating_audio' } });
   const batchSize = 3;
@@ -292,7 +314,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const stopHeartbeat = startJobHeartbeat(job.id);
   try {
     const globalRules = await readPronunciationRules();
-    const voiceDir = resolve(process.cwd(), '../../data/voices', voiceId);
+    const voiceDir = resolve(process.cwd(), '../../data/voices', voiceDirectoryName(voiceId));
     const voiceHash = createHash('sha256');
     for (const name of (await readdir(voiceDir)).sort()) voiceHash.update(await readFile(join(voiceDir, name)));
     const referenceKey = voiceHash.digest('hex');
@@ -301,6 +323,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       const batch = targetScenes.slice(batchStart, batchStart + batchSize);
       for (const scene of batch) {
         await reportProgress(batchIndex, scene.title ?? '未命名场景');
+        // #267: a scene whose narration was cleared is deliberately silent; there is nothing to synthesize.
+        if (!scene.narration.trim()) {
+          completedScenes += 1;
+          await reportProgress(batchIndex);
+          continue;
+        }
         const effectiveSpeed = scene.speechSpeed ?? speed;
         const scopes = [globalRules.filter(rule => scene.narration.includes(rule.text)), (storyboard.pronunciationRules ?? []).filter(rule => scene.narration.includes(rule.text)), scene.pronunciationOverrides ?? []];
         const key = createHash('sha256').update(JSON.stringify({ pronunciationVersion: 2, text: scene.narration, voiceId, referenceKey, speed: effectiveSpeed, pause: scene.sentencePause ?? .12, scopes })).digest('hex');
@@ -366,6 +394,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ storyboard: persisted ?? storyboard, message: `${generatedMessage}；逐词字幕正在后台补齐${pronunciationNote ? `；${pronunciationNote}` : ''}` });
   } catch (error) {
     if (error instanceof RunEndedError) return NextResponse.json({ error: error.message }, { status: 409 });
+    // #191: scenes synthesized before the failure were saved with their word timings cleared. Align
+    // them in the background anyway; the synthesis job keeps its failed status.
+    if (pendingAlignments.length) after(() => alignAfterFailure(id, service, [...pendingAlignments]));
     const rawMessage = error instanceof Error ? error.message : '语音生成失败';
     // FileNotFoundError contains the substring "NotFound"; don't mistake a
     // Python inference error for a network/DNS failure.

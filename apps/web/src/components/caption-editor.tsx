@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { sceneSeconds, type Scene, type SubtitleCue } from '@m2v/schema';
-import { captionDuration, resolveCaptionCues } from '@m2v/schema';
+import { captionDuration, hasManualCues, resolveCaptionCues } from '@m2v/schema';
 
 const round = (value: number) => Math.round(value * 100) / 100;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -22,7 +22,8 @@ export function CaptionTimeline({ scene, portrait, disabled, focusCueIndex, onCh
 }) {
   const duration = captionDuration(scene);
   const cues = useMemo(() => resolveCaptionCues(scene, duration, portrait), [scene, duration, portrait]);
-  const manual = (scene.subtitleCues?.length ?? 0) > 0;
+  // #295: an explicitly emptied manual timeline (`[]`) stays manual; only undefined is automatic.
+  const manual = hasManualCues(scene);
   const [selected, setSelected] = useState(0);
   const track = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -95,7 +96,7 @@ export function CaptionTimeline({ scene, portrait, disabled, focusCueIndex, onCh
         <em>{index + 1}</em>
         <span className="caption-handle end" onPointerDown={event => beginDrag(event, index, 'end')} onPointerMove={moveDrag} onPointerUp={() => { drag.current = null; }} />
       </div>)}
-      {!cues.length && <p className="hint">当前场景没有旁白，暂无字幕。</p>}
+      {!cues.length && <p className="hint">{manual ? '本场景的字幕已全部删除；可以新增一条，或恢复自动生成。' : '当前场景没有旁白，暂无字幕。'}</p>}
     </div>
     <div className="caption-rows">
       {cues.map((cue, index) => <div ref={element => { rowRefs.current[index] = element; }} className={`caption-row${index === selected ? ' selected' : ''}`} key={index} onFocus={() => setSelected(index)}>
@@ -108,7 +109,7 @@ export function CaptionTimeline({ scene, portrait, disabled, focusCueIndex, onCh
       </div>)}
     </div>
     <div className="v11-row">
-      <button className="button subtle" disabled={disabled || !cues.length} onClick={insert}>新增一条字幕</button>
+      <button className="button subtle" disabled={disabled || (!cues.length && !manual)} onClick={insert}>新增一条字幕</button>
       {active && <span className="caption-hint">第 {Math.min(selected, cues.length - 1) + 1} 条：拖动条块两端调整时间，或直接修改数值。首次修改后本场景改用手动时间轴。</span>}
     </div>
     {manual && <p className="hint">手动时间轴已启用：导出 SRT / VTT / ASS 与画面字幕使用同一份时间。修改旁白、语速或重新生成语音会清空本场景的手动时间轴。</p>}

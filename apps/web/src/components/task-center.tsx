@@ -19,7 +19,7 @@ import {
   type RetryMode,
 } from '@/lib/task-actions';
 import { formatBytes } from '@m2v/schema';
-import type { PreflightIssue } from '@m2v/schema';
+import type { EstimateFinding, PreflightIssue } from '@m2v/schema';
 
 export type TaskRenderPlan = { preset: 'draft' | 'full'; segments: number; reused: number; rendered: number; renderedSeconds: number; totalSeconds: number };
 
@@ -61,15 +61,31 @@ type Payload = { tasks: TaskEntry[]; active: number };
 const statusFilters = [{ value: '', label: '全部状态' }, { value: 'active', label: '进行中' }, { value: 'failed', label: '失败' }, { value: 'completed', label: '已完成' }];
 const kindFilters = [{ value: '', label: '全部类型' }, { value: 'storyboard', label: '长文生成' }, { value: 'tts', label: '语音生成' }, { value: 'render', label: '视频渲染' }];
 
-type TaskFailure = Error & { issues?: PreflightIssue[]; blocking?: number };
+type TaskFailure = Error & { issues?: PreflightIssue[]; blocking?: number; code?: string; findings?: EstimateFinding[] };
+
+/**
+ * Why a render retry was refused and how it was requested (#220, #226). Confirming re-sends
+ * the same retry mode with every acknowledgement collected so far, instead of falling back to
+ * the card's default recovery mode or dropping an earlier confirmation.
+ */
+type BlockedRetry = {
+  kind: 'preflight' | 'estimate';
+  renderMode?: RenderRetryMode;
+  allowIssues: boolean;
+  confirmRisks: boolean;
+  blocking: number;
+  issues: PreflightIssue[];
+  findings: EstimateFinding[];
+};
 
 async function sendTask(request: { url: string; method: string; body?: Record<string, unknown> }) {
   const response = await fetch(request.url, { method: request.method, ...(request.body ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(request.body) } : {}) });
-  const data = await response.json().catch(() => ({})) as { error?: string; issues?: PreflightIssue[]; blocking?: number };
+  const data = await response.json().catch(() => ({})) as { error?: string; issues?: PreflightIssue[]; blocking?: number; code?: string; findings?: EstimateFinding[] };
   if (!response.ok) {
-    // A refused render retry carries the preflight issues so they can be shown here.
+    // A refused render retry carries the preflight issues or the estimate risks so they can be shown here.
     const failure = new Error(data.error ?? `请求失败（${response.status}）`) as TaskFailure;
     if (data.issues?.length) { failure.issues = data.issues; failure.blocking = data.blocking; }
+    if (data.code === 'render_estimate') { failure.code = data.code; failure.findings = data.findings ?? []; }
     throw failure;
   }
 }
@@ -128,7 +144,7 @@ function TaskLogs({ task, onClose }: { task: TaskEntry; onClose: () => void }) {
 export function TaskCard({ task, onChange, compact = false }: { task: TaskEntry; onChange: () => void | Promise<void>; compact?: boolean }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const [blocked, setBlocked] = useState<{ blocking: number; issues: PreflightIssue[] } | null>(null);
+  const [blocked, setBlocked] = useState<BlockedRetry | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const active = isActiveTask(task.status);
   const isRender = task.kind === 'render';
@@ -138,16 +154,20 @@ export function TaskCard({ task, onChange, compact = false }: { task: TaskEntry;
   const showChapterProgress = Boolean(task.chapters?.length && shouldShowChapterProgress(task.status));
   const bar = task.overallPercent ?? task.percent;
   const since = new Date(task.startedAt ?? task.createdAt).getTime();
-  const run = async (mode: RetryMode, options: { allowIssues?: boolean; renderMode?: RenderRetryMode } = {}) => {
-    const request = retryRequest(mode, { projectId: task.projectId, jobId: task.id, allowIssues: options.allowIssues, renderMode: options.renderMode });
+  const run = async (mode: RetryMode, options: { allowIssues?: boolean; confirmRisks?: boolean; renderMode?: RenderRetryMode } = {}) => {
+    const request = retryRequest(mode, { projectId: task.projectId, jobId: task.id, allowIssues: options.allowIssues, confirmRisks: options.confirmRisks, renderMode: options.renderMode });
     if (!request) { setError('这条任务没有可用的恢复入口'); return; }
     const key = options.renderMode ? `${mode}:${options.renderMode}` : mode;
     setBusy(key); setError(''); setBlocked(null);
     try { await sendTask(request); await onChange(); }
     catch (failure) {
       const details = failure as TaskFailure;
-      // A refused render retry has already run the export check; show what blocked it.
-      if (details.issues?.length) setBlocked({ blocking: details.blocking ?? details.issues.length, issues: details.issues });
+      const allowIssues = options.allowIssues === true;
+      const confirmRisks = options.confirmRisks === true;
+      // A refused render retry has already run the export check or the estimate; show what
+      // blocked it and remember the mode and acknowledgements of this exact request.
+      if (details.issues?.length) setBlocked({ kind: 'preflight', renderMode: options.renderMode, allowIssues, confirmRisks, blocking: details.blocking ?? details.issues.length, issues: details.issues, findings: [] });
+      else if (details.code === 'render_estimate') setBlocked({ kind: 'estimate', renderMode: options.renderMode, allowIssues, confirmRisks, blocking: details.findings?.length ?? 0, issues: [], findings: details.findings ?? [] });
       else setError(failure instanceof Error ? failure.message : '操作失败');
     }
     finally { setBusy(''); }
@@ -166,15 +186,16 @@ export function TaskCard({ task, onChange, compact = false }: { task: TaskEntry;
       </div>
       <div className="task-card-body">
         <p className="task-message">
-          {active
-            ? task.message ?? `${taskStatusLabels[task.status] ?? task.status}…`
-            : task.failure
-              ? task.failure.title
+          {/* #257: an active task that stopped reporting has failure info; it takes precedence over progress text. */}
+          {task.failure
+            ? task.failure.title
+            : active
+              ? task.message ?? `${taskStatusLabels[task.status] ?? task.status}…`
               : task.error
                 ? task.error
                 : task.status === 'completed' ? '已完成' : task.message ?? '已停止'}
         </p>
-        {!active && task.failure && (
+        {task.failure && (
           <div className="task-failure" role="status">
             <p className="task-failure-detail">{task.failure.detail}</p>
             <p className="task-hint">{task.failure.hint}</p>
@@ -211,17 +232,27 @@ export function TaskCard({ task, onChange, compact = false }: { task: TaskEntry;
           </ol>
         ) : null}
       </div>
-      {blocked && (
+      {blocked && blocked.kind === 'preflight' && (
         <div className="tools-warning task-preflight" role="status">
           <b>导出前检查发现 {blocked.blocking} 个错误</b>
           <ul>{blocked.issues.slice(0, 5).map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.sceneIndex !== undefined ? `场景 ${issue.sceneIndex + 1}：` : ''}{issue.message}</li>)}</ul>
           {blocked.issues.length > 5 && <p className="hint">另有 {blocked.issues.length - 5} 个问题，打开项目可查看完整检查结果。</p>}
         </div>
       )}
+      {blocked && blocked.kind === 'estimate' && (
+        <div className="tools-warning task-preflight" role="status">
+          <b>渲染前评估发现 {blocked.blocking} 项风险</b>
+          <ul>{blocked.findings.map((finding, index) => <li key={`${finding.code}-${index}`}>{finding.message}{finding.hint ? `（${finding.hint}）` : ''}</li>)}</ul>
+        </div>
+      )}
       <div className="task-card-actions">
         {blocked ? (
           <>
-            <button className="button primary" disabled={!!busy} onClick={() => void run('render', { allowIssues: true, renderMode: task.recovery?.kind })}>{busy.startsWith('render') ? '提交中…' : '确认风险并重新渲染'}</button>
+            <button className="button primary" disabled={!!busy} onClick={() => void run('render', {
+              renderMode: blocked.renderMode,
+              allowIssues: blocked.allowIssues || blocked.kind === 'preflight',
+              confirmRisks: blocked.confirmRisks || blocked.kind === 'estimate',
+            })}>{busy.startsWith('render') ? '提交中…' : '确认风险并重新渲染'}</button>
             <button className="text-button" disabled={!!busy} onClick={() => setBlocked(null)}>返回</button>
           </>
         ) : isRender && task.recovery ? (

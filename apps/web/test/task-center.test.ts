@@ -28,7 +28,7 @@ test('retry requests reuse the existing project and job routes', () => {
   // 导出前检查确认风险后，重试请求带上 allowIssues 由服务端放行。
   assert.deepEqual(retryRequest('render', { ...target, allowIssues: true }), { url: '/api/jobs/j1', method: 'POST', body: { allowIssues: true } });
   assert.equal(retryRequest('render', { projectId: 'p1' }), null);
-  assert.deepEqual(retryRequest('voice', target), { url: '/api/projects/p1/voice/generate', method: 'POST', body: { speed: 1 } });
+  assert.deepEqual(retryRequest('voice', target), { url: '/api/projects/p1/voice/generate', method: 'POST', body: {} });
   assert.deepEqual(retryRequest('step', target), { url: '/api/projects/p1/retry', method: 'POST', body: { mode: 'step' } });
   assert.deepEqual(retryRequest('restart', target), { url: '/api/projects/p1/retry', method: 'POST', body: { mode: 'restart' } });
   assert.deepEqual(retryRequest('recover', target), { url: '/api/projects/p1/recover', method: 'POST' });

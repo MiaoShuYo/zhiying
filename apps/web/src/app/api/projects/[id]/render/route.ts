@@ -36,7 +36,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (logo?.enabled && (typeof logo.src !== 'string' || !logo.src.trim() || !publicFileExists(logo.src.trim()))) delete renderBoard.brand!.logo;
   const job = await db.$transaction(async tx => {
     if (await tx.job.count({ where: { projectId: id, status: { in: ['queued', 'running', 'cancelling'] } } })) throw new Error('项目已有运行中的任务');
-    return tx.job.create({ data: { projectId: id, kind: 'render', status: 'queued', stage, attempt: 1, inputJson: JSON.stringify({ storyboard: renderBoard, preset, allowIssues: accepted }), ...(assessment ? { renderPlanJson: JSON.stringify(assessment.plan) } : {}) } });
+    return tx.job.create({ data: { projectId: id, kind: 'render', status: 'queued', stage, attempt: 1, inputJson: JSON.stringify({ storyboard: renderBoard, preset, allowIssues: accepted, revision: project.revision }), ...(assessment ? { renderPlanJson: JSON.stringify(assessment.plan) } : {}) } });
   });
   // Rendering is executed by the local worker; queue record is durable for retry/status polling.
   return NextResponse.json({

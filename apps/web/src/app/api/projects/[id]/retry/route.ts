@@ -45,6 +45,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   })) {
     return NextResponse.json({ error: '项目当前不在可重试状态' }, { status: 409 });
   }
+  // #256: a restart deletes every scene and clears storyboardJson. When the project still holds a
+  // storyboard (for example one repaired by hand after the run failed), only the project's own
+  // failed state may authorise that; a step retry commits replacement scenes only on success.
+  if (mode === 'restart' && project.storyboardJson && project.status !== 'failed') {
+    return NextResponse.json({ error: '项目已有可用分镜，从头重新执行会清空它；请使用“从失败步骤重试”，或先在项目中确认要放弃当前分镜' }, { status: 409 });
+  }
   const stages: ProjectStage[] = ['extracting', 'analyzing', 'storyboarding'];
   const stage: ProjectStage = mode === 'restart' ? 'extracting' : stages.includes(failedJob.stage as ProjectStage) ? failedJob.stage as ProjectStage : 'analyzing';
   if (stage !== 'extracting' && project.sourceText.trim().length < 30) {

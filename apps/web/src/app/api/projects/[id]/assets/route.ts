@@ -90,8 +90,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           }
         } else {
           for (const scene of board.scenes) if (scene.visual.src === replacing) scene.visual = { ...scene.visual, src: asset.path, attribution: asset.attribution, license: asset.license, licenseUrl: asset.licenseUrl, sourceUrl: asset.sourceUrl };
-          if (board.bgmSrc === replacing) board.bgmSrc = asset.path;
         }
+        // #244: the project-level BGM is not a scene, so it is replaced whatever scene list was
+        // sent (the asset manager sends [] for a BGM-only asset).
+        if (board.bgmSrc === replacing) board.bgmSrc = asset.path;
         await saveStoryboard(id, board);
       }
       const remaining = remainingReferences(board, replacing);

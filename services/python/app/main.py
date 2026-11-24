@@ -921,6 +921,17 @@ async def create_voice(audio: UploadFile | None = File(None), transcript: str = 
     (directory / "transcript.txt").write_text(transcript, encoding="utf-8")
     return {"id": safe_id, "audioPath": str(target), "transcript": transcript, "provider": "f5-tts"}
 
+@app.post("/pronunciation/validate")
+async def validate_pronunciation(payload: dict):
+    """#316: character-level reading check used by the Web app before it saves a dictionary."""
+    from app.pronunciation import validate_rules
+    try:
+        validate_rules(payload.get("rules"))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True}
+
+
 @app.post("/synthesize")
 async def synthesize(text: str = Form(...), voice_id: str = Form(...), speed: float = Form(1.0), sentence_pause: float = Form(0.12), pronunciation_scopes: str = Form('[]'), pronunciation_base: str | None = Form(None), pronunciation_model: str | None = Form(None), pronunciation_keep_alive: str | None = Form(None), pronunciation_num_ctx: int | None = Form(None), pronunciation_stream: bool | None = Form(None), pronunciation_concurrency: int | None = Form(None), pronunciation_lock_dir: str | None = Form(None)):
     if not 0.5 <= speed <= 3 or not 0 <= sentence_pause <= 3:

@@ -1,4 +1,4 @@
-import { timelineFor } from './timeline';
+import { timelineFor, timelineFrames } from './timeline';
 import type { Storyboard } from './index';
 
 export type WordTiming = { text: string; start: number; end: number };
@@ -99,13 +99,15 @@ function manualCues(cues: CaptionCue[], limit: number): CaptionCue[] {
 
 /** Single source of truth for captions in the preview, the export and the delivery check. */
 export function resolveCaptionCues(scene: CaptionScene, duration = captionDuration(scene), portrait = false): CaptionCue[] {
-  const manual = manualCues(scene.subtitleCues ?? [], duration);
-  if (manual.length) return manual;
+  // #295: `subtitleCues: []` is an explicitly empty manual timeline (every cue deleted) and shows
+  // nothing; only `undefined` means "generate captions automatically from the narration".
+  if (hasManualCues(scene)) return manualCues(scene.subtitleCues ?? [], duration);
   return buildCaptionCues(captionNarration(scene), scene.wordTimings, duration, portrait);
 }
 
+/** True once the scene has a manual timeline, including an explicitly emptied one (#295). */
 export function hasManualCues(scene: { subtitleCues?: CaptionCue[] }): boolean {
-  return (scene.subtitleCues ?? []).length > 0;
+  return Array.isArray(scene.subtitleCues);
 }
 
 export function captionAt(cues: CaptionCue[], seconds: number): string {
@@ -125,15 +127,29 @@ export type SubtitleLayerCue = CaptionCue & {
   cueIndex: number;
 };
 
-/** Every cue of the finished video, on the video's own clock. */
-export function subtitleCues(board: Storyboard): SubtitleLayerCue[] {
-  const timeline = timelineFor(board);
+/**
+ * Every cue of the finished video, on the video's own clock.
+ *
+ * #297 / #269: the renderer rounds every segment (intro included) to whole frames, so offsets and
+ * scene ends come from the frame-aligned timeline. Summing unrounded seconds drifted by up to a
+ * frame per scene: after 99 scenes of 3.01 s the 100th started almost a second late in the files.
+ */
+export function subtitleCues(board: Storyboard, fps = 30): SubtitleLayerCue[] {
   const portrait = board.aspectRatio === '9:16';
+  const frames = timelineFrames(board, fps).segments.filter(segment => segment.kind === 'scene');
   return board.scenes.flatMap((scene, sceneIndex) => {
-    const offset = timeline.scenes[sceneIndex]?.start ?? 0;
+    const segment = frames[sceneIndex];
+    const offset = segment ? segment.startFrame / fps : 0;
+    const sceneEnd = segment ? (segment.startFrame + segment.frames) / fps : Number.POSITIVE_INFINITY;
     return resolveCaptionCues(scene, captionDuration(scene), portrait)
-      .map((cue, cueIndex) => ({ ...cue, start: cue.start + offset, end: cue.end + offset, sceneIndex, cueIndex }));
+      .map((cue, cueIndex) => ({ ...cue, start: Math.min(cue.start + offset, sceneEnd), end: Math.min(cue.end + offset, sceneEnd), sceneIndex, cueIndex }))
+      .filter(cue => cue.end > cue.start);
   });
+}
+
+/** Scene start times on the frame-aligned clock the video and subtitle files use. */
+export function sceneFrameStarts(board: Storyboard, fps = 30): number[] {
+  return timelineFrames(board, fps).segments.filter(segment => segment.kind === 'scene').map(segment => segment.startFrame / fps);
 }
 
 /** The cue visible at a moment of the finished video. */

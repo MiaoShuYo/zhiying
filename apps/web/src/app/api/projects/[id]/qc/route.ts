@@ -4,7 +4,7 @@ import { checkAudio, checkSubtitles, renderFailedIssue } from '@m2v/video/qc';
 import { db } from '@/lib/db';
 import { audioToolsReady, measureAudioSource, measureSceneAudio } from '@/lib/audio-qc';
 import { parseProject } from '@/lib/pipeline';
-import { cachedQcView, readQcReport, writeQcReport, type QcRenderState, type StoredQcReport } from '@/lib/qc-report';
+import { currentQcView, writeQcReport, type QcRenderState, type StoredQcReport } from '@/lib/qc-report';
 export const runtime = 'nodejs';
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -17,7 +17,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!project.storyboardJson) return NextResponse.json({ error: '请先生成并保存分镜' }, { status: 400 });
 
   if (cached) {
-    return NextResponse.json(cachedQcView(id, project.revision, await readQcReport(id)));
+    return NextResponse.json(await currentQcView(id, project.revision));
   }
 
   const parsed = parseProject(project);

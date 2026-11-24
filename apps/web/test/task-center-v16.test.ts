@@ -112,7 +112,9 @@ test('failed and cancelled renders name the stage in the task centre', () => {
 
 test('the latest failed storyboard can resume while its previous storyboard stays available', () => {
   const failed = failureInfo({ kind: 'storyboard', status: 'failed', stage: 'storyboarding' }, 'awaiting_review', true)!;
-  assert.deepEqual(failed.actions, ['step', 'restart']);
+  // #256: the previous storyboard is still in use, so restarting (which clears it) is not offered.
+  assert.deepEqual(failed.actions, ['step']);
+  assert.deepEqual(failureInfo({ kind: 'storyboard', status: 'failed', stage: 'storyboarding' }, 'failed', true)!.actions, ['step', 'restart']);
   assert.match(failed.hint, /校验检查点/);
   assert.equal(retryModeFor({ kind: 'storyboard', status: 'failed' }, 'awaiting_review', true), 'step');
   assert.equal(retryModeFor({ kind: 'storyboard', status: 'failed' }, 'awaiting_review', false), null, '旧的失败记录不能重试');
@@ -138,7 +140,7 @@ test('retry requests carry the resume or restart mode', () => {
   assert.deepEqual(retryRequest('render', { projectId: 'p1', jobId: 'j1', renderMode: 'restart' }), { url: '/api/jobs/j1', method: 'POST', body: { mode: 'restart' } });
   assert.deepEqual(retryRequest('render', { projectId: 'p1', jobId: 'j1', allowIssues: true, confirmRisks: true }), { url: '/api/jobs/j1', method: 'POST', body: { allowIssues: true, confirmRisks: true } });
   assert.equal(retryRequest('render', { projectId: 'p1' }), null, '渲染重试必须有作业 id');
-  assert.deepEqual(retryRequest('voice', { projectId: 'p1' }), { url: '/api/projects/p1/voice/generate', method: 'POST', body: { speed: 1 } });
+  assert.deepEqual(retryRequest('voice', { projectId: 'p1' }), { url: '/api/projects/p1/voice/generate', method: 'POST', body: {} });
   assert.deepEqual(retryRequest('step', { projectId: 'p1' }), { url: '/api/projects/p1/retry', method: 'POST', body: { mode: 'step' } });
   assert.deepEqual(retryRequest('restart', { projectId: 'p1' }), { url: '/api/projects/p1/retry', method: 'POST', body: { mode: 'restart' } });
   assert.deepEqual(retryRequest('recover', { projectId: 'p1' }), { url: '/api/projects/p1/recover', method: 'POST' });

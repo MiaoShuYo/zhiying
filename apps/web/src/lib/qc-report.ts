@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { qcStatusFor, type QcStatus } from '@m2v/schema';
 import type { AudioQc, QcIssue, SubtitleQc } from '@m2v/video/qc';
+import { db } from './db';
 
 export type QcRenderState = {
   jobId: string;
@@ -71,15 +72,41 @@ export type QcCachedView = {
   revision: number;
   status: QcStatus;
   stale: boolean;
-  reason?: 'never' | 'revision';
+  reason?: 'never' | 'revision' | 'render';
   checkedAt?: string;
   report?: StoredQcReport;
   previousSummary?: StoredQcReport['summary'];
 };
 
-/** The cached read never trusts a report from another revision. */
-export function cachedQcView(projectId: string, revision: number, report: StoredQcReport | null): QcCachedView {
+export type LatestRender = { id: string; status: string } | null;
+
+/** The newest render job of a project, which a cached QC report must still describe (#262). */
+export async function latestRenderState(projectId: string): Promise<LatestRender> {
+  const job = await db.job.findFirst({ where: { projectId, kind: 'render' }, orderBy: { createdAt: 'desc' }, select: { id: true, status: true } });
+  return job ? { id: job.id, status: job.status } : null;
+}
+
+/** Reads the cached report and judges it against the current revision and the newest render. */
+export async function currentQcView(projectId: string, revision: number): Promise<QcCachedView> {
+  const [report, latest] = await Promise.all([readQcReport(projectId).catch(() => null), latestRenderState(projectId).catch(() => undefined)]);
+  return cachedQcView(projectId, revision, report, latest);
+}
+
+/**
+ * The cached read never trusts a report from another revision. #262: render jobs change without
+ * bumping the revision, so when the caller supplies the newest render the report must also have
+ * been taken against that render and status; otherwise a fixed render stays "blocking" and a new
+ * failure stays "passed".
+ */
+export function cachedQcView(projectId: string, revision: number, report: StoredQcReport | null, latestRender?: LatestRender): QcCachedView {
   if (!report) return { projectId, revision, status: 'pending', stale: true, reason: 'never' };
+  const renderChanged = latestRender !== undefined && (
+    (latestRender?.id ?? null) !== (report.render?.jobId ?? null)
+    || Boolean(latestRender && report.render && latestRender.status !== report.render.status)
+  );
+  if (report.revision === revision && renderChanged) {
+    return { projectId, revision, status: 'pending', stale: true, reason: 'render', checkedAt: report.checkedAt, previousSummary: report.summary };
+  }
   if (report.revision !== revision) {
     return {
       projectId,

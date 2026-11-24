@@ -79,8 +79,14 @@ export const captionCharLimit = (portrait: boolean, fontSize = 30) => {
   return Math.max(1, Math.floor((width * 0.9 - 36) / fontSize));
 };
 
+/**
+ * #178: the caption element collapses ordinary whitespace (normal white-space), so a manual
+ * "甲\n乙\n丙" renders on one line. Collapse it the same way before estimating; non-breaking
+ * spaces (U+00A0) are kept because the browser keeps them too.
+ */
 function captionLineCount(text: string, lineWidth: number) {
-  return text.split('\n').reduce((total, line) => total + Math.max(1, Math.ceil(captionDisplayWidth(line) / lineWidth)), 0);
+  const rendered = text.replace(/[ \t\n\r\f\v]+/g, ' ').trim();
+  return Math.max(1, Math.ceil(captionDisplayWidth(rendered) / lineWidth));
 }
 
 function cueIssues(scene: Scene, index: number, portrait: boolean, fontSize: number): PreflightIssue[] {
@@ -112,11 +118,21 @@ export const brandLogoSizeWarnRatio = 0.3;
  */
 export const brandLogoHeightEstimateRatio = 1;
 
+/**
+ * Enabled intro/outro cards are rendered through SceneView with the same subtitles and Logo, using
+ * their subtitle as narration (packages/video frameCardScene). #177: they must be measured too.
+ */
+function frameCardCaptionScenes(storyboard: Storyboard) {
+  return [storyboard.intro, storyboard.outro]
+    .filter((card): card is NonNullable<Storyboard['intro']> => Boolean(card?.enabled))
+    .map(card => ({ type: 'title', narration: card.subtitle ?? '', visual: {}, duration: card.duration }));
+}
+
 /** Largest caption line count any scene needs, measured exactly like the caption QC and the renderer. */
 function maxCaptionLines(storyboard: Storyboard, portrait: boolean, fontSize: number): number {
   const limit = captionCharLimit(portrait, fontSize);
   let lines = 1;
-  for (const scene of storyboard.scenes) {
+  for (const scene of [...storyboard.scenes, ...frameCardCaptionScenes(storyboard)]) {
     for (const cue of resolveCaptionCues(scene, captionDuration(scene), portrait)) {
       lines = Math.max(lines, captionLineCount(cue.text, limit));
     }
@@ -234,7 +250,9 @@ export function preflight(storyboard: Storyboard, assets: { path: string; kind?:
           : `${target}时长为 ${Math.round(sceneDuration)} 秒，过长的场景会拉长整条时间轴；请检查旁白和场景时长。`;
         issues.push({ code: 'narration_too_long', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, message, fix: 'rewrite_narration' });
       }
-      if (!scene.audioSrc && !(scene.audioDuration && scene.audioDuration > 0)) {
+      // #293: a stored audioDuration is metadata, not playable audio; SceneView only mounts audio
+      // when audioSrc exists, so a narrated scene without it would export silently.
+      if (!scene.audioSrc) {
         issues.push({ code: 'missing_audio', severity: 'error', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, assetKind: 'audio', message: `${target}还没有生成语音。`, fix: 'generate_audio' });
       } else if (scene.audioSrc && stale(scene.audioSrc)) {
         issues.push({ code: 'missing_file', severity: 'error', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, assetPath: scene.audioSrc, assetKind: 'audio', message: `${target}的语音文件已不存在：${scene.audioSrc}`, fix: 'generate_audio' });

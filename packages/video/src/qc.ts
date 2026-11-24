@@ -126,6 +126,9 @@ export function checkSubtitles(board: Storyboard): SubtitleQc {
       }
     });
 
+    // #283: compare with the earlier cue that ends last; checking only the previous cue missed
+    // a cue nested under a long earlier one (0–6, 1–2, 3–4), which captionAt then hides.
+    let furthest: { end: number; index: number } | null = null;
     cues.forEach((cue, cueIndex) => {
       const width = captionDisplayWidth(cue.text);
       const dwell = cue.end - cue.start;
@@ -141,13 +144,13 @@ export function checkSubtitles(board: Storyboard): SubtitleQc {
           message: `字幕「${cue.text.slice(0, 12)}${cue.text.length > 12 ? '…' : ''}」只停留 ${dwell.toFixed(2)} 秒，来不及读完。`,
         }));
       }
-      const previous = cues[cueIndex - 1];
-      if (previous && cue.start < previous.end - OVERLAP_TOLERANCE) {
+      if (furthest && cue.start < furthest.end - OVERLAP_TOLERANCE) {
         issues.push(issue({
           scene, index, code: 'subtitle_overlap', cueIndex, cueText: cue.text,
-          message: `第 ${cueIndex} 条与第 ${cueIndex + 1} 条字幕在 ${cue.start.toFixed(2)} 秒处重叠 ${(previous.end - cue.start).toFixed(2)} 秒。`,
+          message: `第 ${furthest.index + 1} 条与第 ${cueIndex + 1} 条字幕在 ${cue.start.toFixed(2)} 秒处重叠 ${(furthest.end - cue.start).toFixed(2)} 秒。`,
         }));
       }
+      if (!furthest || cue.end > furthest.end) furthest = { end: cue.end, index: cueIndex };
       if (cue.start > window + SCENE_TOLERANCE || cue.end > window + SCENE_TOLERANCE) {
         issues.push(issue({
           scene, index, code: 'subtitle_out_of_scene', cueIndex, cueText: cue.text,

@@ -1330,6 +1330,8 @@ export function buildStoryboardSceneOrFallback(chapter: Chapter, rawOutput: unkn
     return fallback(`模型分镜未通过校验${path}：${issue?.message ?? '未知格式错误'}`);
   }
   const scene = candidate.data;
+  // The schema accepts an empty narration for user-silenced scenes; a model scene still needs one.
+  if (!scene.narration.trim()) return fallback('模型分镜缺少旁白');
   const problem = scene.type === 'table' && markdownTableData(chapter.text)
     ? undefined
     : narrationIssue(scene.narration, `${chapter.title}\n${chapter.text}`);
@@ -1391,7 +1393,21 @@ export function buildStoryboardRequestPayload(title: string, chapters: Chapter[]
   };
 }
 
-type OllamaRequestTelemetry = { summary?: OllamaTelemetrySummary; batch?: number; onFallback?: () => void };
+/**
+ * `requireModel` is set when the user chose "必须使用本地 Ollama 生成": a scene the model did not
+ * produce must surface as an error instead of a silent local summary (#223, #228).
+ */
+type OllamaRequestTelemetry = { summary?: OllamaTelemetrySummary; batch?: number; onFallback?: () => void; requireModel?: boolean };
+
+/**
+ * #223: a batch response with fewer scenes than chapters (typically truncated output that still
+ * parsed) is an output error, so recoverStoryboardBatch retries one chapter at a time and applies
+ * the caller's fallback policy, rather than filling the gap with local summaries here.
+ */
+function assertSceneCount(parsed: unknown[], chapters: Chapter[], doneReason?: string) {
+  if (parsed.length >= chapters.length) return;
+  throw new OllamaStoryboardOutputError(doneReason === 'length' ? 'truncated' : 'invalid_shape', `模型应生成 ${chapters.length} 个分镜，实际只返回 ${parsed.length} 个`);
+}
 
 async function ollamaChapters(title: string, chapters: Chapter[], styleId: string, generationMode: 'standard' | 'html' = 'standard', telemetry: OllamaRequestTelemetry = {}, repair = false): Promise<Scene[]> {
   const model = readLocalLlmConfig().model;
@@ -1412,7 +1428,8 @@ async function ollamaChapters(title: string, chapters: Chapter[], styleId: strin
   logOllamaMetricLine({ kind: 'storyboard', model, metrics: result.metrics, firstTokenMs: result.first_token_ms, doneReason: result.done_reason, wallMs: result.wall_ms, batch: telemetry.batch, chapters: chapters.length, promptChars: [...prompt].length });
   if (!result.message?.content) throw new Error('Ollama 返回内容为空');
   const parsedScenes = parseOllamaStoryboardScenes(result.message.content, result.done_reason);
-  if (parsedScenes.length !== chapters.length) console.warn(`模型应生成 ${chapters.length} 个分镜，实际生成 ${parsedScenes.length} 个；多余结果会忽略，缺少结果使用章节回退分镜`);
+  assertSceneCount(parsedScenes, chapters, result.done_reason);
+  if (parsedScenes.length > chapters.length) console.warn(`模型应生成 ${chapters.length} 个分镜，实际生成 ${parsedScenes.length} 个；多余结果会忽略`);
   const fallbackFor = (chapter: Chapter) => {
     telemetry.onFallback?.();
     return generationMode === 'html' ? htmlFallbackScene(chapter) : fallbackChapter(chapter);
@@ -1436,6 +1453,7 @@ async function ollamaChapters(title: string, chapters: Chapter[], styleId: strin
           console.warn(`[storyboard] scene repair failed; chapter=${index + 1} reason=${error instanceof OllamaStoryboardOutputError ? error.kind : 'request_failed'}`);
         }
       }
+      if (telemetry.requireModel) throw new OllamaStoryboardOutputError('invalid_shape', `模型生成的第 ${index + 1} 个分镜未通过校验：${built.validationError ?? '未知格式错误'}`);
       console.warn(`模型生成的第 ${index + 1} 个分镜未通过校验：${built.validationError ?? '未知格式错误'}，该章使用本地回退分镜`);
       telemetry.onFallback?.();
       scenes.push(built.scene);
@@ -1467,13 +1485,14 @@ async function ollamaPreservedSlideNarrations(title: string, chapters: Chapter[]
   logOllamaMetricLine({ kind: 'storyboard-preserve', model, metrics: result.metrics, firstTokenMs: result.first_token_ms, doneReason: result.done_reason, wallMs: result.wall_ms, batch: telemetry.batch, chapters: chapters.length, promptChars: [...prompt].length });
   if (!result.message?.content) throw new Error('Ollama 返回内容为空');
   const parsedScenes = parseOllamaStoryboardScenes(result.message.content, result.done_reason);
-  if (parsedScenes.length !== chapters.length) console.warn(`模型应生成 ${chapters.length} 个旁白，实际生成 ${parsedScenes.length} 个；缺少结果使用该页本地回退旁白`);
+  assertSceneCount(parsedScenes, chapters, result.done_reason);
   return chapters.map((chapter, index) => {
     const pageNumber = chapter.page;
     const pageAsset = pageNumber === undefined ? undefined : slideAssets.find(asset => Number(asset.name.match(/\d+/)?.[0]) === pageNumber);
     const assetPath = pageAsset?.path ?? slideAssets[index]?.path;
     if (!assetPath) throw new Error(`找不到第 ${pageNumber ?? index + 1} 页的幻灯片图片`);
     const built = buildPreservedSlideScene(chapter, parsedScenes[index], assetPath);
+    if (built.fallbackUsed && telemetry.requireModel) throw new OllamaStoryboardOutputError('invalid_shape', `模型生成的第 ${pageNumber ?? index + 1} 页旁白未通过校验`);
     if (built.fallbackUsed) telemetry.onFallback?.();
     return built.scene;
   });
@@ -1596,8 +1615,8 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
       const recovered = await recoverAndCommitStoryboardBatch({
         batch,
         generate: chapterBatch => preservingSlides
-          ? ollamaPreservedSlideNarrations(project.name, chapterBatch, slideAssets, { summary: ollamaSummary, batch: batchIndex + 1, onFallback: () => { preserveNarrationFallbackUsed = true; ollamaSummary.fallbackScenes += 1; } })
-          : ollamaChapters(project.name, chapterBatch, project.styleId, generationMode, { summary: ollamaSummary, batch: batchIndex + 1, onFallback: () => { ollamaSummary.fallbackScenes += 1; } }),
+          ? ollamaPreservedSlideNarrations(project.name, chapterBatch, slideAssets, { summary: ollamaSummary, batch: batchIndex + 1, requireModel: preferLocalAI, onFallback: () => { preserveNarrationFallbackUsed = true; ollamaSummary.fallbackScenes += 1; } })
+          : ollamaChapters(project.name, chapterBatch, project.styleId, generationMode, { summary: ollamaSummary, batch: batchIndex + 1, requireModel: preferLocalAI, onFallback: () => { ollamaSummary.fallbackScenes += 1; } }),
         fallback: chapter => preservingSlides ? preserveFallback(chapter) : generationMode === 'html' ? htmlFallbackScene(chapter) : fallbackChapter(chapter),
         preferLocalAI,
         onFallback: () => { ollamaSummary.fallbackScenes += 1; },
@@ -1669,6 +1688,14 @@ export function parseProject<T extends { storyboardJson: string | null; assetsJs
 }
 
 export async function saveStoryboard(projectId: string, storyboard: unknown, expectedRevision?: number) {
+  return (await saveStoryboardWithRevision(projectId, storyboard, expectedRevision)).storyboard;
+}
+
+/**
+ * Same as saveStoryboard, plus the revision this save committed, read inside the same transaction
+ * (#180). Reading it afterwards could pair this storyboard with a concurrent save's revision.
+ */
+export async function saveStoryboardWithRevision(projectId: string, storyboard: unknown, expectedRevision?: number) {
   const parsed = StoryboardSchema.parse(storyboard);
   const snapshotLogo = parsed.brand?.logo;
   if (snapshotLogo) {
@@ -1697,14 +1724,15 @@ export async function saveStoryboard(projectId: string, storyboard: unknown, exp
     }
   }
   if (new Set(parsed.scenes.map(scene => scene.id)).size !== parsed.scenes.length) throw new Error('场景 ID 重复');
-  await db.$transaction(async tx => {
+  const revision = await db.$transaction(async tx => {
     const changed = await tx.project.updateMany({ where: { id: projectId, ...(expectedRevision === undefined ? {} : { revision: expectedRevision }) }, data: { revision: { increment: 1 }, styleId: parsed.styleId, aspectRatio: parsed.aspectRatio, storyboardJson: JSON.stringify(parsed), status: 'awaiting_review' } });
     if (!changed.count) throw new Error('保存冲突：项目已在其他窗口更新，请重新加载后合并修改');
     if (await tx.scene.count({ where: { id: { in: parsed.scenes.map(scene => scene.id) }, projectId: { not: projectId } } })) throw new Error('场景不属于此项目');
     await tx.scene.deleteMany({ where: { projectId } });
     for (const [i, s] of parsed.scenes.entries()) await tx.scene.create({ data: { id: s.id, projectId, orderIndex: i, type: s.type, title: s.title, narration: s.narration, duration: s.duration, visualJson: JSON.stringify(s.visual), animationJson: s.animation, styleOverrideJson: s.styleOverride ? JSON.stringify(s.styleOverride) : null, audioPath: s.audioSrc } });
+    return (await tx.project.findUniqueOrThrow({ where: { id: projectId }, select: { revision: true } })).revision;
   });
-  return parsed;
+  return { storyboard: parsed, revision };
 }
 
 export async function regenerateScene(projectId: string, sceneId: string) {

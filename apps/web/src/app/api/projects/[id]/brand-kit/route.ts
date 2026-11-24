@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { BrandSnapshotSchema, StoryboardSchema, type BrandKit, type BrandSnapshot, type Storyboard } from '@m2v/schema';
 import { BrandKitError, readBrandKits } from '@/lib/brand-kits';
 import { db } from '@/lib/db';
-import { saveStoryboard } from '@/lib/pipeline';
+import { saveStoryboardWithRevision } from '@/lib/pipeline';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 
 export const runtime = 'nodejs';
@@ -67,9 +67,9 @@ async function readProjectBoard(projectId: string): Promise<{ board: Storyboard;
 }
 
 async function saveAndReadRevision(projectId: string, board: Storyboard, revision: number | undefined) {
-  const storyboard = await saveStoryboard(projectId, board, revision);
-  const saved = await db.project.findUniqueOrThrow({ where: { id: projectId }, select: { revision: true } });
-  return NextResponse.json({ storyboard, revision: saved.revision });
+  // #180: the board and the revision come from the same save transaction.
+  const saved = await saveStoryboardWithRevision(projectId, board, revision);
+  return NextResponse.json({ storyboard: saved.storyboard, revision: saved.revision });
 }
 
 /** Applies (or re-applies) a saved Brand Kit by copying its current values into the project snapshot. */

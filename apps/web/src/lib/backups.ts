@@ -8,6 +8,8 @@ import { pipeline } from 'node:stream/promises';
 import { db } from './db';
 import { StoryboardSchema, type Storyboard } from '@m2v/schema';
 import { brandKitLogoSourcePath, managedBrandLogoReference } from './brand-kit-logo-files';
+import { readPronunciationRules } from './pronunciation';
+import { voiceDirectoryName } from './voice-id';
 
 const repo = resolve(process.cwd(), '../..');
 const root = join(repo, 'data/backups');
@@ -138,7 +140,7 @@ async function snapshot(projectId: string, automatic: boolean) {
     const sources = await collectSources(projectId, storyboard, true, referencedBrandLogoSrc(rawStoryboard));
     let voiceId = project.voiceId;
     if (!voiceId) { try { voiceId = JSON.parse(await readFile(join(repo, 'data/settings/general-voice.json'), 'utf8')).voiceId; } catch { /* No voice selected. */ } }
-    if (voiceId) sources.push(...await tree(join(repo, 'data/voices', safeId(voiceId)), 'voice'));
+    if (voiceId) sources.push(...await tree(join(repo, 'data/voices', voiceDirectoryName(voiceId)), 'voice'));
     try { await copyFile(join(repo, 'data/settings/pronunciation.json'), join(directory, 'pronunciation.json')); sources.push({ source: join(directory, 'pronunciation.json'), path: 'settings/pronunciation.json' }); } catch { /* No global rules. */ }
     const files: Entry[] = [];
     for (const item of sources) {
@@ -244,13 +246,26 @@ type RestoreMarker = {
   projectId: string;
   startedAt: number;
   ownerPid: number;
-  step: 'validate' | 'files' | 'database';
+  /** `completed`: the database commit succeeded; cleanup only removes the marker (#260). */
+  step: 'validate' | 'files' | 'database' | 'completed';
   fileIndex?: number;
   fileCount?: number;
 };
 
+/**
+ * #259: rewriting the marker in place truncated it for a moment, and cleanup in another server
+ * process could read the partial JSON, skip the live-owner check and delete an active restore.
+ * The marker is now written to a temporary file and renamed over the old one, so readers only
+ * ever see a complete owner record.
+ */
 async function writeRestoreMarker(marker: string, value: RestoreMarker) {
-  await writeFile(marker, JSON.stringify(value));
+  const temporary = `${marker}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(value));
+    await renameWithRetry(temporary, marker);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => {});
+  }
 }
 
 function processIsAlive(pid: number) {
@@ -268,6 +283,9 @@ export async function cleanupInterruptedRestores() {
     if (activeRestores.has(newId)) return;
     try {
       const raw = JSON.parse(await readFile(marker, 'utf8')) as Partial<RestoreMarker>;
+      // #260: only a marker that recorded success is spared. A restore interrupted in any earlier
+      // step (including the database step) is still rolled back.
+      if (raw.step === 'completed') { await rm(marker, { force: true }); return; }
       if (Number.isSafeInteger(raw.ownerPid) && raw.ownerPid !== process.pid && processIsAlive(raw.ownerPid!)) return;
       // Old markers predate ownerPid. Keep the original grace period for those so an
       // older app instance can finish its active restore during a rolling restart.
@@ -275,7 +293,10 @@ export async function cleanupInterruptedRestores() {
       const step = raw.step ?? 'validate';
       console.warn(`[backup-restore] interrupted restore found; cleaning ${JSON.stringify({ projectId: newId, step, fileIndex: raw.fileIndex, fileCount: raw.fileCount })}`);
     } catch {
-      // An unreadable marker is itself stale and its project id comes from its filename.
+      // Markers are written atomically, so an unreadable one is damaged rather than half-written.
+      // Its project id comes from the filename; give a just-touched file a grace period anyway.
+      const info = await stat(marker).catch(() => null);
+      if (info && Date.now() - info.mtimeMs < 60_000) return;
     }
     try {
       await cleanupPartialRestore(newId);
@@ -421,7 +442,27 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
     console.info(`[backup-restore] files completed ${JSON.stringify({ projectId: newId, fileCount: manifest.files.length })}`);
     if (board) {
       const rulesFile = manifest.files.find(file => file.path === 'settings/pronunciation.json');
-      if (rulesFile) { const raw = JSON.parse(await readFile(inside(filesRoot, rulesFile.path), 'utf8')); const rules = Array.isArray(raw) ? raw : raw.rules ?? []; board.pronunciationRules = [...rules.filter((rule: { text: string }) => !board.pronunciationRules?.some(item => item.text === rule.text)), ...(board.pronunciationRules ?? [])]; }
+      if (rulesFile) {
+        // #312: project and global scopes each allow 200 rules, so blindly merging the archived global
+        // dictionary into the project could exceed the project's limit and block the restore. Only
+        // archived rules that this project's narration uses, that the project does not already
+        // define and that the current global dictionary does not already provide are carried over,
+        // within the remaining capacity; anything beyond it is reported instead of failing.
+        const raw = JSON.parse(await readFile(inside(filesRoot, rulesFile.path), 'utf8'));
+        const archived = (Array.isArray(raw) ? raw : raw.rules ?? []) as { text: string; pinyin: string[] }[];
+        const current = await readPronunciationRules().catch(() => []);
+        const sameReading = (a: { text: string; pinyin: string[] }, b: { text: string; pinyin: string[] }) => a.text === b.text && a.pinyin.join(' ') === b.pinyin.join(' ');
+        const projectRules = board.pronunciationRules ?? [];
+        const narrations = board.scenes.map(scene => scene.narration).join('\n');
+        const needed = archived.filter(rule => typeof rule?.text === 'string' && Array.isArray(rule.pinyin)
+          && narrations.includes(rule.text)
+          && !projectRules.some(item => item.text === rule.text)
+          && !current.some(item => sameReading(item, rule)));
+        const capacity = Math.max(0, 200 - projectRules.length);
+        const carried = needed.slice(0, capacity).map(rule => ({ text: rule.text, pinyin: rule.pinyin }));
+        if (needed.length > carried.length) console.warn(`[backup-restore] ${needed.length - carried.length} archived global pronunciation rules exceed the project limit and were not carried over ${JSON.stringify({ projectId: newId })}`);
+        board.pronunciationRules = [...carried, ...projectRules];
+      }
     }
     if (board) StoryboardSchema.parse(board);
     try {
@@ -444,6 +485,16 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
       throw new RestoreError('database', `写入项目数据失败：${error instanceof Error ? error.message : String(error)}`);
     }
     completed = true;
+    // #260: the success boundary. Recording `completed` before the marker is removed means a failed
+    // removal can never look like an interrupted restore. If even that write fails, remove the
+    // marker right away; only if both fail is the outcome logged as a risk.
+    try {
+      await writeRestoreMarker(marker, { projectId: newId, startedAt, ownerPid: process.pid, step: 'completed' });
+    } catch (error) {
+      await rm(marker, { force: true }).catch(removeError => {
+        console.error(`[backup-restore] completed restore could not mark or remove its marker ${JSON.stringify({ projectId: newId, error: error instanceof Error ? error.message : String(error), removeError: removeError instanceof Error ? removeError.message : String(removeError) })}`);
+      });
+    }
     console.info(`[backup-restore] completed ${JSON.stringify({ projectId: newId })}`);
     return newId;
   } catch (error) {
@@ -474,7 +525,7 @@ export async function writeProjectArchive(projectId: string, target: string, opt
   const sources = await collectSources(projectId, storyboard, options.includeOutput ?? false, referencedBrandLogoSrc(rawStoryboard));
   let voiceId = project.voiceId;
   if (!voiceId) { try { voiceId = JSON.parse(await readFile(join(repo, 'data/settings/general-voice.json'), 'utf8')).voiceId; } catch { /* No voice selected. */ } }
-  if (voiceId) sources.push(...await tree(join(repo, 'data/voices', safeId(voiceId)), 'voice'));
+  if (voiceId) sources.push(...await tree(join(repo, 'data/voices', voiceDirectoryName(voiceId)), 'voice'));
   let pronunciation: Buffer | null = null;
   try { pronunciation = await readFile(join(repo, 'data/settings/pronunciation.json')); } catch { /* No global rules. */ }
   const files: Entry[] = [];

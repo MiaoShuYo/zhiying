@@ -48,7 +48,8 @@ const BaseSceneSchema = z.object({
   id: z.string().min(1),
   type: SceneTypeSchema,
   title: z.string().max(50).optional(),
-  narration: z.string().min(1),
+  // #267: an empty narration is the documented clear-to-silence state and must save.
+  narration: z.string(),
   pronunciationOverrides: z.array(PronunciationRuleSchema).max(200).optional(),
   pronunciationWarnings: z.array(z.string()).optional(),
   duration: z.number().positive().optional(),

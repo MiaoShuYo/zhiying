@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { deliveryRecordView } from '@/lib/delivery-records';
 import { buildDelivery } from '@/lib/delivery';
-import { cachedQcView, readQcReport } from '@/lib/qc-report';
+import { currentQcView } from '@/lib/qc-report';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -32,7 +32,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!result.ok) {
     return NextResponse.json({ error: result.error, missing: result.missing, record: result.record ?? null }, { status: result.status });
   }
-  const qc = cachedQcView(id, project.revision, await readQcReport(id).catch(() => null));
+  const qc = await currentQcView(id, project.revision);
   return NextResponse.json({
     ok: true,
     jobId,

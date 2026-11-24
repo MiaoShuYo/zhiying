@@ -62,16 +62,22 @@ async function measureOne(src: string | undefined, refresh: boolean): Promise<Au
     if (!stream) {
       entry = { duration: Number.isFinite(duration) ? duration : 0, meanVolume: -Infinity, peakVolume: -Infinity, hasAudio: false };
     } else {
-      let meanVolume = -Infinity;
-      let peakVolume = -Infinity;
+      // #280: NaN marks "not measured". A failed or timed-out volumedetect, or output without the
+      // fields, used to fall back to -Infinity, which checkAudio read as measured silence and
+      // cached as a false audio_silent error. NaN fails every silence comparison; a genuine
+      // "-inf dB" reading is still -Infinity.
+      let meanVolume = Number.NaN;
+      let peakVolume = Number.NaN;
       try {
         const { stderr } = await run(ffmpegPath(), ['-hide_banner', '-nostats', '-i', file, '-map', '0:a:0', '-af', 'volumedetect', '-f', 'null', '-'], { timeout: TIMEOUT, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
-        meanVolume = parseDb(stderr, 'mean_volume') ?? -Infinity;
-        peakVolume = parseDb(stderr, 'max_volume') ?? -Infinity;
+        meanVolume = parseDb(stderr, 'mean_volume') ?? Number.NaN;
+        peakVolume = parseDb(stderr, 'max_volume') ?? Number.NaN;
       } catch {
         // The stream is still readable; only the loudness numbers are missing.
       }
       entry = { duration: Number.isFinite(duration) ? duration : 0, meanVolume, peakVolume, hasAudio: true };
+      // An unmeasured result is returned but not cached, so the next check measures again.
+      if (Number.isNaN(meanVolume) || Number.isNaN(peakVolume)) return entry;
     }
   } catch {
     entry = 'unreadable';

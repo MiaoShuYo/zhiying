@@ -328,10 +328,19 @@ async function main() {
         assert.equal(refusedStaleRevision.status, 409, '落后于项目的包不能再下载');
         assert.match((await body(refusedStaleRevision)).error, /项目在这个交付包生成之后又有修改|已过期/);
 
-        // 重新生成之后包又可用，并且仍然打包同一条最新成片。
-        const reblessed = await buildDeliveryRoute(post({ jobId: filmJob.id }), params(filmProject.id));
-        assert.equal(reblessed.status, 200, '项目改过之后可以重新生成交付包');
+        // #261：只重新打包旧成片不能让它变成“最新”。包里的视频和字幕来自那次渲染，记录的是渲染时的版本。
         const reblessedRevision = (await db.project.findUniqueOrThrow({ where: { id: filmProject.id } })).revision;
+        const repacked = await buildDeliveryRoute(post({ jobId: filmJob.id }), params(filmProject.id));
+        assert.equal(repacked.status, 200, '旧成片仍可打包');
+        const repackedRow = ((await body(await readExports(new Request(url('/')), params(filmProject.id)))) as any[]).find(item => item.id === filmJob.id);
+        assert.notEqual(repackedRow.delivery.revision, reblessedRevision, '旧成片的包不能记成当前版本');
+        assert.equal(repackedRow.delivery.stale, 'project-changed', '旧成片重新打包后仍然过期');
+        assert.equal((await readDelivery(new Request(url('/')), jobParams(filmProject.id, filmJob.id))).status, 409, '旧成片的包不能当作最新版本下载');
+
+        // 重新渲染当前分镜之后（这里直接把渲染输入记为当前版本），包又可用，并且仍然打包同一条最新成片。
+        await db.job.update({ where: { id: filmJob.id }, data: { inputJson: JSON.stringify({ storyboard: { ...filmBoard, title: '交付样片（改）' }, preset: 'full', revision: reblessedRevision }) } });
+        const reblessed = await buildDeliveryRoute(post({ jobId: filmJob.id }), params(filmProject.id));
+        assert.equal(reblessed.status, 200, '项目改过并重新渲染后可以重新生成交付包');
         const reblessedRow = ((await body(await readExports(new Request(url('/')), params(filmProject.id)))) as any[]).find(item => item.id === filmJob.id);
         assert.equal(reblessedRow.delivery.stale, null, '重新生成后不再过期');
         assert.equal(reblessedRow.delivery.revision, reblessedRevision, '新包要记录改动后的项目版本');
@@ -349,7 +358,7 @@ async function main() {
         assert.equal(goneBody.missing[0].step, 'video', '要指出缺少成片文件');
         assert.match(goneBody.error, /成片文件不存在或为空/);
         assert.equal(goneBody.record.status, 'failed');
-        assert.equal(goneBody.record.attempts, 6);
+        assert.equal(goneBody.record.attempts, 7);
         const brokenRow = ((await body(await readExports(new Request(url('/')), params(filmProject.id)))) as any[]).find(item => item.id === filmJob.id);
         assert.equal(brokenRow.delivery.status, 'failed', '导出记录不能留下误导性的成功状态');
         assert.equal(brokenRow.delivery.fileExists, false);

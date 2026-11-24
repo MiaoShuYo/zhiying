@@ -27,21 +27,27 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const patch = templateBoardPatch(template);
     const settings = templateScenePatch(template);
     const staleAudio: number[] = [];
+    // #243: switching the voice makes every recording stale, independently of the scene-settings
+    // switch; otherwise preflight and rendering kept using audio made with the previous voice.
+    const voiceChanged = applyVoice && Boolean(template.voiceId) && template.voiceId !== project.voiceId;
+    const resetAudio = { audioSrc: undefined, audioKey: undefined, audioDuration: undefined, wordTimings: undefined, subtitleCues: undefined };
     const next: Storyboard = {
       ...board,
       ...(applyExport ? patch : {}),
-      scenes: applyScenes ? board.scenes.map((scene, index) => {
-        const timingChanged = (scene.speechSpeed ?? 1) !== settings.speechSpeed || (scene.sentencePause ?? 0.12) !== settings.sentencePause;
-        if (timingChanged && scene.audioSrc) staleAudio.push(index);
+      scenes: board.scenes.map((scene, index) => {
+        const timingChanged = applyScenes && ((scene.speechSpeed ?? 1) !== settings.speechSpeed || (scene.sentencePause ?? 0.12) !== settings.sentencePause);
+        if ((timingChanged || voiceChanged) && scene.audioSrc) staleAudio.push(index);
         return {
           ...scene,
-          ...settings,
+          ...(applyScenes ? settings : {}),
           // Speech changed, so the cached voice track no longer matches the narration.
-          ...(timingChanged ? { audioSrc: undefined, audioKey: undefined, audioDuration: undefined, wordTimings: undefined, subtitleCues: undefined } : {}),
+          ...(timingChanged || voiceChanged ? resetAudio : {}),
         };
-      }) : board.scenes,
+      }),
     };
-    await saveStoryboard(id, next);
+    // #238: guarded by the revision this board was read at, so a stale template application fails
+    // with a save conflict instead of overwriting a newer storyboard.
+    await saveStoryboard(id, next, project.revision);
     if (applyVoice && template.voiceId && template.voiceId !== project.voiceId) {
       await db.project.update({ where: { id }, data: { voiceId: template.voiceId } });
     }
@@ -55,6 +61,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       renderPreset: template.renderPreset,
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : '应用制作方案失败' }, { status: 500 });
+    const message = error instanceof Error ? error.message : '应用制作方案失败';
+    return NextResponse.json({ error: message }, { status: message.startsWith('保存冲突') ? 409 : 500 });
   }
 }

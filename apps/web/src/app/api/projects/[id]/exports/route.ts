@@ -1,6 +1,6 @@
 import { db } from '@/lib/db';
 import { deliveryRecordView, readDeliveryRecords } from '@/lib/delivery-records';
-import { cachedQcView, readQcReport } from '@/lib/qc-report';
+import { currentQcView } from '@/lib/qc-report';
 import { ensureExportValidation, exportVideoState, parseValidation } from '@/lib/render-validation';
 
 export const runtime = 'nodejs';
@@ -23,7 +23,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // Stored archives are judged against the project as it stands now, not when they were built.
   const project = await db.project.findUnique({ where: { id }, select: { revision: true } });
   const qc = project
-    ? cachedQcView(id, project.revision, await readQcReport(id).catch(() => null))
+    ? await currentQcView(id, project.revision)
     : null;
   const current = project && qc ? { revision: project.revision, qcStatus: qc.status } : undefined;
   const payload = await Promise.all(jobs.map(async job => {

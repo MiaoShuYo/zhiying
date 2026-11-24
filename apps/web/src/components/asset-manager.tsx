@@ -53,7 +53,12 @@ export function AssetManager({ id, board, assets, disabled, save, onChange, onSe
   function mutate(action: () => Promise<string>) {
     setWorking(true); setError('');
     void (async () => {
-      try { onMessage(await action()); await onReload(); await refresh(); }
+      try {
+        // #245: every operation ends with onReload(), which replaces the editor's storyboard with the
+        // saved one. Flush pending edits first so an import or "重新检查" cannot discard them.
+        if (!await save()) throw new Error('分镜还没有保存成功，已取消操作；请先处理保存错误');
+        onMessage(await action()); await onReload(); await refresh();
+      }
       catch (failure) { setError(failure instanceof Error ? failure.message : '素材操作失败'); }
       finally { setWorking(false); setOpen(null); setTargets([]); }
     })();

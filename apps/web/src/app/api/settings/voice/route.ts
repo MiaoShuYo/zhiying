@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { voiceDirectoryName } from '@/lib/voice-id';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 
@@ -11,7 +12,7 @@ export async function GET() {
     const settings = JSON.parse(await readFile(settingsPath(), 'utf8')) as { voiceId?: string; displayName?: string; transcript?: string; audioFilename?: string };
     let audioFilename = settings.audioFilename ?? '';
     if (!audioFilename && settings.voiceId === voiceId) {
-      try { audioFilename = (await readdir(resolve(process.cwd(), '..', '..', 'data', 'voices', voiceId))).find(name => /^reference\.(wav|mp3|flac|ogg|m4a)$/i.test(name)) ?? ''; } catch { /* Older settings may have no local voice file. */ }
+      try { audioFilename = (await readdir(resolve(process.cwd(), '..', '..', 'data', 'voices', voiceDirectoryName(voiceId)))).find(name => /^reference\.(wav|mp3|flac|ogg|m4a)$/i.test(name)) ?? ''; } catch { /* Older settings may have no local voice file. */ }
     }
     return NextResponse.json({ configured: settings.voiceId === voiceId, displayName: settings.displayName ?? '', transcript: settings.transcript ?? '', audioFilename });
   } catch {

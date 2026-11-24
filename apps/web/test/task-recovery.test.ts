@@ -62,7 +62,7 @@ test('retry routing stays on the existing endpoints', () => {
   assert.equal(retryRequest('render', { projectId: 'p1' }), null);
   assert.deepEqual(retryRequest('recover', target), { url: '/api/projects/p1/recover', method: 'POST' });
   assert.deepEqual(retryRequest('restart', target), { url: '/api/projects/p1/retry', method: 'POST', body: { mode: 'restart' } });
-  assert.deepEqual(retryRequest('voice', target), { url: '/api/projects/p1/voice/generate', method: 'POST', body: { speed: 1 } });
+  assert.deepEqual(retryRequest('voice', target), { url: '/api/projects/p1/voice/generate', method: 'POST', body: {} });
   assert.equal(retryModeFor({ kind: 'tts', status: 'cancelled' }), 'voice');
   assert.equal(retryModeFor({ kind: 'storyboard', status: 'cancelled' }), 'step');
   assert.equal(retryModeFor({ kind: 'render', status: 'completed' }), null);

@@ -10,7 +10,7 @@ export const formatBytes = (value: number) => value >= 1024 * 1024 * 1024 ? `${(
 const usageLabels: Record<keyof Omit<StorageTotals, 'total'>, string> = { assets: '素材', audio: '语音', output: '导出成片', pages: '抽取页面', source: '源文件', backups: '快照备份' };
 
 /** Disk usage plus the "assets no scene points at" cleanup list. */
-export function StoragePanel({ id, disabled, reload, refreshKey }: { id: string; disabled: boolean; reload: () => Promise<void>; refreshKey: string }) {
+export function StoragePanel({ id, disabled, save, reload, refreshKey }: { id: string; disabled: boolean; save: () => Promise<boolean>; reload: () => Promise<void>; refreshKey: string }) {
   const [report, setReport] = useState<StorageReport | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [message, setMessage] = useState('');
@@ -29,6 +29,10 @@ export function StoragePanel({ id, disabled, reload, refreshKey }: { id: string;
     if (!picked.length) return;
     setBusy(true); setMessage('');
     try {
+      // #286: the server decides which assets are unused from the saved storyboard. An asset that
+      // was just assigned but not yet autosaved would look unused and be deleted for good, and the
+      // reload below would also drop the pending edit, so the storyboard must save first.
+      if (!await save()) throw new Error('分镜还没有保存成功，已取消清理；请先处理保存错误');
       const response = await fetch(`/api/projects/${id}/storage`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paths: picked }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? '清理失败');

@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { getProjectLock, projectLockedResponse } from '@/lib/project-lock';
 import { projectPreflight } from '@/lib/preflight-server';
 import { blockingFindings, buildRenderEstimate } from '@/lib/render-plan-server';
+import { publicFileExists } from '@/lib/public-paths';
 import type { PreflightPreset } from '@m2v/schema';
 export const runtime = 'nodejs';
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) { const { id } = await params; await recoverInterruptedRenderJobs(); const job = await db.job.findUnique({ where: { id } }); return job ? NextResponse.json(job) : NextResponse.json({ error: '作业不存在' }, { status: 404 }); }
@@ -25,8 +26,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const accepted = body.allowIssues === true && check.result.blocking > 0;
   // Same gate as POST /render: a known asset or environment error needs confirmation.
   if (check.result.blocking > 0 && !accepted) return NextResponse.json({ error: `导出前检查发现 ${check.result.blocking} 个错误，请先处理或确认风险`, issues: check.result.issues, blocking: check.result.blocking }, { status: 422 });
-  const assessment = await buildRenderEstimate(job.projectId, preset);
-  const restartPlan = restart ? await buildRenderEstimate(job.projectId, preset, { ignoreCache: true }) : null;
+  // #222: a restart ignores the cache, so its risk gate, the 422 response and the stored plan all
+  // use the cache-less assessment; a full re-render can no longer pass the gate as a cheap resume.
+  const assessment = await buildRenderEstimate(job.projectId, preset, restart ? { ignoreCache: true } : undefined);
   const blockers = assessment ? blockingFindings(assessment.estimate) : [];
   if (assessment && blockers.length > 0 && body.confirmRisks !== true) {
     return NextResponse.json({
@@ -37,6 +39,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       plan: { segments: assessment.plan.segments.length, reused: assessment.plan.reusedCount, rendered: assessment.plan.renderedCount, renderedSeconds: assessment.plan.renderedSeconds, totalSeconds: assessment.plan.totalSeconds, reasons: assessment.reasons.map(reason => ({ code: reason.code, label: reason.label, count: reason.count })) },
     }, { status: 422 });
   }
+  // Same as POST /render (#182): a missing decorative Logo is dropped from the render input only.
+  const renderBoard = JSON.parse(project.storyboardJson) as { brand?: { logo?: { enabled?: boolean; src?: unknown } } };
+  const logo = renderBoard.brand?.logo;
+  if (logo?.enabled && (typeof logo.src !== 'string' || !logo.src.trim() || !publicFileExists(logo.src.trim()))) delete renderBoard.brand!.logo;
   const retried = await db.job.create({
     data: {
       projectId: job.projectId,
@@ -44,9 +50,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       status: 'queued',
       stage: 'queued',
       attempt: job.attempt + 1,
-      inputJson: JSON.stringify({ storyboard: JSON.parse(project.storyboardJson), preset, allowIssues: accepted, ...(restart ? { noCache: true } : {}) }),
+      inputJson: JSON.stringify({ storyboard: renderBoard, preset, allowIssues: accepted, revision: project.revision, ...(restart ? { noCache: true } : {}) }),
       // The stored plan describes what will actually run: a restart plans with an empty cache.
-      renderPlanJson: restartPlan ? JSON.stringify(restartPlan.plan) : assessment ? JSON.stringify(assessment.plan) : null,
+      renderPlanJson: assessment ? JSON.stringify(assessment.plan) : null,
     },
   });
   return NextResponse.json({ ...retried, mode: restart ? 'restart' : 'resume' }, { status: 202 });

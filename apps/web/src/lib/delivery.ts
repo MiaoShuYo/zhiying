@@ -10,7 +10,7 @@ import { db } from '@/lib/db';
 import { ffmpegPath } from '@/lib/audio-qc';
 import { fileStamp, outputDirFor, ownedVideoPath, safeFileBaseName } from '@/lib/job-video';
 import { parseValidation, validateExport } from '@/lib/render-validation';
-import { cachedQcView, readQcReport } from '@/lib/qc-report';
+import { currentQcView } from '@/lib/qc-report';
 import {
   deliveryDirFor,
   nextDeliveryRecord,
@@ -58,6 +58,27 @@ async function failDelivery(input: {
 
 
 /** The exact board that produced the video, so subtitles share its timeline. */
+/**
+ * #261: the project revision the render was made from. The package's MP4 and subtitles come from
+ * this render, so the delivery record must carry its revision, not the project's current one;
+ * otherwise repackaging an old render after an edit made the old film look current. Renders
+ * queued before this field existed are dated by comparing their storyboard with the current one.
+ */
+function renderRevision(inputJson: string | null, project: { revision: number; storyboardJson: string | null }): number | undefined {
+  if (!inputJson) return undefined;
+  try {
+    const input = JSON.parse(inputJson) as { revision?: unknown; storyboard?: unknown };
+    if (typeof input.revision === 'number' && Number.isInteger(input.revision)) return input.revision;
+    if (input.storyboard && project.storyboardJson) {
+      const same = JSON.stringify(StoryboardSchema.parse(input.storyboard)) === JSON.stringify(StoryboardSchema.parse(JSON.parse(project.storyboardJson)));
+      return same ? project.revision : -1;
+    }
+  } catch {
+    return -1;
+  }
+  return undefined;
+}
+
 function renderStoryboard(inputJson: string | null): Storyboard | null {
   try {
     const parsed = StoryboardSchema.safeParse((JSON.parse(inputJson ?? '{}') as { storyboard?: unknown }).storyboard);
@@ -228,7 +249,7 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
     }
     // A current QC report with blocking issues stops packaging; a missing or stale
     // report stays permissive so projects that never ran QC keep working.
-    const qc = cachedQcView(projectId, project.revision, await readQcReport(projectId).catch(() => null));
+    const qc = await currentQcView(projectId, project.revision);
     if (qc.status === 'blocking' && qc.report) {
       const errors = [qc.report.subtitles.issues, qc.report.audio.issues, qc.report.render?.issue ? [qc.report.render.issue] : []]
         .flat()
@@ -244,10 +265,11 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
         missing: errors.slice(0, 5).map(issue => ({ step: 'qc', message: `${qcCodeLabels[issue.code]}：${issue.message}` })),
       });
     }
-    const board = renderStoryboard(job.inputJson)
-      ?? (project.storyboardJson ? StoryboardSchema.parse(JSON.parse(project.storyboardJson)) : null);
+    // #273: subtitles must come from the storyboard this MP4 was rendered from. The current storyboard
+    // may have different narration, order, timing or intro, so it is never used as a stand-in.
+    const board = renderStoryboard(job.inputJson);
     if (!board) {
-      return failDelivery({ projectId, jobId, stamp, previous, status: 409, error: '项目还没有分镜，无法生成与成片同时轴的字幕', missing: [{ step: 'subtitles', message: '项目缺少分镜，无法生成字幕' }] });
+      return failDelivery({ projectId, jobId, stamp, previous, status: 409, error: '这条导出记录没有保存渲染时的分镜，无法生成与成片同步的字幕。请重新渲染后再打包。', missing: [{ step: 'subtitles', message: '缺少渲染时的分镜快照，需要重新渲染' }] });
     }
 
     const duration = validation.duration ?? timelineFor(board).totalSeconds;
@@ -344,7 +366,7 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
       bytes,
       files: files.length,
       // Provenance: the archive only vouches for this revision under this verdict.
-      revision: project.revision,
+      revision: renderRevision(job.inputJson, project),
       qc: {
         status: qc.status,
         errors: qc.report?.summary.errors ?? 0,

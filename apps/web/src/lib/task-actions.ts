@@ -142,7 +142,9 @@ export function failureInfo(
       hint: retryable
         ? '从失败步骤继续时会校验检查点，只复用与当前资料匹配且完整的章节；无有效检查点时会重新生成。从头执行会清空当前分镜。'
         : '这不是项目的最新失败任务，或项目状态已变化；请打开项目确认当前分镜状态。',
-      actions: retryable ? ['step', 'restart'] : [],
+      // #256: outside the project's own failed state the storyboard may hold repaired scenes,
+      // so only the step retry (which replaces scenes after success) is offered.
+      actions: retryable ? (projectStatus === 'failed' ? ['step', 'restart'] : ['step']) : [],
     };
   }
   if (job.status === 'cancelled') {
@@ -173,7 +175,9 @@ export function retryRequest(mode: RetryMode, target: { projectId: string; jobId
     if (target.renderMode === 'restart') body.mode = 'restart';
     return { url: `/api/jobs/${target.jobId}`, method: 'POST', ...(Object.keys(body).length > 0 ? { body } : {}) };
   }
-  if (mode === 'voice') return { url: `/api/projects/${target.projectId}/voice/generate`, method: 'POST', body: { speed: 1 } };
+  // #302: no fixed speed. The route reuses the speed the project's audio was generated at, so a
+  // retry does not regenerate already-finished scenes at 1× and drop their manual captions.
+  if (mode === 'voice') return { url: `/api/projects/${target.projectId}/voice/generate`, method: 'POST', body: {} };
   if (mode === 'step') return { url: `/api/projects/${target.projectId}/retry`, method: 'POST', body: { mode: 'step' } };
   if (mode === 'restart') return { url: `/api/projects/${target.projectId}/retry`, method: 'POST', body: { mode: 'restart' } };
   return { url: `/api/projects/${target.projectId}/recover`, method: 'POST' };

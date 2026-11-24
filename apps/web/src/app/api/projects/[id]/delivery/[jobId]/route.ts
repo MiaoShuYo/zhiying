@@ -5,7 +5,7 @@ import { basename, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { db } from '@/lib/db';
 import { deliveryDirFor, deliveryRecordExists, deliveryStaleReason, readDeliveryRecord } from '@/lib/delivery-records';
-import { cachedQcView, readQcReport } from '@/lib/qc-report';
+import { currentQcView } from '@/lib/qc-report';
 
 export const runtime = 'nodejs';
 
@@ -33,7 +33,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
   // A stale archive must not be handed out as if it still described the project.
   const project = await db.project.findUnique({ where: { id }, select: { revision: true } });
-  const qc = project ? cachedQcView(id, project.revision, await readQcReport(id).catch(() => null)) : null;
+  const qc = project ? await currentQcView(id, project.revision) : null;
   const stale = deliveryStaleReason(record, project && qc ? { revision: project.revision, qcStatus: qc.status } : undefined);
   if (stale) {
     return NextResponse.json({ error: staleMessages[stale], stale, record }, { status: 409 });

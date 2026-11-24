@@ -3,7 +3,7 @@ import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition, makeCancelSignal, openBrowser } from '@remotion/renderer';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { access, mkdir, mkdtemp, rm, stat, writeFile, copyFile, rename } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, rm, stat, writeFile, copyFile, rename } from 'node:fs/promises';
 import { cpus, freemem, tmpdir, totalmem } from 'node:os';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
@@ -163,7 +163,42 @@ async function keepFingerprints(projectId: string, jobId: string, plan: RenderPl
   return keep;
 }
 
-async function renderJob(jobId: string, projectId: string) {
+/**
+ * #319: a claim is identified by the `startedAt` written when this worker took the job (its
+ * lease). Every write filters on it, so a worker that resumes after recovery failed or requeued
+ * the job can no longer touch a newer attempt's heartbeat, stage, output or terminal status.
+ */
+const owned = (jobId: string, lease: Date, statuses: string[] = ['running']) => ({ id: jobId, status: { in: statuses }, startedAt: lease });
+
+/**
+ * #230: retries use new job ids, so their segment-cache pruning never reached the outputs of the
+ * attempts they replaced. After a successful render, remove `.partial.mp4` files and unfinished
+ * final MP4s that belong to this project's failed or cancelled jobs (or to jobs that no longer
+ * exist). Completed exports, active jobs and this job's own output are kept.
+ */
+async function removeStaleOutputs(dir: string, projectId: string, jobId: string) {
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  const candidates = entries
+    .map(name => ({ name, match: /^([A-Za-z0-9_-]{1,64})(?:\.[a-z0-9]{1,16})?(\.partial)?\.mp4$/.exec(name) }))
+    .filter((item): item is { name: string; match: RegExpExecArray } => Boolean(item.match) && item.match![1] !== jobId);
+  if (!candidates.length) return { removed: 0, bytes: 0 };
+  const ids = [...new Set(candidates.map(item => item.match[1]))];
+  const jobs = await prisma.job.findMany({ where: { id: { in: ids }, projectId }, select: { id: true, status: true } });
+  const status = new Map(jobs.map(job => [job.id, job.status]));
+  let removed = 0;
+  let bytes = 0;
+  for (const { name, match } of candidates) {
+    const state = status.get(match[1]);
+    const stale = state === 'failed' || state === 'cancelled' || (state === undefined && Boolean(match[2]));
+    if (!stale) continue;
+    const file = join(dir, name);
+    const size = await stat(file).then(info => info.size).catch(() => 0);
+    await rm(file, { force: true }).then(() => { removed += 1; bytes += size; }).catch(() => {});
+  }
+  return { removed, bytes };
+}
+
+async function renderJob(jobId: string, projectId: string, lease: Date) {
   const project = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
   if (!project.storyboardJson) throw new Error('项目尚无分镜');
   const job = await prisma.job.findUniqueOrThrow({ where: { id: jobId } });
@@ -172,7 +207,10 @@ async function renderJob(jobId: string, projectId: string) {
   const preset: 'full' | 'draft' = input.preset === 'draft' ? 'draft' : 'full';
   const abort = new AbortController();
   const { cancel, cancelSignal } = makeCancelSignal();
-  const check = async () => { const current = await prisma.job.findUnique({ where: { id: jobId } }); if (!current || current.status !== 'running') { abort.abort(); cancel(); } };
+  const check = async () => {
+    const current = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!current || current.status !== 'running' || current.startedAt?.getTime() !== lease.getTime()) { abort.abort(); cancel(); }
+  };
 
   const dir = join(outputRoot, projectId, 'output');
   await mkdir(dir, { recursive: true });
@@ -182,14 +220,14 @@ async function renderJob(jobId: string, projectId: string) {
   // Percent stays stage-local; the UI maps each stage to a slice of the bar.
   const enterStage = async (next: RenderStage) => {
     stage = next;
-    await prisma.job.updateMany({ where: { id: jobId, status: 'running' }, data: { stage: next, progress: JSON.stringify({ phase: next, percent: 0, message: RENDER_STAGE_LABELS[next] }) } });
+    await prisma.job.updateMany({ where: owned(jobId, lease), data: { stage: next, progress: JSON.stringify({ phase: next, percent: 0, message: RENDER_STAGE_LABELS[next] }) } });
     await log.info(`阶段：${RENDER_STAGE_LABELS[next]}`);
   };
   const tick = async (percent: number) => {
     if (Date.now() - lastTick < 500) return;
     lastTick = Date.now();
     const value = Math.max(0, Math.min(100, Math.round(percent)));
-    await prisma.job.updateMany({ where: { id: jobId, status: 'running' }, data: { progress: JSON.stringify({ phase: stage, percent: value, message: RENDER_STAGE_LABELS[stage] }) } });
+    await prisma.job.updateMany({ where: owned(jobId, lease), data: { progress: JSON.stringify({ phase: stage, percent: value, message: RENDER_STAGE_LABELS[stage] }) } });
   };
   const ensureActive = async () => { await check(); if (abort.signal.aborted) throw new RenderFailure(stage, 'cancelled', '已取消渲染'); };
 
@@ -197,7 +235,8 @@ async function renderJob(jobId: string, projectId: string) {
   const raw = join(temp, 'raw.mp4');
   const concatList = join(temp, 'segments.txt');
   const final = join(dir, `${jobId}.mp4`);
-  const partial = join(dir, `${jobId}.partial.mp4`);
+  // The encoder writes to a file unique to this claim; only a still-valid lease publishes it.
+  const partial = join(dir, `${jobId}.${lease.getTime().toString(36)}.partial.mp4`);
   const cacheDir = segmentDir(dir, preset);
   const watcher = setInterval(() => void check().catch(console.error), 500);
   let width = 0;
@@ -215,7 +254,7 @@ async function renderJob(jobId: string, projectId: string) {
     const cached = input.noCache === true ? [] : await readSegmentIndex(cacheDir);
     if (input.noCache === true) await log.warn('已忽略片段缓存，重新渲染全部画面');
     const plan = segmentPlan({ storyboard, preset, cached, audioSignatures: await audioSignatures(storyboard) });
-    await prisma.job.updateMany({ where: { id: jobId, status: 'running' }, data: { renderPlanJson: JSON.stringify(plan) } });
+    await prisma.job.updateMany({ where: owned(jobId, lease), data: { renderPlanJson: JSON.stringify(plan) } });
     await log.info('渲染计划已生成', { segments: plan.segments.length, reused: plan.reusedCount, rendered: plan.renderedCount, totalSeconds: plan.totalSeconds, renderedSeconds: plan.renderedSeconds });
     for (const segment of plan.segments.filter(item => !item.reuse)) await log.info(`待渲染：${segmentLabel(segment, storyboard)}`, { frames: segment.frames, reason: segment.reason });
 
@@ -280,7 +319,7 @@ async function renderJob(jobId: string, projectId: string) {
 
     await ensureActive();
     await prisma.$transaction(async tx => {
-      const updated = await tx.job.updateMany({ where: { id: jobId, status: 'running' }, data: { stage: 'encoding' } });
+      const updated = await tx.job.updateMany({ where: owned(jobId, lease), data: { stage: 'encoding' } });
       if (!updated.count) throw new Error('渲染任务已结束或被恢复，停止写入旧状态');
       await tx.project.update({ where: { id: projectId }, data: { status: 'encoding' } });
     });
@@ -292,6 +331,11 @@ async function renderJob(jobId: string, projectId: string) {
     }
     await ensureActive();
     await rename(partial, final);
+    // Re-check ownership after publishing: if the lease was lost meanwhile, withdraw the file.
+    if (!(await prisma.job.count({ where: owned(jobId, lease) }))) {
+      await rm(final, { force: true }).catch(() => {});
+      throw new RenderFailure('encoding', 'cancelled', '渲染任务已被恢复流程接管，旧进程的成片已撤回');
+    }
     await log.info('成片已编码', { bytes: await segmentBytes(final) });
     await enterStage('validating');
     // The file is already complete; a failed probe must not turn this job red, so the
@@ -302,17 +346,29 @@ async function renderJob(jobId: string, projectId: string) {
       duration: plan.totalFrames / plan.fps,
       requireAudio: storyboard.scenes.some(scene => scene.narration.trim().length > 0 || Boolean(scene.audioSrc)) || Boolean(storyboard.bgmSrc),
     });
-    await prisma.job.updateMany({
-      where: { id: jobId, status: 'running' },
+    const recorded = await prisma.job.updateMany({
+      where: owned(jobId, lease),
       data: { outputPath: `${jobId}.mp4`, ...(validation ? { validationJson: JSON.stringify(validation) } : {}) },
     });
+    if (!recorded.count) {
+      const current = await prisma.job.findUnique({ where: { id: jobId } });
+      // A cancel request keeps the lease; anything else means this worker no longer owns the job.
+      if (current?.status !== 'cancelling' || current.startedAt?.getTime() !== lease.getTime()) {
+        await rm(final, { force: true }).catch(() => {});
+        throw new RenderFailure('validating', 'cancelled', '渲染任务已被恢复流程接管，旧进程的成片已撤回');
+      }
+    }
     if (validation) await log.info('成片校验完成', { issues: validation.issues.length });
-    await finishJob(jobId, projectId, 'completed', null);
+    await finishJob(jobId, projectId, 'completed', null, undefined, lease);
     await log.info('渲染完成');
     const terminal = await prisma.job.findUnique({ where: { id: jobId } });
-    if (terminal?.status === 'cancelling') { await rm(final, { force: true }); await finishJob(jobId, projectId, 'cancelled', null); await log.warn('成片已按取消请求删除'); }
+    if (terminal?.status === 'cancelling' && terminal.startedAt?.getTime() === lease.getTime()) { await rm(final, { force: true }); await finishJob(jobId, projectId, 'cancelled', null, undefined, lease); await log.warn('成片已按取消请求删除'); }
     const pruned = await pruneSegmentCache(cacheDir, await keepFingerprints(projectId, jobId, plan)).catch(() => null);
     if (pruned) await log.info('片段缓存已整理', pruned);
+    if (terminal?.status === 'completed' || (await prisma.job.count({ where: { id: jobId, status: 'completed' } }))) {
+      const stale = await removeStaleOutputs(dir, projectId, jobId).catch(() => null);
+      if (stale?.removed) await log.info('已清理此前失败或取消任务留下的视频文件', stale);
+    }
   } finally {
     clearInterval(watcher);
     await rm(partial, { force: true }).catch(() => {});
@@ -333,10 +389,10 @@ async function validateRender(file: string, expected: ExpectedRender) {
   }
 }
 
-async function finishJob(jobId: string, projectId: string, status: 'completed' | 'failed' | 'cancelled', error: string | null, failure?: { stage: RenderStage; code: RenderFailureCode }) {
+async function finishJob(jobId: string, projectId: string, status: 'completed' | 'failed' | 'cancelled', error: string | null, failure: { stage: RenderStage; code: RenderFailureCode } | undefined, lease: Date) {
   await prisma.$transaction(async tx => {
     const updated = await tx.job.updateMany({
-      where: { id: jobId, status: { in: status === 'cancelled' ? ['cancelling', 'running'] : ['running'] } },
+      where: owned(jobId, lease, status === 'cancelled' ? ['cancelling', 'running'] : ['running']),
       data: {
         status,
         stage: status,
@@ -357,6 +413,7 @@ async function poll() {
   try {
     const job = await prisma.job.findFirst({ where: { kind: 'render', status: 'queued' }, orderBy: { createdAt: 'asc' } });
     if (!job) return;
+    const lease = new Date();
     const claimed = await prisma.$transaction(async tx => {
       const result = await tx.job.updateMany({
         where: { id: job.id, status: 'queued' },
@@ -369,7 +426,7 @@ async function poll() {
           error: null,
           failedStage: null,
           failureCode: null,
-          startedAt: new Date(),
+          startedAt: lease,
           logPath: JOB_ID_PATTERN.test(job.id) ? jobLogFileName(job.id) : null,
         },
       });
@@ -378,15 +435,15 @@ async function poll() {
     });
     if (!claimed) return;
     const heartbeat = setInterval(() => {
-      void prisma.job.updateMany({ where: { id: job.id, status: { in: ['running', 'cancelling'] } }, data: { updatedAt: new Date() } }).catch(error => console.error('[worker] heartbeat failed', error));
+      void prisma.job.updateMany({ where: owned(job.id, lease, ['running', 'cancelling']), data: { updatedAt: new Date() } }).catch(error => console.error('[worker] heartbeat failed', error));
     }, 15_000);
-    try { await renderJob(job.id, job.projectId); }
+    try { await renderJob(job.id, job.projectId, lease); }
     catch (error) {
       const latest = await prisma.job.findUnique({ where: { id: job.id } });
-      const cancelled = latest?.status === 'cancelling';
+      const cancelled = latest?.status === 'cancelling' && latest.startedAt?.getTime() === lease.getTime();
       const stage = isRenderStage(latest?.stage) ? latest.stage : 'bundling';
       const failure = cancelled ? { code: 'cancelled' as RenderFailureCode, message: '已取消渲染' } : classifyFailure(error, stage);
-      await finishJob(job.id, job.projectId, cancelled ? 'cancelled' : 'failed', cancelled ? null : `阶段 ${RENDER_STAGE_LABELS[stage] ?? stage}：${failure.message}`, { stage, code: failure.code });
+      await finishJob(job.id, job.projectId, cancelled ? 'cancelled' : 'failed', cancelled ? null : `阶段 ${RENDER_STAGE_LABELS[stage] ?? stage}：${failure.message}`, { stage, code: failure.code }, lease);
       console.error(`[worker] job ${job.id}: ${failure.message}`);
     } finally { clearInterval(heartbeat); }
   } finally { busy = false; }
