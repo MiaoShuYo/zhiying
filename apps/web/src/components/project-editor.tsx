@@ -250,8 +250,12 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   function selectStoryboardScene(index: number) {
     setActive(index);
     if (!storyboard) return;
-    const startFrame = timelineFrames(storyboard, 30).segments.find(segment => segment.kind === 'scene' && segment.index === index)?.startFrame;
-    if (startFrame !== undefined) playerRef.current?.seekTo(startFrame);
+    const segment = timelineFrames(storyboard, 30).segments.find(item => item.kind === 'scene' && item.index === index);
+    if (!segment) return;
+    // #216: entrance animations start at opacity 0, so a paused player parked on the first frame
+    // shows a blank scene. When paused, land half a second in (within the segment) instead.
+    const paused = !playerRef.current?.isPlaying();
+    playerRef.current?.seekTo(paused ? segment.startFrame + Math.min(15, Math.max(0, segment.frames - 1)) : segment.startFrame);
   }
   useEffect(() => { let stopped = false; void fetch(`/api/projects/${data.id}/voice/draft`, { cache: 'no-store' }).then(response => response.json()).then(result => { if (stopped) return; if (result.filename) { setAudioDraftName(result.filename); setAudioName(result.displayName ?? result.filename); setAudioDraftReady(true); } const savedTranscript = typeof result.transcript === 'string' ? result.transcript : ''; transcriptRef.current = savedTranscript; setTranscript(savedTranscript); if (typeof result.speed === 'number' && result.speed >= 0.5 && result.speed <= 3) setVoiceSpeed(result.speed); setTranscriptReady(true); }).catch(() => { if (!stopped) setTranscriptReady(true); /* Selecting a new file remains available if draft lookup fails. */ }); return () => { stopped = true; if (transcriptTimer.current !== null) window.clearTimeout(transcriptTimer.current); if (speedTimer.current !== null) window.clearTimeout(speedTimer.current); }; }, [data.id]);
   useEffect(() => { if (!renderJob || ['completed', 'failed', 'cancelled'].includes(renderStatus)) return; let stopped = false; progressFailures.current = 0; const poll = async () => { try { const response = await fetch(`/api/jobs/${renderJob}`, { cache: 'no-store' }); if (!response.ok) throw new Error(`进度查询失败（HTTP ${response.status}）`); const job = await response.json(); if (stopped) return; progressFailures.current = 0; setProgressNotice(''); setRenderStatus(job.status === 'running' ? job.stage : job.status); setData(current => ({ ...current, status: ['completed', 'failed', 'cancelled'].includes(job.status) && current.jobs.find(item => item.kind === 'render')?.id === renderJob && ['rendering', 'encoding'].includes(current.status) ? (job.status === 'cancelled' ? 'awaiting_review' : job.status) : current.status, jobs: current.jobs.map(item => item.id === renderJob ? { ...item, status: job.status, stage: job.stage, error: job.error, progress: job.progress } : item) })); if (job.status === 'failed') setRenderError(job.error ?? '渲染失败'); } catch (error) { if (stopped) return; progressFailures.current += 1; if (progressFailures.current >= 3) setProgressNotice(`${error instanceof Error ? error.message : '无法获取渲染进度'}。已连续 ${progressFailures.current} 次失败，请确认本地 Worker 正在运行（pnpm dev）。`); } }; void poll(); const timer = window.setInterval(poll, 2500); return () => { stopped = true; window.clearInterval(timer); }; }, [renderJob, renderStatus]);
@@ -615,10 +619,13 @@ export function ProjectEditor({ initial }: { initial: Data }) {
     setTab('storyboard');
   }
   function locateScene(sceneIndex: number) { setActive(sceneIndex); setTab('storyboard'); }
-  function locateQcIssue(issue: { sceneIndex: number; kind: 'subtitle' | 'audio' | 'render' }) {
+  function locateQcIssue(issue: { sceneIndex: number; kind: 'subtitle' | 'audio' | 'render'; cueIndex?: number }) {
     if (issue.kind === 'render') { setTab('render'); return; }
     setActive(issue.sceneIndex);
-    setToolsFocus({ section: issue.kind === 'subtitle' ? 'captions' : 'layout', nonce: Date.now() });
+    // #277: carry the cue so the caption timeline selects and scrolls to it, not to the first row.
+    setToolsFocus(issue.kind === 'subtitle'
+      ? { section: 'captions', nonce: Date.now(), sceneIndex: issue.sceneIndex, cueIndex: issue.cueIndex }
+      : { section: 'layout', nonce: Date.now() });
     setTab('storyboard');
   }
   async function render(preset: 'full' | 'draft' = 'full', options: { confirmRisks?: boolean } = {}) {

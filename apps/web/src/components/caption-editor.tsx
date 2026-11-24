@@ -25,6 +25,12 @@ export function CaptionTimeline({ scene, portrait, disabled, focusCueIndex, onCh
   // #295: an explicitly emptied manual timeline (`[]`) stays manual; only undefined is automatic.
   const manual = hasManualCues(scene);
   const [selected, setSelected] = useState(0);
+  // #291: resolveCaptionCues trims text and drops empty cues on every render, so typing straight
+  // into the cue list ate trailing spaces and removed a row the moment it was cleared. Text being
+  // typed lives in a per-row draft; it is committed on blur or Enter, and an empty draft is
+  // discarded instead of saving an invalid cue.
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  useEffect(() => { setDrafts({}); }, [scene.id]);
   const track = useRef<HTMLDivElement>(null);
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
   const drag = useRef<{ index: number; edge: Edge; start: number; end: number; width: number; x: number } | null>(null);
@@ -70,6 +76,13 @@ export function CaptionTimeline({ scene, portrait, disabled, focusCueIndex, onCh
   function update(index: number, patch: Partial<SubtitleCue>) {
     apply(cues.map((cue, at) => at === index ? { ...cue, ...patch } : cue));
   }
+  function commitDraft(index: number) {
+    const draft = drafts[index];
+    if (draft === undefined) return;
+    setDrafts(current => { const next = { ...current }; delete next[index]; return next; });
+    if (!draft.trim() || draft === cues[index]?.text) return;
+    update(index, { text: draft });
+  }
   function insert() {
     const last = cues[cues.length - 1];
     const start = last ? Math.min(last.end, Math.max(0, duration - 1)) : 0;
@@ -103,8 +116,16 @@ export function CaptionTimeline({ scene, portrait, disabled, focusCueIndex, onCh
         <span className="caption-index">{index + 1}</span>
         <label>开始<input className="input" type="number" step={.05} min={0} max={duration} disabled={disabled} value={round(cue.start)} onChange={event => update(index, { start: clamp(Number(event.target.value) || 0, 0, round(cue.end) - 0.05) })} /></label>
         <label>结束<input className="input" type="number" step={.05} min={0} max={duration} disabled={disabled} value={round(cue.end)} onChange={event => update(index, { end: clamp(Number(event.target.value) || 0, round(cue.start) + 0.05, duration) })} /></label>
-        <label className="caption-text">文本<input className="input" disabled={disabled} value={cue.text} onChange={event => update(index, { text: event.target.value })} /></label>
-        <button className="button danger" disabled={disabled} onClick={() => { apply(cues.filter((_, at) => at !== index)); setSelected(Math.max(0, index - 1)); }}>删除</button>
+        <label className="caption-text">文本<input
+          className="input"
+          disabled={disabled}
+          value={drafts[index] ?? cue.text}
+          onChange={event => { const value = event.target.value; setDrafts(current => ({ ...current, [index]: value })); }}
+          onBlur={() => commitDraft(index)}
+          onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commitDraft(index); } else if (event.key === 'Escape') { setDrafts(current => { const next = { ...current }; delete next[index]; return next; }); } }}
+        /></label>
+        {drafts[index] !== undefined && !drafts[index].trim() && <p className="caption-problem">字幕文本不能为空；离开输入框后会恢复原来的文字。</p>}
+        <button className="button danger" disabled={disabled} onClick={() => { setDrafts({}); apply(cues.filter((_, at) => at !== index)); setSelected(Math.max(0, index - 1)); }}>删除</button>
         {problems[index].length > 0 && <p className="caption-problem">{problems[index].join('；')}</p>}
       </div>)}
     </div>

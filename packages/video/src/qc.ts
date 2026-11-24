@@ -72,8 +72,8 @@ const SILENT_MEAN_DB = -50;
 
 const sceneLabel = (scene: { title?: string }, index: number) => scene.title?.trim() || `场景 ${index + 1}`;
 
-const issue = (input: Pick<QcIssue, 'code' | 'message'> & Partial<Pick<QcIssue, 'severity' | 'fix' | 'kind' | 'cueIndex' | 'cueText'>> & { scene: { id: string; title?: string }; index: number }): QcIssue => {
-  const { scene, index, ...rest } = input;
+const issue = (input: Pick<QcIssue, 'code' | 'message'> & Partial<Pick<QcIssue, 'severity' | 'fix' | 'kind' | 'cueIndex' | 'cueText'>> & { scene: { id: string; title?: string }; index: number; key?: string }): QcIssue => {
+  const { scene, index, key, ...rest } = input;
   return {
     kind: 'subtitle',
     severity: 'warning',
@@ -82,7 +82,8 @@ const issue = (input: Pick<QcIssue, 'code' | 'message'> & Partial<Pick<QcIssue, 
     sceneId: scene.id,
     sceneIndex: index,
     sceneTitle: sceneLabel(scene, index),
-    id: `${scene.id}:${rest.code}:${rest.cueIndex ?? 'scene'}`,
+    // Raw-list findings pass their own key: several raw cues can map to the same shown row.
+    id: `${scene.id}:${rest.code}:${key ?? rest.cueIndex ?? 'scene'}`,
   };
 };
 
@@ -93,6 +94,23 @@ const issue = (input: Pick<QcIssue, 'code' | 'message'> & Partial<Pick<QcIssue, 
  * Cue counting still happens when subtitles are switched off, so the report
  * can show how many cues would be drawn once they are turned back on.
  */
+/**
+ * #277: issues from the raw manual list are reported with the index of the row the caption
+ * timeline shows (resolved cues are sorted by start and drop blank or invalid entries). A raw cue
+ * that is dropped maps to the next shown row, or the last one, so locating it lands nearby.
+ */
+function resolvedCueIndex(manual: { text: string; start: number; end: number }[], rawIndex: number): number {
+  const shown = manual
+    .map((cue, index) => ({ cue, index }))
+    .sort((a, b) => a.cue.start - b.cue.start)
+    .filter(({ cue }) => cue.text.trim() && Number.isFinite(cue.start) && Number.isFinite(cue.end) && cue.end > cue.start);
+  const exact = shown.findIndex(item => item.index === rawIndex);
+  if (exact >= 0) return exact;
+  const start = manual[rawIndex]?.start ?? Number.POSITIVE_INFINITY;
+  const next = shown.findIndex(item => item.cue.start >= start);
+  return next >= 0 ? next : Math.max(0, shown.length - 1);
+}
+
 export function checkSubtitles(board: Storyboard): SubtitleQc {
   const enabled = board.subtitles?.enabled !== false;
   const portrait = board.aspectRatio === '9:16';
@@ -114,13 +132,14 @@ export function checkSubtitles(board: Storyboard): SubtitleQc {
         message: `${sceneLabel(scene, index)}设定为 ${configured.toFixed(1)} 秒，成片会按最短播放时长拉长，字幕节奏可能与画面不一致。`,
       }));
     }
-    manual.forEach((cue, cueIndex) => {
+    manual.forEach((cue, rawIndex) => {
+      const cueIndex = resolvedCueIndex(manual, rawIndex);
       if (!cue.text.trim()) {
-        issues.push(issue({ scene, index, code: 'subtitle_empty', cueIndex, cueText: '', message: `第 ${cueIndex + 1} 条手写字幕内容为空，渲染时会被丢弃。` }));
+        issues.push(issue({ scene, index, key: `raw${rawIndex}`, code: 'subtitle_empty', cueIndex, cueText: '', message: `第 ${rawIndex + 1} 条手写字幕内容为空，渲染时会被丢弃。` }));
       }
       if (cue.start < 0 || cue.start > window - SCENE_TOLERANCE || cue.end > window + SCENE_TOLERANCE) {
         issues.push(issue({
-          scene, index, code: 'subtitle_out_of_scene', cueIndex, cueText: cue.text,
+          scene, index, key: `raw${rawIndex}`, code: 'subtitle_out_of_scene', cueIndex, cueText: cue.text,
           message: `字幕时间 ${cue.start.toFixed(1)}–${cue.end.toFixed(1)} 秒超出场景时长 ${window.toFixed(1)} 秒，导出时会被截断。`,
         }));
       }

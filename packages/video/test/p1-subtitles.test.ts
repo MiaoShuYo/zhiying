@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SceneSchema, StoryboardSchema, hasManualCues, resolveCaptionCues, subtitleCues as layerCues, timelineFrames } from '../../schema/src/index';
+import { SceneSchema, StoryboardSchema, hasManualCues, resolveCaptionCues, segmentPlan, subtitleCues as layerCues, timelineFrames } from '../../schema/src/index';
 import { checkSubtitles } from '../src/qc';
 import { subtitleCues, validateSubtitleTimeline } from '../src/subtitles';
 
@@ -52,4 +52,25 @@ test('[#295] deleting every manual cue keeps the scene caption-free', () => {
 test('[#267] an empty narration saves through the shared schema', () => {
   assert.equal(SceneSchema.safeParse({ id: 'a', type: 'title', narration: '', visual: {} }).success, true);
   assert.equal(board([{ id: 'a', type: 'title', narration: '', visual: {} }]).scenes[0].narration, '');
+});
+
+test('[#277] raw-list QC findings point at the row the caption timeline shows', () => {
+  const unordered = scene({ subtitleCues: [{ text: '第二句', start: 2, end: 3 }, { text: '越界', start: 40, end: 42 }, { text: '第一句', start: 0, end: 1 }] });
+  const outside = checkSubtitles(board([unordered])).issues.find(issue => issue.code === 'subtitle_out_of_scene' && issue.cueText === '越界');
+  const shown = resolveCaptionCues(unordered);
+  assert.ok(outside);
+  assert.equal(shown[outside!.cueIndex!].text, '越界', '定位到的行就是出问题的那条字幕');
+});
+
+test('[#218] with BGM a segment fingerprint depends on its position and the total length', () => {
+  const a = scene({ id: 'a', duration: 4 });
+  const b = scene({ id: 'b', duration: 5 });
+  const withBgm = { bgmSrc: 'audio/bgm.mp3' };
+  const first = segmentPlan({ storyboard: board([a, b], withBgm), cached: [] });
+  const reordered = segmentPlan({ storyboard: board([b, a], withBgm), cached: [] });
+  const fingerprintOf = (plan: typeof first, id: string) => plan.segments.find(segment => segment.sceneId === id)!.fingerprint;
+  assert.notEqual(fingerprintOf(first, 'a'), fingerprintOf(reordered, 'a'), '换了位置的片段要重新混入音乐');
+  const plain = segmentPlan({ storyboard: board([a, b]), cached: [] });
+  const plainReordered = segmentPlan({ storyboard: board([b, a]), cached: [] });
+  assert.equal(fingerprintOf(plain, 'a'), fingerprintOf(plainReordered, 'a'), '没有 BGM 时换位置仍可复用');
 });

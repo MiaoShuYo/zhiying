@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SubtitleSchema, captionDuration, sceneSeconds, subtitleCues, timelineFor, type Storyboard, type SubtitleCue } from '@m2v/schema';
+import { SubtitleSchema, captionDuration, sceneFrameStarts, sceneSeconds, subtitleCues, timelineFor, type Storyboard, type SubtitleCue } from '@m2v/schema';
 
 const round = (value: number) => Math.round(value * 100) / 100;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -52,6 +52,9 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
     return merged.sort((a, b) => a.start - b.start);
   }, [baseCues, board, overrides]);
   const boardTotal = useMemo(() => (board ? timelineFor(board).totalSeconds : 0), [board]);
+  // Scene starts on the frame-aligned clock the cues use (subtitleCues), so edits convert back to
+  // scene-relative seconds with exactly the offset they were shown at.
+  const sceneStarts = useMemo(() => (board ? sceneFrameStarts(board) : []), [board]);
   const total = duration > 0 ? duration : boardTotal;
   const drift = duration > 0 && Math.abs(duration - boardTotal) > 0.05 ? duration - boardTotal : 0;
   const dirty = Object.keys(overrides).length > 0;
@@ -103,10 +106,13 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
     if (!current || !board) return;
     const list = cuesFor(current.sceneIndex);
     const scene = board.scenes[current.sceneIndex];
-    const limit = scene ? sceneSeconds(scene) : Infinity;
+    // #246: cues are on the video clock, so the scene's interval is too. Bounds starting at zero
+    // pulled a later scene's cue back to its scene length and saving then dropped it.
+    const offset = sceneStarts[current.sceneIndex] ?? 0;
+    const limit = scene ? offset + Math.max(captionDuration(scene), sceneSeconds(scene)) : Infinity;
     editScene(current.sceneIndex, list.map((cue, index) => {
       if (index !== current.cueIndex) return cue;
-      const start = clamp(patch.start ?? cue.start, 0, Math.max(0, limit - 0.05));
+      const start = clamp(patch.start ?? cue.start, offset, Math.max(offset, limit - 0.05));
       const end = clamp(patch.end ?? cue.end, start + 0.05, limit);
       return { ...cue, ...patch, start: round(start), end: round(end) };
     }));
@@ -121,13 +127,13 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
         const sceneIndex = Number(key);
         const scene = board.scenes[sceneIndex];
         if (!scene) continue;
-        const offset = timelineFor(board).scenes[sceneIndex]?.start ?? 0;
+        const offset = sceneStarts[sceneIndex] ?? 0;
         const limit = Math.max(captionDuration(scene), sceneSeconds(scene));
         const relative = list
           .map(cue => ({ text: cue.text.trim(), start: round(clamp(cue.start - offset, 0, limit)), end: round(clamp(cue.end - offset, 0, limit)) }))
           .filter(cue => cue.text && cue.end > cue.start);
-        // Emptying the list restores automatic timing for that scene.
-        if (!await onSaveCues(sceneIndex, relative.length ? relative : undefined)) failed ||= `场景 ${sceneIndex + 1}`;
+        // An emptied list is saved as an explicitly empty manual timeline (#295), not "automatic".
+        if (!await onSaveCues(sceneIndex, relative)) failed ||= `场景 ${sceneIndex + 1}`;
       }
       if (failed) onMessage(`${failed}的字幕没有保存成功，请重试`);
       else { setOverrides({}); onMessage('字幕已保存。SRT / VTT / ASS 与交付包已更新；烧在画面上的字幕需重新导出。'); }
@@ -163,7 +169,8 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
           />
-          {caption && <div className="cut-caption" style={captionStyle}>{caption}</div>}
+          {/* #250: the export honours subtitles.enabled, so the preview overlay does too. */}
+          {caption && subtitle.enabled && <div className="cut-caption" style={captionStyle}>{caption}</div>}
         </div>
         <div className="cut-meta">
           <span>{clock(time)} / {clock(total)}</span>
@@ -178,8 +185,8 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
           </p>
         )}
         <div className="cut-track" role="group" aria-label="字幕轨道">
-          {timelineFor(board).scenes.map(segment => (
-            <span className="cut-scene-mark" key={`mark-${segment.index}`} style={{ left: `${total > 0 ? segment.start / total * 100 : 0}%` }}>{segment.index + 1}</span>
+          {sceneStarts.map((start, index) => (
+            <span className="cut-scene-mark" key={`mark-${index}`} style={{ left: `${total > 0 ? start / total * 100 : 0}%` }}>{index + 1}</span>
           ))}
           {cues.map(cue => {
             const active = current?.sceneIndex === cue.sceneIndex && current?.cueIndex === cue.cueIndex;
@@ -206,7 +213,7 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
               <b>场景 {current.sceneIndex + 1}{currentScene.title ? ` · ${currentScene.title}` : ''}</b>
               <button className="text-button" onClick={() => onJumpScene(current.sceneIndex)}>跳到该场景 →</button>
             </div>
-            <p className="hint">本条在成片里的位置：{clock(current.start)} → {clock(current.end)}（场景内 {round(current.start - (timelineFor(board).scenes[current.sceneIndex]?.start ?? 0))}s 起）</p>
+            <p className="hint">本条在成片里的位置：{clock(current.start)} → {clock(current.end)}（场景内 {round(current.start - (sceneStarts[current.sceneIndex] ?? 0))}s 起）</p>
             <label className="field-label">字幕文本</label>
             <textarea className="input" value={current.text} onChange={event => updateCue({ text: event.target.value })} />
             <div className="cut-times">

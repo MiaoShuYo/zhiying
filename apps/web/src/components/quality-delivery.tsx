@@ -40,7 +40,9 @@ type QcResult = {
   projectId: string;
   status: QcStatus;
   stale?: boolean;
-  reason?: 'never' | 'revision';
+  reason?: 'never' | 'revision' | 'render';
+  /** Present on the cached endpoint: the stored report, unwrapped by `unwrapCachedQc`. */
+  report?: Omit<QcResult, 'report'>;
   checkedAt?: string;
   previousSummary?: QcSummary;
   persisted?: boolean;
@@ -49,6 +51,17 @@ type QcResult = {
   audio?: { available: boolean; measurable: number; silent?: number; issues: QcIssue[] };
   render?: QcRender | null;
 };
+
+/**
+ * #255: `/qc?cached=1` returns the cache metadata with the stored findings nested under `report`.
+ * The panel reads summary/subtitles/audio/render at the top level, so the report is unwrapped
+ * while the cache's own status, staleness and timestamps are kept.
+ */
+function unwrapCachedQc(view: QcResult): QcResult {
+  if (!view.report) return view;
+  const { report, ...meta } = view;
+  return { ...report, ...meta };
+}
 
 type DeliveryMissing = { step: string; message: string };
 
@@ -183,7 +196,7 @@ export function QualityDelivery({
       if (await readExports() === null && !stopped) setError('读取导出记录失败，成片列表可能不是最新的，请点「刷新导出记录」重试。');
     };
     void loadExports();
-    void fetch(`/api/projects/${id}/qc?cached=1`, { cache: 'no-store' }).then(json).then((cached: QcResult) => { if (!stopped) setQc(cached); }).catch(() => undefined);
+    void fetch(`/api/projects/${id}/qc?cached=1`, { cache: 'no-store' }).then(json).then((cached: QcResult) => { if (!stopped) setQc(unwrapCachedQc(cached)); }).catch(() => undefined);
     void fetch('/api/settings/export-presets', { cache: 'no-store' }).then(json).then(result => { if (!stopped) setPresets(result.presets ?? []); }).catch(error => { if (!stopped) setPresetError(String(error)); });
     return () => { stopped = true; };
   }, [id]);
@@ -387,7 +400,9 @@ export function QualityDelivery({
       {qc && <p className="hint">{qcStatusHints[qc.status]}</p>}
       {qc?.stale && <p className="hint" role="status">{qc.reason === 'revision'
         ? `分镜在上次检查（${qc.checkedAt ? new Date(qc.checkedAt).toLocaleString() : '未知时间'}）后修改过${qc.previousSummary ? `，上次结果为错误 ${qc.previousSummary.errors}、提醒 ${qc.previousSummary.warnings}` : ''}，需要重新检查。`
-        : '还没有检查过当前分镜，交付前建议先检查字幕与语音。'}</p>}
+        : qc.reason === 'render'
+          ? `上次检查（${qc.checkedAt ? new Date(qc.checkedAt).toLocaleString() : '未知时间'}）之后又有新的渲染或渲染状态变化，需要重新检查。`
+          : '还没有检查过当前分镜，交付前建议先检查字幕与语音。'}</p>}
       {error && <p role="alert" className="error-text">{error}</p>}
       {message && <p role="status" className="hint">{message}</p>}
       {qc?.summary && qc.subtitles && qc.audio && <div className="qc-groups">
@@ -397,11 +412,12 @@ export function QualityDelivery({
         </div>
         <div className="qc-group">
           <h3>语音质检</h3>
-          {!qc.audio.available ? <p className="hint" role="status">本机未找到 FFmpeg，暂时无法测量音量与时长；字幕检查不受影响。</p> : <>
-            {qc.audio.issues.length ? <ul className="qc-issue-list">{qc.audio.issues.map(issueRow)}</ul> : <p className="hint">没有发现语音问题。</p>}
-            <p className="hint">已用 FFmpeg 测量 {qc.audio.measurable} / {qc.summary.scenes} 个场景的旁白{board.bgmSrc ? '，并测量了背景音乐' : ''}。</p>
-            {(qc.audio.silent ?? 0) > 0 && <p className="hint" role="status">另有 {qc.audio.silent} 个场景没有写台词，按“有意静音”处理：这些场景保持无声，不计入阻断。需要旁白时补上台词再生成语音即可。</p>}
-          </>}
+          {/* #278: without FFmpeg the server still reports findings such as audio_missing (they count in
+              the summary), so the availability warning is shown next to them instead of replacing them. */}
+          {!qc.audio.available && <p className="hint" role="status">本机未找到 FFmpeg，暂时无法测量音量与时长；下面只列出不需要测量就能确定的问题，字幕检查不受影响。</p>}
+          {qc.audio.issues.length ? <ul className="qc-issue-list">{qc.audio.issues.map(issueRow)}</ul> : <p className="hint">{qc.audio.available ? '没有发现语音问题。' : '没有发现不需要测量就能确定的语音问题。'}</p>}
+          {qc.audio.available && <p className="hint">已用 FFmpeg 测量 {qc.audio.measurable} / {qc.summary.scenes} 个场景的旁白{board.bgmSrc ? '，并测量了背景音乐' : ''}。</p>}
+          {(qc.audio.silent ?? 0) > 0 && <p className="hint" role="status">另有 {qc.audio.silent} 个场景没有写台词，按“有意静音”处理：这些场景保持无声，不计入阻断。需要旁白时补上台词再生成语音即可。</p>}
         </div>
         <div className="qc-group">
           <h3>成片渲染</h3>

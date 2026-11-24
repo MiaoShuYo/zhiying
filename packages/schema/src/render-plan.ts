@@ -175,9 +175,13 @@ export function segmentPlan(input: SegmentPlanInput): RenderPlan {
       ? stableStringify(scene)
       : stableStringify({ card: segment.kind === 'intro' ? storyboard.intro ?? null : storyboard.outro ?? null, title: storyboard.title });
     const signature = scene?.audioSrc ? input.audioSignatures?.[scene.audioSrc] ?? null : null;
+    // #218: BGM is mixed on the whole composition, so a segment's music depends on where it sits
+    // and on the total length (fade-out). With BGM, both are part of the audio fingerprint; boards
+    // without BGM keep their exact previous fingerprints.
+    const bgmWindow = storyboard.bgmSrc ? { bgmStartFrame: segment.startFrame, bgmTotalFrames: totalFrames } : {};
     const audio = segment.kind === 'scene'
-      ? stableStringify({ src: scene?.audioSrc ?? null, duration: scene?.audioDuration ?? null, key: scene?.audioKey ?? null, signature })
-      : stableStringify(null);
+      ? stableStringify({ src: scene?.audioSrc ?? null, duration: scene?.audioDuration ?? null, key: scene?.audioKey ?? null, signature, ...bgmWindow })
+      : stableStringify(storyboard.bgmSrc ? bgmWindow : null);
     const parts: SegmentParts = {
       global: globalHash,
       content: fingerprintOf(content),

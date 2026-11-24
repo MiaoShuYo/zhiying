@@ -1140,7 +1140,25 @@ export function reusableStoryboardCheckpointScenes(cachedValue: unknown, key: st
   return cachedScenes.slice(0, reusableChapters);
 }
 
+const SLIDE_NOTES_LABEL = '演讲者备注（优先旁白依据）：';
+const SLIDE_BODY_LABELS = ['页面内容（补充依据）：', '页面内容：'];
+
+/**
+ * #199: splitPptxSlides prefixes slide text with internal labels for the model. A local fallback
+ * must never read those labels aloud, so it narrates the speaker notes when present and otherwise
+ * the slide body, without any label.
+ */
+export function slideFallbackText(text: string): string | null {
+  if (!text.includes(SLIDE_NOTES_LABEL) && !SLIDE_BODY_LABELS.some(label => text.includes(label))) return null;
+  const notes = text.match(/演讲者备注（优先旁白依据）：\s*([\s\S]*?)(?:\n\s*页面内容（补充依据）：|$)/)?.[1]?.trim();
+  if (notes) return notes;
+  const body = text.match(/页面内容(?:（补充依据）)?：\s*([\s\S]*)$/)?.[1]?.trim();
+  return body ?? '';
+}
+
 export function fallbackChapter(chapter: Chapter): Scene {
+  const slideText = slideFallbackText(chapter.text);
+  if (slideText !== null) return fallbackChapter({ ...chapter, text: slideText });
   const firstCode = chapter.codeBlocks?.[0];
   if (firstCode) {
     // The narration comes from the prose body only, never from the source code.
