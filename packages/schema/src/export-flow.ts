@@ -51,6 +51,11 @@ export type ExportFlowJob = {
   error?: string | null;
   updatedAt: string;
   hasValidation: boolean;
+  /**
+   * #251: the blocking failures of the stored verdict (unreadable, no video, …). A report that
+   * exists but failed must not read as "validation passed".
+   */
+  validationFailure?: string | null;
   videoState: ExportVideoState;
 };
 
@@ -118,6 +123,7 @@ function validateStep(job: ExportFlowJob | null): ExportStep {
   if (!job || job.status !== 'completed') return step('validate', 'pending', '导出成片后即可校验。');
   if (job.videoState !== 'current') return step('validate', 'failed', '成片文件不可用，校验无从进行。');
   if (!job.hasValidation) return step('validate', 'pending', '成片还没有校验。');
+  if (job.validationFailure) return step('validate', 'failed', `成片文件校验未通过：${job.validationFailure}`, job.updatedAt);
   return step('validate', 'passed', '成片文件校验通过。');
 }
 

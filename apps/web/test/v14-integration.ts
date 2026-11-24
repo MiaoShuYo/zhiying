@@ -218,11 +218,21 @@ async function main() {
       console.log('SKIP: 本机没有可用的 FFmpeg，跳过真实成片的交付包下载与重新生成检查。');
     }
 
+    // #266: tool availability is checked on its own. Once FFprobe runs, the known-good fixture
+    // must validate; a regression that rejects it fails the suite instead of printing SKIP.
+    let probeTool = media;
     if (media) {
+      try {
+        execFileSync(process.env.FFPROBE_PATH || 'ffprobe', ['-version'], { stdio: 'ignore', timeout: 30_000 });
+      } catch {
+        probeTool = false;
+        console.log('SKIP: 本机没有可用的 FFprobe，跳过真实成片的校验与打包检查。');
+      }
+    }
+    if (probeTool) {
       const verdict = await body(await validateExportRoute(post({}), jobParams(filmProject.id, filmJob.id)));
-      if (!verdict.validation?.ok) {
-        console.log(`SKIP: FFprobe 不可用（${verdict.validation?.issues?.[0]?.message ?? '未知原因'}），跳过打包检查。`);
-      } else {
+      assert.equal(verdict.validation?.ok, true, `已知可用的样片必须校验通过：${JSON.stringify(verdict.validation?.issues ?? verdict)}`);
+      {
         const packed = await buildDeliveryRoute(post({ jobId: filmJob.id }), params(filmProject.id));
         assert.equal(packed.status, 200);
         const packedBody = await body(packed);

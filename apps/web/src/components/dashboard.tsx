@@ -24,8 +24,11 @@ export function Dashboard({ initialProjects }: { initialProjects: ProjectRow[] }
     if (response.ok) setProjects(await response.json() as ProjectRow[]);
   }
   // Typing re-queries after a short pause so the list does not flicker per keystroke.
+  // #294: every change re-queries, including clearing the last filter or restoring the default
+  // sort; only the first mount is skipped, because the server already rendered the full list.
+  const firstQuery = useRef(true);
   useEffect(() => {
-    if (!filtered) return;
+    if (firstQuery.current) { firstQuery.current = false; if (!filtered) return; }
     const controller = new AbortController();
     const timer = window.setTimeout(() => { void loadProjects(controller.signal).catch(() => { /* keep the current list */ }); }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };

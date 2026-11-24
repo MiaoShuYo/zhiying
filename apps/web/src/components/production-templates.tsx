@@ -14,7 +14,8 @@ export type TemplateApplyResult = {
   changedCount: number;
   sceneCount: number;
   staleAudio: number[];
-  renderPreset: 'full' | 'draft';
+  /** #249: `null` when export settings were excluded, so the current quality is kept. */
+  renderPreset: 'full' | 'draft' | null;
   voice: boolean;
 };
 
@@ -144,7 +145,7 @@ export function ProductionTemplates({
         changedCount,
         sceneCount,
         staleAudio,
-        renderPreset: pending.renderPreset,
+        renderPreset: options.export ? pending.renderPreset : null,
         voice: Boolean(result.voice),
       });
       setMessage([

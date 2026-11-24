@@ -1,10 +1,10 @@
-import { exportFlow, type ExportFlow, type ExportFlowDelivery, type ExportFlowJob, type PreflightPreset } from '@m2v/schema';
+import { exportFlow, renderValidationLabels, type ExportFlow, type ExportFlowDelivery, type ExportFlowJob, type PreflightPreset } from '@m2v/schema';
 import { db } from '@/lib/db';
 import { deliveryRecordView, readDeliveryRecord } from '@/lib/delivery-records';
 import { currentQcView } from '@/lib/qc-report';
 import { projectPreflight } from '@/lib/preflight-server';
 import { readPreflightPass } from '@/lib/preflight-state';
-import { exportVideoState } from '@/lib/render-validation';
+import { exportVideoState, parseValidation } from '@/lib/render-validation';
 
 export type ProjectExportFlow = { flow: ExportFlow; revision: number; jobId: string | null; checkedAt: string | null };
 
@@ -21,6 +21,12 @@ export async function projectExportFlow(projectId: string, preset: PreflightPres
   let jobView: ExportFlowJob | null = null;
   let delivery: ExportFlowDelivery | null = null;
   if (job) {
+    // #251: carry the verdict, not just its existence. An unparseable report counts as failed too.
+    const verdict = job.validationJson ? parseValidation(job.validationJson) : null;
+    const blocking = verdict?.issues.filter(issue => issue.blocking) ?? [];
+    const validationFailure = !job.validationJson ? null
+      : !verdict ? '校验结果无法读取，请重新校验'
+        : blocking.length ? blocking.map(issue => `${renderValidationLabels[issue.code]}：${issue.message}`).join('；') : null;
     jobView = {
       id: job.id,
       status: job.status,
@@ -28,6 +34,7 @@ export async function projectExportFlow(projectId: string, preset: PreflightPres
       error: job.error,
       updatedAt: job.updatedAt.toISOString(),
       hasValidation: Boolean(job.validationJson),
+      validationFailure,
       videoState: await exportVideoState(projectId, job, renders),
     };
     const record = await readDeliveryRecord(projectId, job.id).catch(() => null);

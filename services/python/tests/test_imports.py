@@ -152,7 +152,10 @@ class ImportTests(unittest.TestCase):
             doc.close()
             return pdf_path
 
-        with patch("app.main.tempfile.TemporaryDirectory", side_effect=tracked_temporary_directory), patch("app.main._render_pptx_pdf", side_effect=render_pdf):
+        # #325: the converter check runs before the mocked renderer, so it is mocked as available to
+        # keep this regression test independent of PowerPoint/LibreOffice on the test machine.
+        capabilities = {"preservePptx": True, "message": ""}
+        with patch("app.main.tempfile.TemporaryDirectory", side_effect=tracked_temporary_directory), patch("app.main._render_pptx_pdf", side_effect=render_pdf), patch("app.main.presentation_capabilities", return_value=capabilities):
             payload = asyncio.run(extract_pptx(file=uploaded, projectId=project_id, mode="preserve"))
 
         self.assertEqual(payload["pages"], 1)

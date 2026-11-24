@@ -28,7 +28,8 @@ export function videoStreamResponse(path: string, size: number, rangeHeader: str
   const headersWithRanges = { ...headers, 'accept-ranges': 'bytes' };
   const range = parseByteRange(rangeHeader, size);
   if (range === 'unsatisfiable') {
-    return new Response(null, { status: 416, headers: { ...headersWithRanges, 'content-range': `bytes */${size}` } });
+    // #252: no body is sent, so the full file's content-length from videoHeaders() must not survive.
+    return new Response(null, { status: 416, headers: { ...headersWithRanges, 'content-range': `bytes */${size}`, 'content-length': '0' } });
   }
   if (!range) {
     const whole = Readable.toWeb(createReadStream(path)) as ReadableStream;

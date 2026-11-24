@@ -10,6 +10,18 @@ import { brandLogoPlacement } from './brand-overlay';
 import { CodeScene } from './code-scene';
 import { CodeHtmlScene } from './code-html-scene';
 
+/**
+ * #206: HTML-mode math scenes carry the formula as escaped LaTeX inside `p.m2v-math-formula` (the
+ * class the web app's scene-html-builder writes). The sanitizer cannot keep KaTeX markup, so the
+ * paragraph is typeset here, after sanitizing, from the trusted `visual.formula` field with KaTeX's
+ * safe settings (`trust: false`, no raw HTML).
+ */
+function typesetHtmlFormula(scene: { type: string; visual: Record<string, unknown> }, html: string): string {
+  if (scene.type !== 'math' || typeof scene.visual.formula !== 'string' || !scene.visual.formula.trim()) return html;
+  const formula = katex.renderToString(scene.visual.formula, { displayMode: true, throwOnError: false, trust: false, output: 'html' });
+  return html.replace(/(<p class="m2v-math-formula"[^>]*>)[^<]*(<\/p>)/, (_whole, open: string, close: string) => `${open}${formula}${close}`);
+}
+
 export * from './code-scene';
 export * from './code-html-scene';
 
@@ -58,7 +70,7 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
     )
     : 1;
   const centered = style.layout.alignment === 'center';
-  const htmlVisual = sanitizeSceneHtml(String(scene.visual.html ?? '')).replace(/(<div\b[^>]*\bstyle="[^"]*)justify-content\s*:\s*center\b([^"]*")/i, '$1justify-content:flex-start$2');
+  const htmlVisual = typesetHtmlFormula(scene, sanitizeSceneHtml(String(scene.visual.html ?? '')).replace(/(<div\b[^>]*\bstyle="[^"]*)justify-content\s*:\s*center\b([^"]*")/i, '$1justify-content:flex-start$2'));
   const mediaSrc = String(scene.visual.src ?? '');
   const credit = [scene.visual['attribution'], scene.visual['license']].map(value => typeof value === 'string' ? value.trim() : '').filter(Boolean).join(' · ');
   const creditUrl = [scene.visual['licenseUrl'], scene.visual['sourceUrl']].find((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value));
