@@ -134,7 +134,7 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   const [brandKitNotice, setBrandKitNotice] = useState('');
   const [brandWorking, setBrandWorking] = useState(false);
   const [brandPickerOpen, setBrandPickerOpen] = useState(false);
-  const [brandConfirm, setBrandConfirm] = useState<{ kind: 'apply'; kit: BrandKit } | { kind: 'remove' } | null>(null);
+  const [brandConfirm, setBrandConfirm] = useState<{ kind: 'apply'; kit: BrandKit; reapply?: boolean } | { kind: 'remove' } | null>(null);
   // Findings from the estimate gate; the render is queued only after the user acknowledges them.
   const [renderRisks, setRenderRisks] = useState<{ preset: 'full' | 'draft'; findings: EstimateFinding[] } | null>(null);
   // A production template can carry a preferred export quality; it seeds the render tab until a preflight picks one.
@@ -179,7 +179,7 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   latest.current = data;
   useEffect(() => setPronunciationSelection(null), [active]);
   useEffect(() => { if (!previewExpanded) return; const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setPreviewExpanded(false); }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, [previewExpanded]);
-  const storyboard = data.storyboard; const safeIndex = Math.min(active, Math.max(0, (storyboard?.scenes.length ?? 1) - 1)); const isBusy = retryBusy || saving || audioUploading || ['created', 'extracting', 'analyzing', 'storyboarding', 'generating_audio', 'rendering', 'encoding'].includes(data.status) || data.jobs.some(job => ['queued', 'running', 'cancelling'].includes(job.status));
+  const storyboard = data.storyboard; const safeIndex = Math.min(active, Math.max(0, (storyboard?.scenes.length ?? 1) - 1)); const isBusy = retryBusy || saving || audioUploading || brandWorking || ['created', 'extracting', 'analyzing', 'storyboarding', 'generating_audio', 'rendering', 'encoding'].includes(data.status) || data.jobs.some(job => ['queued', 'running', 'cancelling'].includes(job.status));
   const selectedScene = storyboard?.scenes[safeIndex];
   const currentBrandKitId = storyboard?.brandKitId;
   const currentProjectBrand = storyboard?.brand;
@@ -315,7 +315,13 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   useEffect(() => {
     let stopped = false;
     void fetch('/api/settings/brand-kits', { cache: 'no-store' })
-      .then(response => response.json())
+      // #170: a 500 with `{ error }` still resolves; it must surface as a catalog error instead of an
+      // empty library that would mark the project's source kit as deleted.
+      .then(async response => {
+        const result = await response.json().catch(() => ({})) as { brandKits?: unknown; error?: string };
+        if (!response.ok) throw new Error(result.error ?? `读取品牌套件失败（${response.status}）`);
+        return result;
+      })
       .then(result => { if (!stopped) setBrandKits(Array.isArray(result.brandKits) ? result.brandKits as BrandKit[] : []); })
       .catch(() => { if (!stopped) { setBrandKits([]); setBrandCatalogError('读取品牌套件失败，暂时无法切换品牌；请刷新页面后重试。'); } });
     return () => { stopped = true; };
@@ -672,7 +678,14 @@ export function ProjectEditor({ initial }: { initial: Data }) {
     error={brandKitError || brandCatalogError}
     notice={brandKitNotice}
     onOpenPicker={() => { setBrandKitError(''); setBrandKitNotice(''); setBrandPickerOpen(true); }}
-    onReapply={() => { const id = currentBrandKitId; if (id) void changeBrandKit(id); }}
+    // #172: re-applying replaces the snapshot with the library's current colours, fonts and Logo, so
+    // it goes through the same impact confirmation as switching; the API is called only on confirm.
+    onReapply={() => {
+      const kit = currentBrandKitId ? brandKits?.find(item => item.id === currentBrandKitId) : undefined;
+      if (!kit) { setBrandKitError('暂时读不到品牌库里的这个套件，无法重新应用；请刷新页面后重试。'); return; }
+      setBrandKitError('');
+      setBrandConfirm({ kind: 'apply', kit, reapply: true });
+    }}
     onRemove={() => { setBrandKitError(''); setBrandKitNotice(''); setBrandConfirm({ kind: 'remove' }); }}
   />}
   {data.status === 'failed' && <section className="settings-card retry-card"><p className="eyebrow">TASK FAILED</p><h2>项目执行失败</h2><p className="error-text">{failedJob?.error ?? '执行遇到错误，请检查本地服务后重试。'}</p><p className="failure-step"><span>失败步骤</span><code>{failedJob ? stageLabels[failedJob.stage] ?? failedJob.stage : '未知'}</code></p>{failedJob?.kind === 'storyboard' && <p className="hint">从失败步骤继续时会检查章节检查点，只复用与当前资料匹配且完整的章节；无有效检查点时会重新生成。从头执行会清空当前分镜。</p>}<div className="retry-actions">{failedJob?.kind === 'storyboard' && <><button className="button primary" disabled={retryBusy} onClick={() => void retryProject('step')}>{retryBusy ? '重新执行中…' : '从失败步骤重试'}</button><button className="button subtle" disabled={retryBusy} onClick={() => void retryProject('restart')}>从头重新执行</button></>}{failedJob?.kind === 'render' && <button className="button primary" disabled={isBusy} onClick={() => { setTab('render'); void render(); }}>重新导出视频</button>}{failedJob?.kind === 'tts' && <button className="button primary" disabled={retryBusy} onClick={() => void synthesize()}>{retryBusy ? '重新执行中…' : '继续生成未完成语音'}</button>}<Link className="button subtle" href="/">返回项目列表</Link></div></section>}
@@ -703,6 +716,7 @@ export function ProjectEditor({ initial }: { initial: Data }) {
   {brandConfirm && <BrandKitChangeDialog
     kind={brandConfirm.kind}
     kitName={brandConfirm.kind === 'apply' ? brandConfirm.kit.name : currentBrandName ?? undefined}
+    reapply={brandConfirm.kind === 'apply' && brandConfirm.reapply === true}
     working={brandWorking}
     error={brandKitError}
     onConfirm={() => { if (brandConfirm.kind === 'apply') void changeBrandKit(brandConfirm.kit.id); else void removeProjectBrand(); }}

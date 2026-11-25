@@ -282,8 +282,10 @@ export function BrandKitForm({
       {error && <p className="error-box" role="alert">{error}</p>}
       {notice && <p className="settings-success" role="status">{notice}</p>}
       <div className="v11-row brand-kit-form-actions">
-        <button className="button primary" disabled={working || issues.length > 0} onClick={onSave}>{working ? '正在保存…' : editingId ? '保存修改' : '创建品牌套件'}</button>
-        <button className="text-button" disabled={working} onClick={onCancel}>返回列表</button>
+        {/* #171: saving or leaving while a Logo upload is in flight could restore a deleted source or
+            drop the late result into another kit's draft. */}
+        <button className="button primary" disabled={working || uploadingLogo || issues.length > 0} onClick={onSave}>{working ? '正在保存…' : editingId ? '保存修改' : '创建品牌套件'}</button>
+        <button className="text-button" disabled={working || uploadingLogo} onClick={onCancel}>返回列表</button>
       </div>
     </div>
     <div className="brand-kit-preview-column">

@@ -32,7 +32,8 @@ const FALLBACK_BACKGROUND = '#000000';
 
 function parseHex(value: unknown): Rgb | null {
   if (typeof value !== 'string') return null;
-  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/.exec(value.trim());
+  // #149: brand palettes keep their casing (#FFFFFF), so hex digits are matched case-insensitively.
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value.trim());
   if (!match) return null;
   const hex = match[1];
   if (hex.length === 3) {

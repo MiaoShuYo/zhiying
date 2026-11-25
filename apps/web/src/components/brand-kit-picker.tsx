@@ -87,10 +87,12 @@ export function BrandKitPicker({
 
 /** Confirmation before a brand switch/remove: explicit update and no-change lists. */
 export function BrandKitChangeDialog({
-  kind, kitName, working, error, onConfirm, onCancel,
+  kind, kitName, working, error, onConfirm, onCancel, reapply = false,
 }: {
   kind: 'apply' | 'remove';
   kitName?: string;
+  /** #172: re-applying the project's own kit uses the same confirmation with its own wording. */
+  reapply?: boolean;
   working: boolean;
   error: string;
   onConfirm: () => void;
@@ -100,7 +102,7 @@ export function BrandKitChangeDialog({
   return <div className="modal-backdrop">
     <section className="modal manage-modal brand-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="brand-change-title">
       <p className="eyebrow">BRAND KIT</p>
-      <h2 id="brand-change-title">{apply ? `切换品牌套件${kitName ? `：${kitName}` : ''}` : '移除项目品牌套件'}</h2>
+      <h2 id="brand-change-title">{apply ? `${reapply ? '重新应用' : '切换'}品牌套件${kitName ? `：${kitName}` : ''}` : '移除项目品牌套件'}</h2>
       <p className="muted">{apply
         ? '确认后会立即用品牌库里的最新内容刷新项目快照，预览随之更新。'
         : '移除后项目会回到自身 Style 的颜色与字体，项目 Logo 一并移除；之后仍可重新选择品牌。'}</p>
@@ -122,7 +124,7 @@ export function BrandKitChangeDialog({
       {error && <p className="error-box" role="alert">{error}</p>}
       <div className="manage-actions">
         <button className="button subtle" disabled={working} onClick={onCancel}>取消</button>
-        <button className="button primary" disabled={working} onClick={onConfirm}>{working ? '处理中…' : apply ? '确认切换' : '确认移除'}</button>
+        <button className="button primary" disabled={working} onClick={onConfirm}>{working ? '处理中…' : apply ? (reapply ? '确认重新应用' : '确认切换') : '确认移除'}</button>
       </div>
     </section>
   </div>;

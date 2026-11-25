@@ -93,6 +93,9 @@ async function narrationSignatures(storyboard: Storyboard): Promise<Record<strin
   return result;
 }
 
+/** The fields of a stored render plan that a speed sample reads (#232). */
+type SamplePlan = Pick<RenderPlan, 'preset' | 'totalSeconds'> & Partial<Pick<RenderPlan, 'renderedSeconds' | 'segments'>>;
+
 /** Finished renders feed the estimate so the second render of a project is no longer a guess. */
 export async function renderSamples(limit = 12): Promise<RenderSample[]> {
   const jobs = await db.job.findMany({
@@ -104,8 +107,8 @@ export async function renderSamples(limit = 12): Promise<RenderSample[]> {
   const samples: RenderSample[] = [];
   for (const job of jobs) {
     if (!job.renderPlanJson) continue;
-    let plan: (Pick<RenderPlan, 'preset' | 'totalSeconds'> & Partial<Pick<RenderPlan, 'renderedSeconds' | 'segments'>>) | null = null;
-    try { plan = JSON.parse(job.renderPlanJson) as typeof plan; } catch { continue; }
+    let plan: SamplePlan | null = null;
+    try { plan = JSON.parse(job.renderPlanJson) as SamplePlan; } catch { continue; }
     const videoSeconds = typeof plan?.totalSeconds === 'number' ? plan.totalSeconds : 0;
     if (videoSeconds <= 0) continue;
     const started = job.startedAt ?? job.createdAt;

@@ -95,7 +95,7 @@ export function BrandKits() {
   }
 
   function closeForm() {
-    if (working) return;
+    if (working || uploadingLogo) return;
     setDraft(null);
     setEditingId(null);
     setPendingLogoFile(null);
@@ -129,6 +129,8 @@ export function BrandKits() {
     try {
       const kit = await uploadLogo(editingId, file);
       replaceKit(kit);
+      // #174: a file left pending by a failed creation-time upload must not be uploaded again on Save.
+      setPendingLogoFile(null);
       // 只合并 Logo 路径，保留表单里尚未保存的 Logo 位置/尺寸等修改。
       setDraft(current => (current && kit.logo ? { ...current, logo: { ...current.logo, src: kit.logo.src } } : current));
       setFormNotice('Logo 已上传到品牌库；保存后其它字段也会更新。');
@@ -139,8 +141,19 @@ export function BrandKits() {
     }
   }
 
+  /** #173: the form's Logo placement, written after the upload (which only knows the file). */
+  async function saveLogoSettings(brandKitId: string, logo: BrandKitDraft['logo']): Promise<BrandKit> {
+    const result = await json(await fetch('/api/settings/brand-kits', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: brandKitId, action: 'update', patch: { logo: { enabled: logo.enabled, position: logo.position, width: Number(logo.width), opacity: Number(logo.opacity), margin: Number(logo.margin) } } }),
+    }));
+    return result.brandKit as BrandKit;
+  }
+
   async function save() {
-    if (!draft || working) return;
+    if (!draft || working || uploadingLogo) return;
+    const logoSettings = draft.logo;
     // Re-validate on submit: invalid hex must never reach the API.
     const payload = brandDraftPayload(draft);
     if (!payload.ok) {
@@ -170,13 +183,17 @@ export function BrandKits() {
           kit = await uploadLogo(kit.id, pendingLogoFile);
           replaceKit(kit);
           setPendingLogoFile(null);
+          // #173: the upload stores default placement; the settings entered in the form are written next.
+          kit = await saveLogoSettings(kit.id, logoSettings);
+          replaceKit(kit);
           savedNotice = `${savedNotice} Logo 已上传。`;
         } catch (uploadError) {
-          // The kit itself is saved; keep editing it so the user can retry the Logo
-          // without losing the fields that just landed.
+          // The kit itself is saved; keep editing it so the user can retry the Logo without losing
+          // the fields that just landed or the Logo placement entered in the form.
           setEditingId(kit.id);
-          setDraft(draftFromKit(kit));
-          setFormError(`品牌套件已保存，但 Logo 上传失败：${uploadError instanceof Error ? uploadError.message : '未知错误'}。可重新选择 Logo 后再试。`);
+          const saved = draftFromKit(kit);
+          setDraft({ ...saved, logo: { ...logoSettings, ...(kit.logo?.src ? { src: kit.logo.src } : {}) } });
+          setFormError(`品牌套件已保存，但 Logo ${kit.logo?.src ? '位置与尺寸设置保存' : '上传'}失败：${uploadError instanceof Error ? uploadError.message : '未知错误'}。${kit.logo?.src ? '请点保存重试。' : '可重新选择 Logo 后再试。'}`);
           return;
         }
       }
