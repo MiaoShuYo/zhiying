@@ -236,12 +236,73 @@ function scrolledStartLine(keyframes: CodeScrollKeyframe[], frame: number, total
   return clampLine(keyframes[keyframes.length - 1].startLine);
 }
 
-/** Index of the step active at `frame`; before the first step it is 0, after the last it is N-1. */
-function stepIndexAt(frames: Array<{ startFrame: number; endFrame: number }>, frame: number): number {
+/**
+ * Index of the step active at `frame`: the most recently started one (#145 / #165), so a pause between
+ * narration-aligned windows holds the current step instead of jumping to the last one and back.
+ * Before the first step it is 0.
+ */
+export function stepIndexAt(frames: Array<{ startFrame: number; endFrame: number }>, frame: number): number {
   if (!frames.length) return -1;
-  const found = frames.findIndex(step => frame >= step.startFrame && frame < step.endFrame);
-  if (found >= 0) return found;
-  return frame < frames[0].startFrame ? 0 : frames.length - 1;
+  let index = 0;
+  for (let position = 0; position < frames.length; position += 1) {
+    if (frames[position].startFrame <= frame) index = position;
+    else break;
+  }
+  return index;
+}
+
+const TRACE_PANEL_PADDING = 12;
+const TRACE_ROW_FONT = 22;
+const TRACE_TITLE_FONT = 20;
+const TRACE_LINE_HEIGHT = 1.35;
+
+/**
+ * #148: the trace panel's height is derived from its content (titles, wrapped state rows, output,
+ * depth) instead of the source line count, bounded by the caption-safe code area. Entries that do
+ * not fit are left out and counted, so nothing is clipped mid-row; changed entries are kept first.
+ */
+export function fitTracePanel(input: {
+  state: CodeTraceStateEntry[];
+  output?: string;
+  callDepth?: number;
+  widthPx: number;
+  maxHeightPx: number;
+  scale: number;
+}): { state: CodeTraceStateEntry[]; hidden: number; heightPx: number } {
+  const { scale } = input;
+  const row = TRACE_ROW_FONT * scale * TRACE_LINE_HEIGHT;
+  const title = TRACE_TITLE_FONT * scale * TRACE_LINE_HEIGHT;
+  const inner = Math.max(1, input.widthPx - 2 * 14 * scale);
+  const textLines = (text: string) => {
+    const width = [...text].reduce((sum, char) => sum + (/[\u2e80-\uffff]/.test(char) ? 1 : 0.6) * TRACE_ROW_FONT * scale, 0);
+    return Math.max(1, Math.ceil(width / inner));
+  };
+  let height = 2 * TRACE_PANEL_PADDING * scale;
+  const sections: number[] = [];
+  const output = input.output ?? '';
+  if (output.length) sections.push(title + 4 * scale + output.split('\n').reduce((sum, line) => sum + textLines(line) * row, 0));
+  if (input.callDepth !== undefined) sections.push(TRACE_TITLE_FONT * scale * TRACE_LINE_HEIGHT);
+  const fixed = sections.reduce((sum, value) => sum + value, 0) + Math.max(0, sections.length) * 8 * scale;
+  height += fixed;
+  const ordered = [...input.state.map((entry, index) => ({ entry, index }))].sort((a, b) => Number(Boolean(b.entry.changed)) - Number(Boolean(a.entry.changed)) || a.index - b.index);
+  const kept: { entry: CodeTraceStateEntry; index: number }[] = [];
+  if (ordered.length) {
+    let used = title + 4 * scale;
+    for (const item of ordered) {
+      const rowHeight = textLines(`${item.entry.name}  ${item.entry.value}${item.entry.changed ? ' ←' : ''}`) * row + 4 * scale;
+      // Keep one more row's space free for the "+N" notice when something will be left out.
+      if (height + used + rowHeight > input.maxHeightPx && kept.length) break;
+      used += rowHeight;
+      kept.push(item);
+    }
+    if (kept.length < ordered.length) used += row;
+    height += used;
+  }
+  return {
+    state: kept.sort((a, b) => a.index - b.index).map(item => item.entry),
+    hidden: ordered.length - kept.length,
+    heightPx: Math.min(Math.max(1, input.maxHeightPx), Math.ceil(height)),
+  };
 }
 
 /** 0-based diff row indices covered by the given hunk ids, ascending and de-duplicated. */
@@ -326,6 +387,8 @@ export type CodeSceneFrameState = {
   trace: {
     steps: ResolvedCodeTraceStep[];
     state: CodeTraceStateEntry[];
+    /** #148: state entries that did not fit the panel (shown as "+N more"). */
+    hiddenState: number;
     output?: string;
     callDepth?: number;
     panelVisible: boolean;
@@ -356,8 +419,9 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
   const sceneRecord = input.scene as unknown as Record<string, unknown>;
   const fps = Number.isFinite(input.fps) && (input.fps as number) > 0 ? (input.fps as number) : 30;
   const timeline: CodeBeatFrame[] = resolveCodeBeatTimeline(sceneRecord, fps);
-  const currentBeat = timeline.find(beat => frame >= beat.startFrame && frame < beat.endFrame)
-    ?? (timeline.length ? (frame < timeline[0].startFrame ? timeline[0] : timeline[timeline.length - 1]) : undefined);
+  // #165: in a gap between aligned windows the most recently started beat stays active.
+  const currentBeatIndex = stepIndexAt(timeline, frame);
+  const currentBeat = currentBeatIndex >= 0 ? timeline[currentBeatIndex] : undefined;
 
   const mode = resolveCodeSceneMode(visual);
   const buildSteps = mode === 'build' ? resolveCodeBuildSteps(visual) : null;
@@ -460,12 +524,27 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
   // The landscape trace panel shares the rendered code-window height (visible rows × line height).
   // `resolveCodeSceneLayout` only knows the layout-level line count, so the row-count cap is applied
   // here, where the final layout shared by the Standard and HTML renderers is produced.
-  const layout: CodeSceneLayout = mode === 'trace'
-    && baseLayout.tracePanel
-    && baseLayout.tracePanel.placement === 'right'
+  // #148: the panel is at least as tall as the code window (so the columns line up) and grows with
+  // its content up to the caption-safe area; what still does not fit is counted instead of clipped.
+  const panelFit = mode === 'trace' && baseLayout.tracePanel
+    ? fitTracePanel({
+        state: traceState,
+        ...(traceOutput !== undefined ? { output: traceOutput } : {}),
+        ...(traceCallDepth !== undefined ? { callDepth: traceCallDepth } : {}),
+        widthPx: baseLayout.tracePanel.widthPx,
+        maxHeightPx: baseLayout.tracePanel.placement === 'right' ? baseLayout.codeArea.heightPx : baseLayout.tracePanel.heightPx,
+        scale,
+      })
+    : null;
+  const layout: CodeSceneLayout = mode === 'trace' && baseLayout.tracePanel && panelFit
     ? {
         ...baseLayout,
-        tracePanel: { ...baseLayout.tracePanel, heightPx: Math.max(1, visibleLineCount * baseLayout.lineHeightPx) },
+        tracePanel: {
+          ...baseLayout.tracePanel,
+          heightPx: baseLayout.tracePanel.placement === 'right'
+            ? Math.max(visibleLineCount * baseLayout.lineHeightPx, panelFit.heightPx)
+            : baseLayout.tracePanel.heightPx,
+        },
       }
     : baseLayout;
 
@@ -535,7 +614,8 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
     trace: mode === 'trace'
       ? {
           steps: traceSteps ?? [],
-          state: traceState,
+          state: panelFit ? panelFit.state : traceState,
+          hiddenState: panelFit?.hidden ?? 0,
           ...(traceOutput !== undefined ? { output: traceOutput } : {}),
           ...(traceCallDepth !== undefined ? { callDepth: traceCallDepth } : {}),
           panelVisible: tracePanelVisible,
@@ -624,9 +704,12 @@ export function CodeSceneView(props: CodeSceneViewProps): React.ReactElement {
     overflow: 'hidden',
   };
 
+  // #146: next to the trace panel the code window sits in a column container, where flex:1 would
+  // stretch it past the calculated viewport height into the caption band; it must not grow there.
+  const fixedWindow = layout.stacked || (state.mode === 'trace' && Boolean(state.trace?.panelVisible && layout.tracePanel));
   const codeWindow = <div style={{
     position: 'relative',
-    flex: layout.stacked ? '0 0 auto' : 1,
+    flex: fixedWindow ? '0 0 auto' : 1,
     width: layout.stacked ? '100%' : undefined,
     minWidth: 0,
     height: Math.max(1, state.visibleLineCount * layout.lineHeightPx),
@@ -728,6 +811,7 @@ export function CodeSceneView(props: CodeSceneViewProps): React.ReactElement {
         {entry.changed && <span data-changed-marker="true" style={{ color: colors.accent }}>←</span>}
       </div>)}
     </div>}
+    {(state.trace?.hiddenState ?? 0) > 0 && <div data-trace-hidden={String(state.trace?.hiddenState)} style={{ color: colors.muted, fontSize: 20 * scale }}>{`+${state.trace?.hiddenState} more`}</div>}
     {state.trace?.output !== undefined && state.trace.output.length > 0 && <div data-trace-section="output" style={{ display: 'flex', flexDirection: 'column', gap: 4 * scale }}>
       <div className="trace-title" style={{ fontSize: 20 * scale, fontWeight: 700, color: colors.accent, letterSpacing: 0.4 }}>Output</div>
       <div data-trace-output="true" style={{ color: colors.fg, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{state.trace.output}</div>

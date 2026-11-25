@@ -191,7 +191,8 @@ function buildCodeScenePieces(props: CodeHtmlSceneViewProps): string[] {
   // ── code window (source rows or diff rows) ───────────────────────────────────
   const windowPieces: string[] = [];
   windowPieces.push(`<div class="code-window" style="${styleAttr([
-    layout.stacked ? declaration('flex', '0 0 auto') : declaration('flex', 1),
+    // #146: like the Standard renderer, the window never grows next to the trace panel.
+    layout.stacked || tracePanelLayout ? declaration('flex', '0 0 auto') : declaration('flex', 1),
     layout.stacked ? declaration('width', '100%') : declaration('min-width', 0),
     declaration('height', `${state.visibleLineCount * layout.lineHeightPx}px`),
     declaration('background', colors.card),
@@ -344,6 +345,9 @@ function buildCodeScenePieces(props: CodeHtmlSceneViewProps): string[] {
         if (entry.changed) panelPieces.push(`<span class="changed-marker" style="${styleAttr([declaration('color', colors.accent)])}">←</span>`);
         panelPieces.push('</div>');
       });
+      // #148: entries that did not fit the panel are counted rather than clipped.
+      const hidden = state.trace?.hiddenState ?? 0;
+      if (hidden > 0) panelPieces.push(`<div class="trace-hidden" style="${styleAttr([declaration('color', colors.muted), declaration('font-size', `${20 * scale}px`)])}">+${hidden} more</div>`);
       panelPieces.push('</div>');
     }
     if (state.trace?.output !== undefined && state.trace.output.length > 0) {

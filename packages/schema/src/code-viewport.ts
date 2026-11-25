@@ -113,6 +113,26 @@ export function resolveCodeScrollKeyframes(input: {
   );
   const keyframes: CodeScrollKeyframe[] = [];
   let viewport: CodeViewport | null = null;
+  const maxStart = Math.max(1, totalLines - Math.min(visible, totalLines) + 1);
+  /**
+   * #147 / #167: a selection taller than the viewport (a 40-row diff hunk, a beat spanning 60 lines)
+   * starts at its first line and then scrolls through to its last line during the beat, holding the
+   * first and last 20% so both ends can be read. The scroll finishes inside the beat's own window.
+   */
+  const scrollThrough = (beat: CodeBeatFrame, start: CodeViewport) => {
+    const lines = (Array.isArray(beat.lines) ? beat.lines : []).filter(line => Number.isInteger(line) && line >= 1 && line <= totalLines);
+    if (!lines.length) return start;
+    const last = Math.max(...lines);
+    const endStart = clamp(last - visible + 1, 1, maxStart);
+    if (endStart <= start.startLine) return start;
+    const from = Math.max(0, Math.round(Number.isFinite(beat.startFrame) ? beat.startFrame : 0));
+    const to = Math.max(from + 2, Math.round(Number.isFinite(beat.endFrame) ? beat.endFrame : from + 2));
+    const span = to - from;
+    const holdFrame = Math.max(keyframes.length ? keyframes[keyframes.length - 1].frame : 0, from + Math.floor(span * 0.2));
+    keyframes.push({ frame: holdFrame, startLine: start.startLine });
+    keyframes.push({ frame: Math.max(holdFrame + 1, from + Math.floor(span * 0.8)), startLine: endStart });
+    return { startLine: endStart, endLine: endStart + visible - 1 };
+  };
   for (const beat of beats) {
     const next = resolveCodeViewport({
       totalLines,
@@ -122,8 +142,8 @@ export function resolveCodeScrollKeyframes(input: {
     });
     const beatFrame = Math.max(0, Math.round(Number.isFinite(beat.startFrame) ? beat.startFrame : 0));
     if (!viewport) {
-      viewport = next;
       keyframes.push({ frame: beatFrame, startLine: next.startLine });
+      viewport = scrollThrough(beat, next);
       continue;
     }
     if (next.startLine !== viewport.startLine) {
@@ -131,10 +151,8 @@ export function resolveCodeScrollKeyframes(input: {
       const scrollFrame = Math.max(previousFrame, beatFrame - transition);
       keyframes.push({ frame: scrollFrame, startLine: viewport.startLine });
       keyframes.push({ frame: Math.max(scrollFrame, beatFrame), startLine: next.startLine });
-      viewport = next;
-    } else {
-      viewport = next;
     }
+    viewport = scrollThrough(beat, next);
   }
   return keyframes;
 }

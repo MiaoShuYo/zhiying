@@ -157,15 +157,19 @@ test('#24-3 明确 before/after：beforeCode/afterCode 逐字来自 codeBlocks�
 
 test('#24-4 有执行状态变化：pipeline 保留 trace 与 traceSteps（含 state/output）', () => {
   const raw = rawTrace();
-  const built = buildStoryboardSceneOrFallback(codeChapter(), raw);
+  // #142: trace 的变量值与输出必须在资料里有依据，所以这里的章节正文写明了「空」「有值」。
+  const traceChapter = () => codeChapter({ text: '本章说明缓存命中后的直接返回流程：初始化时 cache 为空，命中后 cache 有值并直接返回有值。' });
+  const unbacked = buildStoryboardSceneOrFallback(codeChapter(), raw);
+  assert.equal(visualOf(unbacked.scene).mode, 'focus', '资料里找不到的状态值不保留 trace（#142）');
+  const built = buildStoryboardSceneOrFallback(traceChapter(), raw);
   assert.equal(built.fallbackUsed, false);
   assert.equal(visualOf(built.scene).mode, 'trace', 'pipeline 保留 trace');
   assert.deepEqual(visualOf(built.scene).traceSteps, TRACE_STEPS, 'traceSteps 保留');
   assert.equal(modeOf(built.scene), 'trace');
   assert.equal(SceneSchema.safeParse(built.scene).success, true);
 
-  const standard = buildStoryboardSceneOrFallback(codeChapter(), raw, false, 'standard');
-  const html = buildStoryboardSceneOrFallback(codeChapter(), raw, false, 'html');
+  const standard = buildStoryboardSceneOrFallback(traceChapter(), raw, false, 'standard');
+  const html = buildStoryboardSceneOrFallback(traceChapter(), raw, false, 'html');
   assert.equal(visualOf(standard.scene).mode, 'trace');
   assert.equal(visualOf(html.scene).mode, 'trace');
   assert.deepEqual(visualOf(standard.scene).traceSteps, visualOf(html.scene).traceSteps);
