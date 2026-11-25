@@ -1,12 +1,15 @@
 'use client';
 
 import { FrameCardSchema, type FrameCard, type Storyboard } from '@m2v/schema';
+import { DraftNumberInput } from './draft-number-input';
 
 type Props = { board: Storyboard; disabled?: boolean; onChange: (patch: Partial<Storyboard>) => void };
 
 function withCard(card: FrameCard | undefined, patch: Partial<FrameCard>): FrameCard {
   const merged = { ...(card ?? {}), ...patch };
-  return FrameCardSchema.parse({ ...merged, duration: Number.isFinite(merged.duration) ? merged.duration : 3 });
+  // #296: clamp before parsing so an out-of-range value can never throw during ordinary editing.
+  const duration = Number.isFinite(merged.duration) ? Math.min(15, Math.max(1, merged.duration as number)) : 3;
+  return FrameCardSchema.parse({ ...merged, duration });
 }
 
 const cards = [
@@ -30,7 +33,7 @@ export function FrameSettings({ board, disabled, onChange }: Props) {
           <label className="field-label">{label}副标题</label>
           <input className="input" maxLength={120} disabled={disabled} value={card.subtitle ?? ''} placeholder="可选，一行文字" onChange={e => apply(withCard(card, { subtitle: e.currentTarget.value }))} />
           <label className="field-label">{label}时长（秒）</label>
-          <input className="input" type="number" min={1} max={15} step={0.5} disabled={disabled} value={card.duration} onChange={e => apply(withCard(card, { duration: Number(e.currentTarget.value) }))} />
+          <DraftNumberInput className="input" min={1} max={15} step={0.5} disabled={disabled} value={card.duration} onCommit={duration => { if (duration !== undefined) apply(withCard(card, { duration })); }} />
         </>}
       </div>;
     })}

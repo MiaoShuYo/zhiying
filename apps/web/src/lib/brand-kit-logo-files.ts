@@ -161,13 +161,10 @@ export async function replaceBrandKitLogoFiles(options: {
     await options.commit(target.src);
     committed = true;
 
-    if (previous && previous.brandKitId === options.brandKitId && previous.extension !== options.extension) {
-      const old = brandKitLogoPaths(previous.brandKitId, previous.extension);
-      await Promise.all([
-        rm(old.dataFile, { force: true }).catch(() => undefined),
-        rm(old.publicFile, { force: true }).catch(() => undefined),
-      ]);
-    }
+    // #187: every other format of this kit's Logo is stale, including one left by an earlier clear
+    // (which recorded no previousSrc).
+    void previous;
+    await removeStaleBrandKitLogoFiles(options.brandKitId, target.src);
     return target.src;
   } catch {
     if (!committed && dataTouched) {
@@ -217,6 +214,19 @@ export async function copyBrandKitLogo(sourceId: string, destinationId: string, 
       rm(publicTemp, { force: true }).catch(() => undefined),
     ]);
   }
+}
+
+/**
+ * #187: removes this kit's managed Logo files (both mirrors) except the one at `keepSrc`. Used after a
+ * clear or source change has been committed, so neither the old nor an orphaned format stays public.
+ */
+export async function removeStaleBrandKitLogoFiles(brandKitId: string, keepSrc?: string | null): Promise<void> {
+  const keep = keepSrc ? managedBrandLogoReference(keepSrc) : null;
+  await Promise.all([...supportedExtensions].flatMap(extension => {
+    if (keep && keep.brandKitId === brandKitId && keep.extension === extension) return [];
+    const paths = brandKitLogoPaths(brandKitId, extension);
+    return [rm(paths.dataFile, { force: true }).catch(() => undefined), rm(paths.publicFile, { force: true }).catch(() => undefined)];
+  }));
 }
 
 export async function removeBrandKitLogoFiles(brandKitId: string): Promise<void> {

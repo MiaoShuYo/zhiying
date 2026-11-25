@@ -103,6 +103,7 @@ export function CaptionTimeline({ scene, portrait, disabled, focusCueIndex, onCh
         className={`caption-bar${index === selected ? ' selected' : ''}${problems[index].length ? ' invalid' : ''}`}
         style={{ left: `${duration > 0 ? cue.start / duration * 100 : 0}%`, width: `${duration > 0 ? Math.max(.6, (cue.end - cue.start) / duration * 100) : 0}%` }}
         title={`${index + 1}. ${cue.text}`}
+        translate="no"
         onClick={() => setSelected(index)}
       >
         <span className="caption-handle start" onPointerDown={event => beginDrag(event, index, 'start')} onPointerMove={moveDrag} onPointerUp={() => { drag.current = null; }} />

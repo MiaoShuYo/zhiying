@@ -131,7 +131,9 @@ async function bundleHasAssets(storyboard: BundleStoryboard, projectId: string, 
   // assets/brand-logos/, or a managed brand-kits/<id>/logo.* file). A bundle built before the Logo
   // was added or replaced does not contain it, so it is part of the bundle check too.
   const logo = storyboard.brand?.logo;
-  if (logo?.enabled !== false && typeof logo?.src === 'string' && logo.src) paths.push(logo.src);
+  // The Logo is decorative (#182): a file missing from the public folder is reported by preflight and
+  // dropped by the render route, so only a Logo that exists is required inside the bundle.
+  if (logo?.enabled !== false && typeof logo?.src === 'string' && logo.src && await access(join(publicRoot, logo.src)).then(() => true, () => false)) paths.push(logo.src);
   for (const path of paths) {
     if (!/^(?:audio\/[a-zA-Z0-9_.-]+|projects\/[a-zA-Z0-9_-]+\/assets\/(?:brand-logos\/(?:[a-zA-Z0-9_-]{1,64}\/)?)?[a-zA-Z0-9_.-]+|brand-kits\/[a-zA-Z0-9_-]{1,64}\/logo\.(?:png|jpe?g|webp))$/i.test(path)) throw new Error(`渲染素材路径无效：${path}`);
     try { await access(join(bundleLocation, 'public', path)); } catch { return false; }

@@ -124,14 +124,22 @@ async function main() {
     const deletedCreation = await createProject({ name: '品牌已删除项目', text, styleId: 'minimal-tech', file: null, brandKitId: 'no-such-kit' });
     assert.equal((await readImportSettings(deletedCreation.id)).brandKitId, undefined, '创建时不接受不存在的品牌 ID');
 
-    // ── 5. Logo 文件缺失：保留品牌快照但移除不可用 Logo，不让分镜失败 ─────
+    // ── 5. Logo 文件缺失：保留品牌快照，Logo 改为项目内的缺失引用（#175），不让分镜失败 ─────
     await rm(libraryDataLogo, { force: true });
     await rm(libraryPublicLogo, { force: true });
     const missingLogoProject = await createProject({ name: '缺 Logo 项目', text, styleId: 'minimal-tech', file: null, brandKitId: kit.id });
     const missingLogoBoard = await applyPendingBrandSnapshot(missingLogoProject.id, boardOf('缺 Logo 项目'));
     assert.equal(missingLogoBoard.brandKitId, kit.id, 'Logo 缺失不丢整个品牌选择');
     assert.equal(missingLogoBoard.brand?.name, 'ACME Corporate');
-    assert.equal(missingLogoBoard.brand?.logo, undefined, '无法复制的 Logo 不进入快照');
+    // #175: 无法复制的 Logo 不再被静默删除，而是留下项目内的缺失引用，导出前检查据此提示 Logo 缺失。
+    const missingLogo = missingLogoBoard.brand?.logo;
+    assert.ok(missingLogo, '无法复制的 Logo 保留为缺失引用');
+    assert.equal(missingLogo.src, `projects/${missingLogoProject.id}/assets/brand-logos/missing-${kit.id}.png`, '缺失引用指向项目内、不依赖品牌库');
+    assert.equal(missingLogo.enabled, true, '保留原有 Logo 设置');
+    const { preflight } = await import('@m2v/schema');
+    const missingCheck = preflight(missingLogoBoard, [], { preset: 'full', exists: path => path !== missingLogo.src });
+    const logoIssue = missingCheck.issues.find(issue => issue.assetPath === missingLogo.src);
+    assert.equal(logoIssue?.severity, 'warning', '导出前检查提示 Logo 缺失（warning，不阻断导出）');
 
     // ── 6. 无品牌项目：pending 注入是 no-op ───────────────────────────────
     const plainProject = await createProject({ name: '无品牌项目', text, styleId: 'academic', file: null });

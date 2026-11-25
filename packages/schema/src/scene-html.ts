@@ -181,3 +181,46 @@ export function sanitizeSceneHtml(input: string): string {
   });
   return html;
 }
+
+/** The four layouts of the generated HTML scenes (`structuredSceneHtml`): accent a/b and a dark surface. */
+export const SCENE_HTML_PALETTES = [
+  { a: '#7c3aed', b: '#06b6d4', bg: '#11162d' },
+  { a: '#fb7185', b: '#f59e0b', bg: '#211528' },
+  { a: '#34d399', b: '#38bdf8', bg: '#10232a' },
+  { a: '#60a5fa', b: '#c084fc', bg: '#17172d' },
+] as const;
+
+type SceneHtmlRole = 'accent' | 'secondary' | 'surface' | 'background' | 'text' | 'muted';
+const SCENE_HTML_FIXED_ROLES: Record<string, SceneHtmlRole> = {
+  '#202a45': 'surface', '#222b43': 'surface', '#151d32': 'surface',
+  '#090d1b': 'background', '#0a1020': 'background',
+  '#ffffff': 'text', '#fff': 'text', '#e2e8f0': 'text', '#dbeafe': 'text', '#cbd5e1': 'text',
+  '#64748b': 'muted', '#7c8ba1': 'muted', '#8b98ab': 'muted',
+};
+const SCENE_HTML_ROLES: Record<string, SceneHtmlRole> = {
+  ...SCENE_HTML_FIXED_ROLES,
+  ...Object.fromEntries(SCENE_HTML_PALETTES.flatMap(palette => [[palette.a, 'accent'], [palette.b, 'secondary'], [palette.bg, 'surface']])),
+};
+
+/**
+ * #189: the generated HTML layouts carry their own hard-coded palette, so a Brand Snapshot left
+ * HTML-mode scenes unchanged. With a brand, every known palette colour is mapped to the brand's role
+ * colour (alpha suffixes such as `88` are kept); other colours and unbranded output are untouched.
+ */
+export function brandSceneHtml(html: string, colors: { bg: string; fg: string; muted: string; accent: string; card: string; secondary: string }): string {
+  const valid = (value: string) => /^#[0-9a-f]{6}$/i.test(value);
+  const role: Record<SceneHtmlRole, string> = {
+    accent: colors.accent,
+    // The brand `secondary` is a surface tint in most kits, so the second accent stays the accent.
+    secondary: colors.accent,
+    surface: colors.card,
+    background: colors.bg,
+    text: colors.fg,
+    muted: colors.muted,
+  };
+  if (!Object.values(role).every(valid)) return html;
+  return html.replace(/#(?:[0-9a-f]{6}|[0-9a-f]{3}(?![0-9a-f]))/gi, match => {
+    const mapped = SCENE_HTML_ROLES[match.toLowerCase()];
+    return mapped ? role[mapped] : match;
+  });
+}

@@ -575,6 +575,16 @@ export function codeTraceableToSource(code: string, blocks: CodeBlock[]): boolea
   return blocks.some(block => typeof block?.code === 'string' && [...candidates].some(candidate => candidate.length > 0 && normalize(block.code).includes(candidate)));
 }
 
+/** #142: every trace state value and output must appear verbatim in the chapter text or its code. */
+export function traceBackedBySource(steps: { state?: { value: string }[]; output?: string }[], chapter: Chapter): boolean {
+  const evidence = [chapter.text, ...(chapter.codeBlocks ?? []).map(block => block.code)].join('\n').replace(/\r\n?/g, '\n');
+  const backed = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    return !trimmed || evidence.includes(trimmed);
+  };
+  return steps.every(step => (step.state ?? []).every(entry => backed(entry.value)) && backed(step.output));
+}
+
 /** Source lines a code scene narration must never read out loud. */
 function codeSourceLines(chapter: Chapter): string[] {
   const blockLines = (chapter.codeBlocks ?? []).flatMap(block => block.code.replace(/\r\n?/g, '\n').split('\n'));
@@ -1289,6 +1299,10 @@ export function buildStoryboardSceneOrFallback(chapter: Chapter, rawOutput: unkn
     ? undefined
     : narrationIssue(scene.narration, `${chapter.title}\n${chapter.text}`);
   if (problem) return fallback(problem);
+  // #158 / #144: the code-narration guard runs before every branch that keeps the model's narration
+  // (a visual-only fallback, a diff downgraded to focus), so source code is never read aloud.
+  const leak = (chapter.codeBlocks?.length || hasMarkdownCodeExample(chapter.text)) ? codeNarrationLeak(scene.narration, chapter) : null;
+  if (leak) return fallback(`代码场景旁白${leak}，已使用不含源码的安全回退分镜`);
   const invalidVisual = visualIssue(scene);
   if (invalidVisual) {
     // Keep a valid explanation when only the picture failed validation.
@@ -1310,23 +1324,24 @@ export function buildStoryboardSceneOrFallback(chapter: Chapter, rawOutput: unkn
     // Mode source gate (#24): a diff scene also needs a verifiable pre-change source. When only the
     // final code exists the model must not invent `beforeCode`; degrade to focus but keep the scene.
     const mode = resolveCodeSceneMode(visual);
+    const focusOnly = (reason: string) => {
+      const downgraded: Record<string, unknown> = { code: visual.code, mode: 'focus' };
+      if (visual.language !== undefined) downgraded.language = visual.language;
+      if (visual.filename !== undefined) downgraded.filename = visual.filename;
+      if (visual.beats !== undefined) downgraded.beats = visual.beats;
+      return { scene: { ...scene, visual: downgraded }, fallbackUsed: false, modeFallback: reason };
+    };
     if (mode === 'diff') {
       const beforeCode = visual.beforeCode;
       if (!beforeCode || !codeTraceableToSource(beforeCode, codeBlocks)) {
-        const downgraded: Record<string, unknown> = { code: visual.code, mode: 'focus' };
-        if (visual.language !== undefined) downgraded.language = visual.language;
-        if (visual.filename !== undefined) downgraded.filename = visual.filename;
-        if (visual.beats !== undefined) downgraded.beats = visual.beats;
-        return {
-          scene: { ...scene, visual: downgraded },
-          fallbackUsed: false,
-          modeFallback: 'diff 模式的 beforeCode 未逐字来自输入 codeBlocks（无法验证修改前版本），已降级为 focus',
-        };
+        return focusOnly('diff 模式的 beforeCode 未逐字来自输入 codeBlocks（无法验证修改前版本），已降级为 focus');
       }
     }
-  }
-  if ((chapter.codeBlocks?.length || hasMarkdownCodeExample(chapter.text)) && codeNarrationLeak(scene.narration, chapter)) {
-    return fallback(`代码场景旁白${codeNarrationLeak(scene.narration, chapter)}，已使用不含源码的安全回退分镜`);
+    // #142: trace state values and output must occur in the chapter (its text or code blocks); a
+    // structurally valid but invented execution trace degrades to focus.
+    if (mode === 'trace' && !traceBackedBySource(visual.traceSteps ?? [], chapter)) {
+      return focusOnly('trace 模式的变量值或输出在资料中找不到依据，已降级为 focus');
+    }
   }
   return { scene, fallbackUsed: false };
 }
@@ -1716,13 +1731,16 @@ export async function regenerateScene(projectId: string, sceneId: string) {
   });
   logSceneSourceResolution(old.id, sourceContext);
   const htmlMode = typeof old.visual.html === 'string' || old.type === 'html';
-  const chapter: Chapter = { title: old.title ?? project.name, text: sourceContext.text, page: sourceContext.page, codeBlocks: sourceContext.codeBlocks };
   const existingTable = old.type === 'table' && Array.isArray(old.visual.headers) && Array.isArray(old.visual.rows)
     ? { headers: old.visual.headers as string[], rows: old.visual.rows as string[][] }
     : null;
   const chapterIndex = sourceContext.sourceRef?.chapterIndex;
   const source = chapterIndex === undefined ? undefined : sourceChapters(project.sourceText, project.name, project.sourcePath);
   const originalChapter = chapterIndex === undefined ? undefined : source?.[chapterIndex];
+  // #156: regenerated scenes pass the same source-fidelity and narration gates as initial generation
+  // (inside buildStoryboardSceneOrFallback), checked against the original, unmodified code blocks
+  // rather than the excerpt sent to the model.
+  const chapter: Chapter = { title: old.title ?? project.name, text: sourceContext.text, page: sourceContext.page, codeBlocks: originalChapter?.codeBlocks?.length ? originalChapter.codeBlocks : sourceContext.codeBlocks };
   const table = old.type === 'media' ? null : existingTable ?? markdownTableData(originalChapter?.text ?? chapter.text);
   const keepVisual = Boolean(table || old.type === 'media');
   const chooseType = !keepVisual && (htmlMode || old.type === 'text' || old.type === 'title' || hasProductionCue(old.visual));

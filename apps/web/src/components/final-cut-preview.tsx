@@ -170,7 +170,7 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
             onPause={() => setPlaying(false)}
           />
           {/* #250: the export honours subtitles.enabled, so the preview overlay does too. */}
-          {caption && subtitle.enabled && <div className="cut-caption" style={captionStyle}>{caption}</div>}
+          {caption && subtitle.enabled && <div className="cut-caption" translate="no" style={captionStyle}>{caption}</div>}
         </div>
         <div className="cut-meta">
           <span>{clock(time)} / {clock(total)}</span>
@@ -193,6 +193,7 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
             return (
               <button
                 key={`${cue.sceneIndex}-${cue.cueIndex}`}
+                translate="no"
                 className={`cut-cue${active ? ' selected' : ''}${cue.end > total && total > 0 ? ' past-end' : ''}`}
                 style={{ left: `${total > 0 ? cue.start / total * 100 : 0}%`, width: `${total > 0 ? Math.max(0.4, (cue.end - cue.start) / total * 100) : 0}%` }}
                 title={`${clock(cue.start)} → ${clock(cue.end)}　${cue.text}`}
@@ -210,7 +211,7 @@ export function FinalCutPreview({ id, jobId, board, disabled, onSaveCues, onJump
         {current && currentScene ? (
           <>
             <div className="cut-cue-head">
-              <b>场景 {current.sceneIndex + 1}{currentScene.title ? ` · ${currentScene.title}` : ''}</b>
+              <b>场景 {current.sceneIndex + 1}{currentScene.title ? <span translate="no">{` · ${currentScene.title}`}</span> : ''}</b>
               <button className="text-button" onClick={() => onJumpScene(current.sceneIndex)}>跳到该场景 →</button>
             </div>
             <p className="hint">本条在成片里的位置：{clock(current.start)} → {clock(current.end)}（场景内 {round(current.start - (sceneStarts[current.sceneIndex] ?? 0))}s 起）</p>

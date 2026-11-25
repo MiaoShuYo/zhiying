@@ -544,8 +544,19 @@ const translations: Record<string, Record<Language, string>> = {
   '本地化': { zh: '本地化', en: 'Language', ja: '言語' },
 };
 
+/**
+ * #240: project content (captions, scene titles, media previews) is marked `translate="no"` and is
+ * never rewritten; only interface copy is translated.
+ */
+function excluded(node: Node): boolean {
+  const element = node instanceof Element ? node : node.parentElement;
+  return Boolean(element?.closest('[translate="no"]'));
+}
+
 function translateText(node: Node, language: Language) {
   if (node.nodeType !== Node.TEXT_NODE) return;
+  if (excluded(node)) return;
+  if (composed.has(node as Text)) return;
   const original = node.textContent ?? '';
   const trimmed = original.trim();
   const translated = translateString(trimmed, language);
@@ -628,6 +639,7 @@ export function translateString(value: string, language: Language): string | und
 }
 
 function translateElement(element: HTMLElement, language: Language) {
+  if (excluded(element)) return;
   for (const attribute of ['placeholder', 'title', 'aria-label', 'alt']) {
     const value = element.getAttribute(attribute);
     const translated = value ? translateString(value, language) : undefined;
@@ -635,20 +647,54 @@ function translateElement(element: HTMLElement, language: Language) {
   }
 }
 
+/**
+ * #237: React renders `已选 {n} 项` as several text nodes and later updates only the `{n}` node.
+ * The composed translation goes into the first node and empties the rest, so each node remembers
+ * the source text React gave it (and what was written over it). When React rewrites a node, its new
+ * source is read back and the whole message is translated again, instead of appending the raw
+ * count to the stale translation ("0 selected1").
+ */
+const composed = new WeakMap<Text, { source: string; written: string }>();
+
+function sourceOf(node: Text): string {
+  const entry = composed.get(node);
+  const current = node.textContent ?? '';
+  if (entry && current === entry.written) return entry.source;
+  composed.delete(node);
+  return current;
+}
+
 function translateComposedText(element: HTMLElement, language: Language) {
   if (['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'SCRIPT', 'STYLE'].includes(element.tagName)) return;
-  const textNodes = Array.from(element.childNodes).filter(node => node.nodeType === Node.TEXT_NODE);
+  if (excluded(element)) return;
+  const textNodes = Array.from(element.childNodes).filter((node): node is Text => node.nodeType === Node.TEXT_NODE);
   if (textNodes.length === 0) return;
-  const original = textNodes.map(node => node.textContent ?? '').join('');
+  const sources = textNodes.map(sourceOf);
+  const original = sources.join('');
   const trimmed = original.trim();
-  if (!trimmed) return;
-  const translated = translateString(trimmed, language);
-  if (translated && translated !== trimmed) {
+  const translated = trimmed ? translateString(trimmed, language) : undefined;
+  if (translated && translated !== trimmed && textNodes.length > 1) {
     const leading = original.match(/^\s*/)?.[0] ?? '';
     const trailing = original.match(/\s*$/)?.[0] ?? '';
-    textNodes[0].textContent = `${leading}${translated}${trailing}`;
-    for (const node of textNodes.slice(1)) node.textContent = '';
+    textNodes.forEach((node, index) => {
+      const written = index === 0 ? `${leading}${translated}${trailing}` : '';
+      if (node.textContent !== written) node.textContent = written;
+      composed.set(node, { source: sources[index], written });
+    });
+    return;
   }
+  if (translated && translated !== trimmed) {
+    const next = original.replace(trimmed, translated);
+    if (textNodes[0].textContent !== next) textNodes[0].textContent = next;
+    composed.set(textNodes[0], { source: sources[0], written: next });
+    return;
+  }
+  // No translation for the current text: give back any source an earlier translation replaced.
+  textNodes.forEach((node, index) => {
+    if (!composed.has(node)) return;
+    composed.delete(node);
+    if (node.textContent !== sources[index]) node.textContent = sources[index];
+  });
 }
 
 function applyLanguage(language: Language) {
@@ -734,6 +780,11 @@ export function LanguageSwitcher() {
     setLanguage(initial);
     const observer = new MutationObserver(records => {
       for (const record of records) {
+        if (record.type === 'attributes') {
+          // #242: attributes changed after insertion (a placeholder set when a draft loads) are translated too.
+          if (record.target instanceof HTMLElement) translateElement(record.target, initial);
+          continue;
+        }
         if (record.type === 'characterData') translateText(record.target, initial);
         for (const added of Array.from(record.addedNodes)) {
           if (added.nodeType === Node.TEXT_NODE) translateText(added, initial);
@@ -754,7 +805,7 @@ export function LanguageSwitcher() {
         }
       }
     });
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['placeholder', 'title', 'aria-label', 'alt'] });
     applyLanguage(initial);
     return () => observer.disconnect();
   }, []);

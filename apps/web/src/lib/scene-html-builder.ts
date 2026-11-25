@@ -2,14 +2,10 @@
  * Builds the HTML-mode layout of a scene from its structured data. Kept free of Node APIs so the
  * editor can rebuild a scene's markup in the browser as soon as its source fields change (#203).
  */
-import { codeLines, codeVisualOf, sanitizeSceneHtml, type Scene } from '@m2v/schema';
+import { SCENE_HTML_PALETTES, codeLines, codeVisualOf, sanitizeSceneHtml, type Scene } from '@m2v/schema';
 
-export const SCENE_HTML_PALETTES = [
-  { a: '#7c3aed', b: '#06b6d4', bg: '#11162d' },
-  { a: '#fb7185', b: '#f59e0b', bg: '#211528' },
-  { a: '#34d399', b: '#38bdf8', bg: '#10232a' },
-  { a: '#60a5fa', b: '#c084fc', bg: '#17172d' },
-] as const;
+// #189: the palettes live in @m2v/schema so the renderer can map them onto a Brand Snapshot.
+export { SCENE_HTML_PALETTES };
 
 /**
  * #206: the formula paragraph carries this class so the renderer can typeset `visual.formula` with

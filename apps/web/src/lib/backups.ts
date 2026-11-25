@@ -113,6 +113,11 @@ async function collectSources(projectId: string, storyboard: Storyboard | null, 
     const source = brandKitLogoSourcePath(brandLogo);
     try { await stat(source); } catch { throw new Error('项目引用的 Brand Kit Logo 文件缺失，无法创建备份'); }
     if (!sources.some(item => item.path === brandLogo.src)) sources.push({ source, path: brandLogo.src });
+  } else if (brandLogoSrc?.startsWith(`projects/${projectId}/assets/`)) {
+    // #186: a project-owned Logo travels with the project folder; it must actually be there, or the
+    // snapshot / .m2v would restore a project pointing at an image that does not exist.
+    const archived = `project/assets/${brandLogoSrc.slice(`projects/${projectId}/assets/`.length)}`;
+    if (!sources.some(item => item.path === archived)) throw new Error('项目引用的品牌 Logo 文件缺失，无法创建备份；请在品牌栏重新应用或移除品牌后再试');
   }
   return sources;
 }

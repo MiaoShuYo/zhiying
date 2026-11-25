@@ -12,7 +12,7 @@ import {
   type BrandSnapshot,
 } from '@m2v/schema';
 import { z } from 'zod';
-import { copyBrandKitLogo, removeBrandKitLogoFiles } from './brand-kit-logo-files';
+import { copyBrandKitLogo, managedBrandLogoReference, removeBrandKitLogoFiles, removeStaleBrandKitLogoFiles } from './brand-kit-logo-files';
 import { withKeyedLock } from './keyed-mutex';
 
 export const MAX_BRAND_KITS = 30;
@@ -186,6 +186,13 @@ export async function updateBrandKitHoldingLock(id: string, patch: unknown): Pro
 
     kits[index] = parsed.data;
     await writeStore(kits);
+    // #187: after a committed clear or source change, the kit's previous managed files are removed
+    // (the newly selected source is kept). Project snapshots hold their own copies.
+    const previousSrc = current.logo?.src;
+    const nextSrc = parsed.data.logo?.src;
+    if (previousSrc && previousSrc !== nextSrc && managedBrandLogoReference(previousSrc)?.brandKitId === id) {
+      await removeStaleBrandKitLogoFiles(id, nextSrc).catch(() => undefined);
+    }
     return kits[index];
   });
 }

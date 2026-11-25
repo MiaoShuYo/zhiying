@@ -88,8 +88,8 @@ export type PendingBrand = { brandKitId: string; brand: BrandSnapshot };
  * Resolves the pending brand snapshot, copying its Logo into project-owned storage.
  *
  * Failure policy: a deleted library entry is skipped (the project must still generate);
- * a missing Logo file keeps the snapshot but drops the Logo so one bad asset cannot
- * fail the whole storyboard run — preflight still reports the missing Logo resource.
+ * a missing Logo file keeps the snapshot and a project-local missing reference so one bad
+ * asset cannot fail the whole storyboard run — preflight still reports the missing Logo resource.
  */
 export async function pendingBrandForProject(projectId: string): Promise<PendingBrand | null> {
   const settings = await readImportSettings(projectId);
@@ -109,8 +109,12 @@ export async function pendingBrandForProject(projectId: string): Promise<Pending
     try {
       brand.logo = { ...brand.logo, src: await copyBrandLogoToProject(projectId, brand.logo.src) };
     } catch (error) {
-      console.warn(`[brand-pending] 品牌 Logo 复制失败，保留无 Logo 快照：${error instanceof Error ? error.message : String(error)}`);
-      delete brand.logo;
+      // #175: keep a durable project-local reference to the Logo that could not be copied. Preflight
+      // reports it as a missing file without depending on the mutable library, and the render route
+      // drops it, so the export still succeeds but no longer loses the Logo silently.
+      console.warn(`[brand-pending] 品牌 Logo 复制失败，保留缺失引用供导出前检查提示：${error instanceof Error ? error.message : String(error)}`);
+      const extension = /\.(png|jpe?g|webp)$/i.exec(brand.logo.src)?.[1]?.toLowerCase() ?? 'png';
+      brand.logo = { ...brand.logo, src: `projects/${projectId}/assets/brand-logos/missing-${kit.id}.${extension}` };
     }
   }
   return { brandKitId: kit.id, brand };
