@@ -152,14 +152,15 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
       if (codeVisualOf(scene.visual)) {
         // Reserve the real caption band (live subtitle size/position) so the beat card cannot
         // overlap the subtitles in either aspect ratio. Both rendering modes use the same visual.
-        const captionReservedPx = subtitle.enabled && subtitle.position === 'bottom'
-          ? captionSafeArea({ videoHeight: height, fontSize: subtitle.fontSize, scale, lines: 2 }).total
-          : 0;
+        const captionBand = captionSafeArea({ videoHeight: height, fontSize: subtitle.fontSize, scale, lines: 2 }).total;
+        const captionReservedPx = subtitle.enabled && subtitle.position === 'bottom' ? captionBand : 0;
+        // #166: top subtitles reserve their band at the top (the beat card and header sit below it).
+        const captionTopReservedPx = subtitle.enabled && subtitle.position === 'top' ? captionBand : 0;
         const htmlMode = typeof scene.visual.html === 'string';
         return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, backgroundSize: styleId === 'minimal-tech' ? '42px 42px, 42px 42px, cover' : 'cover', overflow: 'hidden' }}>
           {htmlMode
-            ? <CodeHtmlScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} />
-            : <CodeScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} />}
+            ? <CodeHtmlScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} captionTopReservedPx={captionTopReservedPx} />
+            : <CodeScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} captionTopReservedPx={captionTopReservedPx} />}
           {caption && <div style={captionStyle}>{caption}</div>}
           {scene.audioSrc && <Audio src={staticFile(scene.audioSrc)} />}
         </AbsoluteFill>;

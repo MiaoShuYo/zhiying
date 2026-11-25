@@ -41,7 +41,8 @@ const frameText = (frame: ReturnType<typeof FrameCardSchema.parse>) => frame.ena
   ? `${frame.title?.trim() || '未命名'}${frame.subtitle?.trim() ? ` · ${frame.subtitle.trim()}` : ''} · ${frame.duration} 秒`
   : '关闭';
 const subtitleText = (value: ReturnType<typeof SubtitleSchema.parse>) => value.enabled
-  ? `${subtitlePresetText[value.preset] ?? value.preset} · ${subtitlePositionText[value.position] ?? value.position} · 字号 ${value.fontSize}`
+  // #264: colour, background and its opacity are overwritten too, so they are part of the preview.
+  ? `${subtitlePresetText[value.preset] ?? value.preset} · ${subtitlePositionText[value.position] ?? value.position} · 字号 ${value.fontSize} · 文字 ${value.color.toLowerCase()} · 底板 ${value.background.toLowerCase()} ${Math.round(value.backgroundOpacity * 100)}%`
   : '关闭';
 
 /** What applying a preset would change, for the confirm step before anything is written. */

@@ -84,7 +84,7 @@ export const captionCharLimit = (portrait: boolean, fontSize = 30) => {
  * "甲\n乙\n丙" renders on one line. Collapse it the same way before estimating; non-breaking
  * spaces (U+00A0) are kept because the browser keeps them too.
  */
-function captionLineCount(text: string, lineWidth: number) {
+export function captionLineCount(text: string, lineWidth: number) {
   const rendered = text.replace(/[ \t\n\r\f\v]+/g, ' ').trim();
   return Math.max(1, Math.ceil(captionDisplayWidth(rendered) / lineWidth));
 }

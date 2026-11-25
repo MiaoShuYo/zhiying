@@ -98,6 +98,8 @@ export function resolveCodeSceneLayout(input: {
   hasBeats: boolean;
   hasBeatCard: boolean;
   captionReservedPx?: number;
+  /** #166: caption band reserved at the top of the frame (top-positioned subtitles). */
+  captionTopReservedPx?: number;
   tracePanel?: boolean;
 }): CodeSceneLayout {
   const valid = Number.isFinite(input.width) && input.width > 0 && Number.isFinite(input.height) && input.height > 0;
@@ -111,13 +113,14 @@ export function resolveCodeSceneLayout(input: {
   const gap = geometry.gap * scale;
   const requestedReserved = input.captionReservedPx;
   const captionReservedPx = Number.isFinite(requestedReserved) ? Math.max(0, requestedReserved as number) : 0;
+  const captionTopReservedPx = Number.isFinite(input.captionTopReservedPx) ? Math.max(0, input.captionTopReservedPx as number) : 0;
   const fontSizePx = Math.max(16 * scale, (portrait ? PORTRAIT_CODE_FONT : LANDSCAPE_CODE_FONT) * scale);
   const lineHeightPx = fontSizePx * CODE_LINE_HEIGHT_RATIO;
   const hasBeats = input.hasBeats === true;
   const showCard = hasBeats && input.hasBeatCard === true;
   const availableForCard = Math.max(0, height - captionReservedPx);
   const cardHeightPx = showCard ? Math.min(BEAT_CARD_HEIGHT * scale, availableForCard) : 0;
-  const availableHeight = Math.max(0, height - outer * 2 - headerHeight - gap - captionReservedPx);
+  const availableHeight = Math.max(0, height - outer * 2 - headerHeight - gap - captionReservedPx - captionTopReservedPx);
   const cardWidthPx = showCard && !portrait ? Math.min(0.32 * width, Math.max(0.24 * width, 0.28 * width)) : 0;
   let codeWidthPx = showCard && !portrait ? width - cardWidthPx : width;
   let codeHeightPx = portrait
@@ -130,7 +133,7 @@ export function resolveCodeSceneLayout(input: {
     if (portrait) {
       const panelHeightPx = Math.max(1, Math.min(0.34 * availableHeight, 0.34 * height));
       codeHeightPx = Math.max(1, availableHeight - (showCard ? cardHeightPx + gap : 0) - panelHeightPx - gap);
-      const panelTopPx = outer + headerHeight + gap + codeHeightPx + gap;
+      const panelTopPx = outer + captionTopReservedPx + headerHeight + gap + codeHeightPx + gap;
       tracePanel = { placement: 'below', widthPx: width, heightPx: panelHeightPx, topPx: panelTopPx };
       if (showCard) {
         const rawTop = panelTopPx + panelHeightPx + gap;
@@ -155,17 +158,17 @@ export function resolveCodeSceneLayout(input: {
         placement: 'right',
         widthPx: panelWidthPx,
         heightPx: Math.max(1, panelVisibleLines * lineHeightPx),
-        topPx: outer + headerHeight + gap,
+        topPx: outer + captionTopReservedPx + headerHeight + gap,
       };
       if (showCard) {
-        const rawTop = outer + headerHeight + gap + codeHeightPx + gap;
+        const rawTop = outer + captionTopReservedPx + headerHeight + gap + codeHeightPx + gap;
         const topPx = Math.max(0, Math.min(rawTop, Math.max(0, availableForCard - cardHeightPx)));
         beatCard = { placement: 'below', widthPx: codeWidthPx, heightPx: cardHeightPx, topPx };
       }
     }
   } else {
     if (showCard) {
-      const rawTop = portrait ? outer + headerHeight + gap + codeHeightPx + gap : outer + headerHeight + gap;
+      const rawTop = portrait ? outer + captionTopReservedPx + headerHeight + gap + codeHeightPx + gap : outer + captionTopReservedPx + headerHeight + gap;
       const topPx = Math.max(0, Math.min(rawTop, Math.max(0, availableForCard - cardHeightPx)));
       beatCard = {
         placement: portrait ? 'below' : 'right',
@@ -340,6 +343,7 @@ export type CodeSceneFrameStateInput = {
   /** Render fps; defaults to 30 so the deterministic view needs no Remotion context. */
   fps?: number;
   captionReservedPx?: number;
+  captionTopReservedPx?: number;
 };
 
 /**
@@ -362,6 +366,7 @@ export type CodeSceneFrameState = {
   hasBeats: boolean;
   hasBeatCard: boolean;
   captionReservedPx: number;
+  captionTopReservedPx: number;
   layout: CodeSceneLayout;
   timeline: CodeBeatFrame[];
   keyframes: CodeScrollKeyframe[];
@@ -470,6 +475,9 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
   const captionReservedPx = Number.isFinite(input.captionReservedPx) && (input.captionReservedPx as number) >= 0
     ? (input.captionReservedPx as number)
     : Math.round(height * CAPTION_EDGE_RATIO) + Math.round(2 * 30 * scale * CAPTION_LINE_HEIGHT) + Math.round(20 * scale);
+  const captionTopReservedPx = Number.isFinite(input.captionTopReservedPx) && (input.captionTopReservedPx as number) >= 0
+    ? (input.captionTopReservedPx as number)
+    : 0;
   const layoutHasBeats = mode === 'focus' ? hasBeats : stepCount > 0;
   const baseLayout = resolveCodeSceneLayout({
     width,
@@ -477,6 +485,7 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
     hasBeats: layoutHasBeats,
     hasBeatCard,
     captionReservedPx,
+    captionTopReservedPx,
     tracePanel: mode === 'trace' && tracePanelVisible,
   });
 
@@ -591,6 +600,7 @@ export function resolveCodeSceneFrameState(input: CodeSceneFrameStateInput): Cod
     hasBeats,
     hasBeatCard,
     captionReservedPx,
+    captionTopReservedPx,
     layout,
     timeline,
     keyframes,
@@ -650,6 +660,8 @@ export type CodeSceneViewProps = {
    * a conservative estimate so the beat card still never covers the captions.
    */
   captionReservedPx?: number;
+  /** #166: caption band reserved at the top when subtitles are positioned at the top. */
+  captionTopReservedPx?: number;
   /** Default true; false renders plain-text tokens without touching line focus or the viewport. */
   syntaxHighlight?: boolean;
 };
@@ -854,6 +866,7 @@ export function CodeSceneView(props: CodeSceneViewProps): React.ReactElement {
       flexDirection: 'column',
       gap: state.geometry.gap,
       padding: state.geometry.outer,
+      paddingTop: state.geometry.outer + state.captionTopReservedPx,
     }}
   >
     {state.headerVisible && <div
@@ -869,7 +882,7 @@ export function CodeSceneView(props: CodeSceneViewProps): React.ReactElement {
 }
 
 /** Remotion entry point: reads the current frame/video config and delegates to `CodeSceneView`. */
-export function CodeScene(props: { scene: Scene; styleId: StyleId; brand?: Storyboard['brand']; captionReservedPx?: number }): React.ReactElement {
+export function CodeScene(props: { scene: Scene; styleId: StyleId; brand?: Storyboard['brand']; captionReservedPx?: number; captionTopReservedPx?: number }): React.ReactElement {
   const frame = useCurrentFrame();
   const { width, height, fps } = useVideoConfig();
   return <CodeSceneView {...props} frame={frame} width={width} height={height} fps={fps} />;

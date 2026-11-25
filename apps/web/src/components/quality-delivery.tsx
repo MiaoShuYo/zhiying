@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   SubtitleSchema,
   changedPresetCount,
@@ -143,9 +143,11 @@ const seconds = (value?: number) => (value === undefined || !Number.isFinite(val
 const megabytes = (bytes?: number) => (bytes === undefined || !Number.isFinite(bytes) ? '—' : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
 export function QualityDelivery({
-  id, board, busy, save, onLocate, onRegenerateAudio, onApplyPreset, onOpenRender, currentPreset, onTemplateApplied,
+  id, board, busy, save, onLocate, onRegenerateAudio, onApplyPreset, onOpenRender, currentPreset, onTemplateApplied, revision,
 }: {
   id: string;
+  /** #258: the saved project revision; QC and delivery state are re-read whenever it changes. */
+  revision?: number;
   board: Storyboard;
   busy: boolean;
   save: () => Promise<boolean>;
@@ -200,6 +202,19 @@ export function QualityDelivery({
     void fetch('/api/settings/export-presets', { cache: 'no-store' }).then(json).then(result => { if (!stopped) setPresets(result.presets ?? []); }).catch(error => { if (!stopped) setPresetError(String(error)); });
     return () => { stopped = true; };
   }, [id]);
+
+  // #258: applying a preset, autosaving or regenerating audio changes the saved revision while this
+  // panel stays mounted. The cached QC verdict and the delivery rows are re-read so obsolete
+  // passed/blocking conclusions and ready ZIPs turn pending/stale instead of lingering.
+  const seenRevision = useRef(revision);
+  useEffect(() => {
+    if (revision === undefined || seenRevision.current === revision) return;
+    seenRevision.current = revision;
+    let stopped = false;
+    void fetch(`/api/projects/${id}/qc?cached=1`, { cache: 'no-store' }).then(json).then((cached: QcResult) => { if (!stopped) setQc(unwrapCachedQc(cached)); }).catch(() => undefined);
+    void readExports();
+    return () => { stopped = true; };
+  }, [revision]);
 
   // A render that finishes while this tab stays open stays invisible otherwise: keep
   // polling the export list until every job has settled.

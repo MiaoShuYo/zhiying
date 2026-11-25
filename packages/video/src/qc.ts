@@ -1,4 +1,4 @@
-import { captionCharLimit, captionDisplayWidth, type Storyboard } from '@m2v/schema';
+import { SubtitleSchema, captionCharLimit, captionDisplayWidth, captionLineCount, type Storyboard } from '@m2v/schema';
 import { captionDuration, resolveCaptionCues } from './captions';
 
 export type QcSeverity = 'error' | 'warning';
@@ -114,7 +114,10 @@ function resolvedCueIndex(manual: { text: string; start: number; end: number }[]
 export function checkSubtitles(board: Storyboard): SubtitleQc {
   const enabled = board.subtitles?.enabled !== false;
   const portrait = board.aspectRatio === '9:16';
-  const limit = captionCharLimit(portrait);
+  // #225: the same font-size-aware two-line check as the export preflight, so the QC panel and the
+  // preflight never disagree about a cue (a 28-char portrait cue at 72px is three lines; a valid
+  // two-line cue at the default size is fine).
+  const limit = captionCharLimit(portrait, SubtitleSchema.parse(board.subtitles ?? {}).fontSize);
   const issues: QcIssue[] = [];
   let cueCount = 0;
 
@@ -151,10 +154,10 @@ export function checkSubtitles(board: Storyboard): SubtitleQc {
     cues.forEach((cue, cueIndex) => {
       const width = captionDisplayWidth(cue.text);
       const dwell = cue.end - cue.start;
-      if (width > limit || cue.text.split('\n').length > 2) {
+      if (captionLineCount(cue.text, limit) > 2) {
         issues.push(issue({
           scene, index, code: 'subtitle_too_long', cueIndex, cueText: cue.text,
-          message: `字幕「${cue.text.slice(0, 12)}${cue.text.length > 12 ? '…' : ''}」约 ${width.toFixed(0)} 个字符宽度，超过 ${portrait ? '竖屏' : '横屏'}上限 ${limit}。`,
+          message: `字幕「${cue.text.slice(0, 12)}${cue.text.length > 12 ? '…' : ''}」约 ${width.toFixed(0)} 个字符宽度，按当前字号预计超过两行（${portrait ? '竖屏' : '横屏'}每行约 ${limit} 字）。`,
         }));
       }
       if (!shortScene && (dwell < MIN_DWELL_SECONDS - 0.001 || width / Math.max(dwell, 0.01) > MAX_READING_UNITS_PER_SECOND)) {

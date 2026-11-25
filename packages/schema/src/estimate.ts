@@ -6,6 +6,13 @@ export type RenderSample = {
   videoSeconds: number;
   /** Wall clock duration of the job, in seconds. */
   durationSeconds: number;
+  /**
+   * #232: seconds of video whose frames were actually rendered (cache misses). `0` marks a
+   * cache-only export, which says nothing about frame speed. Omitted for legacy samples.
+   */
+  renderedSeconds?: number;
+  /** Segment count of the job's plan, for its per-segment overhead. */
+  segmentCount?: number;
   outputBytes?: number | null;
 };
 
@@ -126,13 +133,20 @@ export function estimateRender(input: EstimateInput): RenderEstimate {
   const preset: 'full' | 'draft' = plan.preset === 'draft' ? 'draft' : 'full';
   const encoder = input.encoder === 'qsv' ? 'qsv' : 'x264';
   const samples = usableSamples(input.samples, preset);
-  const ratios = samples.map(sample => sample.durationSeconds / sample.videoSeconds);
+  const encodeFactor = ENCODE_FACTOR[encoder] * (preset === 'draft' ? 0.45 : 1);
+  // #232: the frame-speed factor is calibrated from frame-rendering time only. A sample's encode and
+  // overhead (estimated like below) are taken out, and cache-only exports are not frame-speed samples.
+  const ratios = samples.flatMap(sample => {
+    if (sample.renderedSeconds === undefined) return [sample.durationSeconds / sample.videoSeconds];
+    if (!isPositive(sample.renderedSeconds)) return [];
+    const frameSeconds = sample.durationSeconds - sample.videoSeconds * encodeFactor - (20 + (sample.segmentCount ?? 0) * 1.5);
+    return frameSeconds > 0 ? [frameSeconds / sample.renderedSeconds] : [];
+  });
   const byteRates = samples
     .filter(sample => isPositive(sample.outputBytes))
     .map(sample => (sample.outputBytes as number) / sample.videoSeconds);
   const realtimeFactor = median(ratios) ?? FALLBACK_REALTIME_FACTOR[encoder];
   const bytesPerSecond = median(byteRates) ?? FALLBACK_MB_PER_SECOND[preset] * BYTES_PER_MB;
-  const encodeFactor = ENCODE_FACTOR[encoder] * (preset === 'draft' ? 0.45 : 1);
   const renderSeconds = plan.renderedSeconds * realtimeFactor;
   const encodeSeconds = plan.totalSeconds * encodeFactor;
   const overheadSeconds = 20 + plan.segments.length * 1.5;
@@ -143,7 +157,7 @@ export function estimateRender(input: EstimateInput): RenderEstimate {
   const rawFreeDisk = input.freeDiskBytes;
   const freeDiskBytes = typeof rawFreeDisk === 'number' && isPositive(rawFreeDisk) ? rawFreeDisk : null;
   const queuedJobs = typeof input.queuedJobs === 'number' && isPositive(input.queuedJobs) ? input.queuedJobs : 0;
-  const sampleCount = samples.length || byteRates.length;
+  const sampleCount = ratios.length || byteRates.length;
   const confidence: RenderEstimate['confidence'] = sampleCount >= 5 ? 'high' : sampleCount >= 1 ? 'medium' : 'low';
   const findings: EstimateFinding[] = [];
 

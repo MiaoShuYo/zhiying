@@ -47,3 +47,9 @@ test('[#155] numbers that only appear in code blocks are accepted in narration',
   const built = buildStoryboardSceneOrFallback(chapter, { type: 'code', narration: '请求最多重试 3 次，超过之后直接报告失败。', visual: { code, language: 'js' } });
   assert.equal(built.fallbackUsed, false, built.validationError);
 });
+
+test('[#154] ISO dates in the source ground naturally written dates', () => {
+  const chapter = { title: '发布', text: '发布日期是 2026-11-09，届时正式上线。' };
+  const built = buildStoryboardSceneOrFallback(chapter, { type: 'text', narration: '发布日期是2026年11月9日，届时正式上线。', visual: { text: '发布日期是 2026-11-09，届时正式上线。' } });
+  assert.equal(built.fallbackUsed, false, built.validationError);
+});

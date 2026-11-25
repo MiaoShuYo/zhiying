@@ -104,15 +104,20 @@ export async function renderSamples(limit = 12): Promise<RenderSample[]> {
   const samples: RenderSample[] = [];
   for (const job of jobs) {
     if (!job.renderPlanJson) continue;
-    let plan: Pick<RenderPlan, 'preset' | 'totalSeconds'> | null = null;
-    try { plan = JSON.parse(job.renderPlanJson) as Pick<RenderPlan, 'preset' | 'totalSeconds'>; } catch { continue; }
+    let plan: (Pick<RenderPlan, 'preset' | 'totalSeconds'> & Partial<Pick<RenderPlan, 'renderedSeconds' | 'segments'>>) | null = null;
+    try { plan = JSON.parse(job.renderPlanJson) as typeof plan; } catch { continue; }
     const videoSeconds = typeof plan?.totalSeconds === 'number' ? plan.totalSeconds : 0;
     if (videoSeconds <= 0) continue;
     const started = job.startedAt ?? job.createdAt;
     const durationSeconds = (job.updatedAt.getTime() - started.getTime()) / 1000;
     if (durationSeconds <= 0) continue;
     const output = job.outputPath ? await stat(resolve(repoRoot(), 'data', 'projects', job.projectId, 'output', job.outputPath)).catch(() => null) : null;
-    samples.push({ preset: plan?.preset === 'draft' ? 'draft' : 'full', videoSeconds, durationSeconds, outputBytes: output?.size ?? null });
+    samples.push({
+      preset: plan?.preset === 'draft' ? 'draft' : 'full', videoSeconds, durationSeconds, outputBytes: output?.size ?? null,
+      // #232: what was actually rendered, so cache-only exports do not train the frame-speed factor.
+      ...(typeof plan?.renderedSeconds === 'number' ? { renderedSeconds: plan.renderedSeconds } : {}),
+      ...(Array.isArray(plan?.segments) ? { segmentCount: plan.segments.length } : {}),
+    });
   }
   return samples;
 }

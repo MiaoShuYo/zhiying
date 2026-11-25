@@ -502,7 +502,9 @@ export function markdownTableData(text: string): { headers: string[]; rows: stri
 }
 
 function normalizedNumericValues(text: string): Set<string> {
-  const values = text.match(/[-+]?\d+(?:[.,]\d+)*/g) ?? [];
+  // #154: a sign only counts when it does not follow a digit or letter, so the separators of
+  // 2026-11-09 are not read as -11 and -9 (which made 2026年11月9日 look invented).
+  const values = text.match(/(?<![\p{L}\p{N}])[-+]?\d+(?:[.,]\d+)*|\d+(?:[.,]\d+)*/gu) ?? [];
   return new Set(values.map(value => {
     const numeric = Number(value.replace(/,/g, ''));
     return Number.isFinite(numeric) ? String(numeric) : value;

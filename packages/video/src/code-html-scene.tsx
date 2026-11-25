@@ -143,6 +143,7 @@ function buildCodeScenePieces(props: CodeHtmlSceneViewProps): string[] {
     declaration('flex-direction', 'column'),
     declaration('gap', `${gap}px`),
     declaration('padding', `${outer}px`),
+    declaration('padding-top', `${outer + state.captionTopReservedPx}px`),
   ])}">`);
 
   if (state.headerVisible) {
@@ -470,6 +471,7 @@ export function CodeHtmlScene(props: {
   styleId: StyleId;
   brand?: Storyboard['brand'];
   captionReservedPx?: number;
+  captionTopReservedPx?: number;
   syntaxHighlight?: boolean;
 }): React.ReactElement {
   const frame = useCurrentFrame();

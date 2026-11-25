@@ -24,7 +24,9 @@ test('disabled subtitles still count cues but skip the issue checks', () => {
 });
 
 test('overlong captions are reported with the scene and cue position', () => {
-  const result = checkSubtitles(board([scene({ subtitleCues: [{ text: '甲'.repeat(60), start: 0, end: 4 }] })]));
+  // #225: QC shares the preflight's two-line check. At the default 30px a landscape line holds 56
+  // characters, so 60 characters fit two lines; 120 characters need three.
+  const result = checkSubtitles(board([scene({ subtitleCues: [{ text: '甲'.repeat(120), start: 0, end: 4 }] })]));
   const issue = result.issues.find(item => item.code === 'subtitle_too_long');
   assert.ok(issue);
   assert.equal(issue.sceneId, 'a');
@@ -47,7 +49,8 @@ test('cues running past the scene window are caught before clamping hides them',
 });
 
 test('portrait boards use the stricter caption width budget', () => {
-  const cues = [{ text: '甲'.repeat(32), start: 0, end: 4 }];
+  // #225: two lines at 30px are 112 characters in landscape but only 62 in portrait.
+  const cues = [{ text: '甲'.repeat(70), start: 0, end: 4 }];
   const landscape = checkSubtitles(board([scene({ subtitleCues: cues })], { aspectRatio: '16:9' }));
   const portrait = checkSubtitles(board([scene({ subtitleCues: cues })], { aspectRatio: '9:16' }));
   assert.equal(codes(landscape.issues).includes('subtitle_too_long'), false);

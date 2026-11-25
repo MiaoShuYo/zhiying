@@ -26,16 +26,27 @@ export function buildCaptionCues(narration: string, timings: WordTiming[] = [], 
   let length = 0;
   // Two short lines at most. Never split an English word into letters.
   const limit = portrait ? 24 : 38;
+  // #324: closing quotes and brackets right after a phrase end belong to that phrase, so
+  // 他说：“你好。” never leaves a cue holding only ”. (ASCII quotes are ambiguous: they can open the
+  // next sentence, so only typographic closers are attached.)
+  const closer = (value: string | undefined) => Boolean(value && /^[”’」』）)\]】》〉»]$/.test(value));
+  let closing = false;
   for (let i = 0; i < units.length; i++) {
     const unit = units[i];
     const weight = /^[A-Za-z0-9]/.test(unit[0]) ? unit[0].length * 0.55 : 1;
-    if (length && length + weight > limit && !/^[，。！？、；：,.!?;:]$/.test(unit[0])) {
+    if (length && length + weight > limit && !/^[，。！？、；：,.!?;:]$/.test(unit[0]) && !closer(unit[0])) {
       groups.push({ text: narration.slice(from, unit.index).trim(), from, to: unit.index! });
       from = unit.index!;
       length = 0;
     }
     length += weight;
-    if (/[。！？.!?；;]$/.test(unit[0]) || (/[，,：:]$/.test(unit[0]) && length >= limit / 2) || i === units.length - 1) {
+    const ends = /[。！？.!?；;]$/.test(unit[0]) || (/[，,：:]$/.test(unit[0]) && length >= limit / 2) || (closing && closer(unit[0]));
+    if (ends && closer(units[i + 1]?.[0]) && i < units.length - 1) {
+      closing = true;
+      continue;
+    }
+    closing = false;
+    if (ends || i === units.length - 1) {
       const to = unit.index! + unit[0].length;
       groups.push({ text: narration.slice(from, to).trim(), from, to });
       from = units[i + 1]?.index ?? to;
