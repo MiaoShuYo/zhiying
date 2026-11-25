@@ -74,6 +74,12 @@ export function resolveCodeViewport(input: {
   }
   const first = active[0];
   const last = active[active.length - 1];
+  // #167: a span taller than the viewport cannot be centred (that hides both ends); the window starts
+  // at the first selected line so the beginning of the selection is always on screen.
+  if (last - first + 1 > visible) {
+    const start = clamp(first, 1, maxStart);
+    return { startLine: start, endLine: start + visible - 1 };
+  }
   if (previousStart !== undefined && first >= previousStart && last <= previousStart + visible - 1) {
     return { startLine: previousStart, endLine: previousStart + visible - 1 };
   }

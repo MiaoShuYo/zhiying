@@ -232,8 +232,11 @@ function lexLine(
       index += 1;
       continue;
     }
-    pushToken(tokens, char, 'plain');
-    index += 1;
+    // #151: consume a whole code point so a supplementary character (𝑥) is never split into two
+    // surrogate halves rendered in separate spans.
+    const point = String.fromCodePoint(line.codePointAt(index) ?? line.charCodeAt(index));
+    pushToken(tokens, point, 'plain');
+    index += point.length;
   }
   return tokens;
 }

@@ -110,6 +110,9 @@ export function resolveCodeBuildSteps(visual: CodeVisual | null): ResolvedCodeBu
     const focusLines = step.focusLines === undefined ? [...revealLines] : normalizeLines(step.focusLines, totalLines);
     if (!focusLines) return null;
     for (const line of revealLines) covered.add(line);
+    // #143: a step may only focus lines that are already revealed (cumulatively, this step included);
+    // focusing a hidden line would scroll the viewport to a blank window.
+    if (focusLines.some(line => !covered.has(line))) return null;
     const entry: ResolvedCodeBuildStep = { revealLines, focusLines };
     if (step.label) entry.label = step.label;
     if (step.narrationText) entry.narrationText = step.narrationText;

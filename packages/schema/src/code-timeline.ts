@@ -142,18 +142,21 @@ function resolveAnchoredWindows(scene: TimelineScene, narrations: Array<string |
   });
   const frames: FrameWindow[] = [];
   let cursor = 0;
+  // #164: every step keeps the full minimum when it fits (one frame otherwise). Starts and ends are
+  // bounded by the time the remaining steps need, so a late anchor can no longer squeeze the
+  // following steps below the minimum or make their windows overlap.
+  const need = minimumFeasible ? minimumFrames : 1;
   windows.forEach((window, index) => {
     const last = index === count - 1;
+    const remaining = count - index;
     let start = Math.max(0, Math.round(window.start), cursor);
-    start = Math.min(start, Math.max(0, durationFrames - 1));
-    let end = Math.max(Math.round(window.end), start + 1);
+    start = Math.min(start, Math.max(cursor, durationFrames - remaining * need));
+    let end = Math.max(Math.round(window.end), start + need);
     if (last) {
       end = durationFrames;
     } else {
-      // Reserve one frame for every remaining step so the sequence can never be inverted.
-      const reserved = Math.max(start + 1, durationFrames - (count - 1 - index));
-      if (minimumFeasible) end = Math.max(end, start + minimumFrames);
-      end = Math.min(Math.max(end, start + 1), reserved);
+      const reserved = Math.max(start + need, durationFrames - (remaining - 1) * need);
+      end = Math.min(end, reserved);
     }
     cursor = end;
     frames.push({ start, end });

@@ -11,13 +11,26 @@ import { pageBody } from './extraction';
 import type { ExtractionMeta, PageInfo } from './extraction';
 import { readLocalLlmConfig, withLocalLlmSlot } from './local-llm-config';
 
-export type CodeBlock = { language?: string; code: string };
+export type CodeBlock = { language?: string; code: string; truncated?: boolean };
 export type Chapter = { title: string; text: string; page?: number; codeBlocks?: CodeBlock[] };
 
 /** ```ts / ~~~python fenced code; the info string only keeps the plain language token. */
 const MARKDOWN_FENCE = /^\s*(`{3,}|~{3,})\s*([\w#+.-]*)\s*$/;
 
 type FenceState = { marker: string; language?: string; lines: string[] };
+
+/**
+ * #160: one step of fence tracking. A fence opens on any ```/~~~ line, but only closes on a line of
+ * the same character, at least as long, with no info string, so a four-backtick block containing a
+ * three-backtick example stays code. Returns the open marker after `line` (null outside code).
+ */
+function nextFence(open: string | null, line: string): { open: string | null; fence: boolean } {
+  const match = MARKDOWN_FENCE.exec(line);
+  if (!match) return { open, fence: false };
+  if (open === null) return { open: match[1], fence: true };
+  if (!match[2] && match[1][0] === open[0] && match[1].length >= open.length) return { open: null, fence: true };
+  return { open, fence: false };
+}
 
 function codeBlockOf(fence: FenceState): CodeBlock {
   return { ...(fence.language ? { language: fence.language } : {}), code: fence.lines.join('\n') };
@@ -219,9 +232,13 @@ export function limitChapters(chapters: Chapter[], maxScenes = 100): Chapter[] {
 
 /** Keep source code available to the model, bounded so one huge block cannot fill the context. */
 export function modelChapterExcerpt(chapter: Chapter, limit = 400): Chapter {
-  const codeBlocks = chapter.codeBlocks?.slice(0, 3).map(block => block.code.length > 3000
-    ? { ...block, code: `${block.code.slice(0, 3000)}…（代码已截断）` }
-    : block);
+  // #161: the excerpt stays a literal slice of the source (cut at a line end), so a model that copies
+  // it verbatim still passes codeTraceableToSource; the truncation is flagged outside the code.
+  const codeBlocks = chapter.codeBlocks?.slice(0, 3).map(block => {
+    if (block.code.length <= 3000) return block;
+    const lineEnd = block.code.lastIndexOf('\n', 3000);
+    return { ...block, code: block.code.slice(0, lineEnd > 0 ? lineEnd : 3000), truncated: true };
+  });
   const bounded = codeBlocks?.length ? { ...chapter, codeBlocks } : chapter;
   const text = bounded.text.replace(/\s+/g, ' ').trim();
   if ([...text].length <= limit) return bounded;
@@ -408,10 +425,12 @@ export function sourceBulletItems(text: string): (string | { text: string; child
 /** Collapse blank-line runs outside fenced code, keeping source blocks byte-for-byte intact. */
 function normalizeMarkdownWhitespace(lines: string[]): string {
   const kept: string[] = [];
-  let inCodeBlock = false;
+  let open: string | null = null;
   for (const line of lines) {
-    if (MARKDOWN_FENCE.test(line)) { inCodeBlock = !inCodeBlock; kept.push(line); continue; }
-    if (!inCodeBlock && line === '' && kept[kept.length - 1] === '') continue;
+    const step = nextFence(open, line);
+    open = step.open;
+    if (step.fence) { kept.push(line); continue; }
+    if (open === null && line === '' && kept[kept.length - 1] === '') continue;
     kept.push(line);
   }
   return kept.join('\n').trim();
@@ -420,7 +439,7 @@ function normalizeMarkdownWhitespace(lines: string[]): string {
 /** Markdown cleanup that keeps fenced code blocks verbatim instead of flattening them into text. */
 export function normalizeMarkdown(markdown: string): string {
   const output: string[] = [];
-  let inCodeBlock = false;
+  let open: string | null = null;
   const cleanInline = (value: string) => value
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
@@ -434,13 +453,14 @@ export function normalizeMarkdown(markdown: string): string {
     .trim();
 
   for (const rawLine of markdown.replace(/\r\n?/g, '\n').split('\n')) {
-    if (MARKDOWN_FENCE.test(rawLine)) {
+    const step = nextFence(open, rawLine);
+    open = step.open;
+    if (step.fence) {
       // Fence lines and source lines stay untouched; chapter splitting owns the code blocks.
-      inCodeBlock = !inCodeBlock;
       output.push(rawLine);
       continue;
     }
-    if (inCodeBlock) { output.push(rawLine); continue; }
+    if (open !== null) { output.push(rawLine); continue; }
     const line = rawLine.trim();
     if (!line || /^([-*_])\1\1+$/.test(line)) { output.push(''); continue; }
     // Keep table rows intact so storyboard generation can recover their columns.
@@ -509,6 +529,14 @@ function sourceNarration(text: string): string {
   return sentenceParts(text).filter(part => !PRODUCTION_CUE.test(part) && !NARRATION_CUE.test(part)).join(' ').replace(/([。！？]) /g, '$1');
 }
 
+/**
+ * #155: the evidence a narration's numbers may come from: the title, prose and the chapter's code
+ * blocks (supplied to the model separately). Reading code aloud is still caught by codeNarrationLeak.
+ */
+function chapterEvidence(chapter: Chapter): string {
+  return [chapter.title, chapter.text, ...(chapter.codeBlocks ?? []).map(block => block.code)].join('\n');
+}
+
 function narrationIssue(narration: string, source: string): string | undefined {
   if (!narration || PRODUCTION_CUE.test(narration) || NARRATION_CUE.test(narration) || /(?:^|\s)\|[^|]+\||```/.test(narration)) return '旁白缺少可直接口播的正文，或包含制作说明、占位话术或原始标记';
   const allowed = normalizedNumericValues(source);
@@ -571,8 +599,10 @@ function repeatsMarkdownSource(text: string, narration: string): boolean {
 export function codeTraceableToSource(code: string, blocks: CodeBlock[]): boolean {
   if (typeof code !== 'string' || !code.trim() || !Array.isArray(blocks) || !blocks.length) return false;
   const normalize = (value: string) => value.replace(/\r\n?/g, '\n');
-  const candidates = new Set([normalize(code), normalize(code).trim()]);
-  return blocks.some(block => typeof block?.code === 'string' && [...candidates].some(candidate => candidate.length > 0 && normalize(block.code).includes(candidate)));
+  // #159: the rendered `visual.code` is compared untrimmed, so invented indentation or surrounding
+  // whitespace (which can change a Python program) is not accepted.
+  const candidate = normalize(code);
+  return blocks.some(block => typeof block?.code === 'string' && normalize(block.code).includes(candidate));
 }
 
 /** #142: every trace state value and output must appear verbatim in the chapter text or its code. */
@@ -1104,7 +1134,12 @@ export function slideFallbackText(text: string): string | null {
 export function fallbackChapter(chapter: Chapter): Scene {
   const slideText = slideFallbackText(chapter.text);
   if (slideText !== null) return fallbackChapter({ ...chapter, text: slideText });
-  const firstCode = chapter.codeBlocks?.[0];
+  // #163: the fallback must itself be a valid scene. A block that is empty, over 8,000 characters or
+  // has an overlong language tag cannot be rendered as code, so the first usable block is taken and a
+  // chapter without one becomes a prose scene instead of failing the whole storyboard parse.
+  const firstCode = chapter.codeBlocks?.map(block => ({ code: block.code, ...(block.language && block.language.length <= 30 ? { language: block.language } : {}) }))
+    .find(block => block.code.trim() && codeVisualOf(block)?.code === block.code);
+  if (!firstCode && chapter.codeBlocks?.length) return fallbackChapter({ ...chapter, codeBlocks: undefined });
   if (firstCode) {
     // The narration comes from the prose body only, never from the source code.
     const source = sourceNarration(chapter.text);
@@ -1213,7 +1248,7 @@ export function buildStoryboardPrompt(title: string, chapters: Chapter[], genera
       content: sourceNarration(excerpt.text) || excerpt.text,
       ...(table ? { markdownTable: table } : {}),
       ...(layoutHints ? { layoutHints } : {}),
-      ...(codeBlocks?.length ? { codeBlocks: codeBlocks.map(block => ({ ...(block.language ? { language: block.language } : {}), code: block.code })) } : {}),
+      ...(codeBlocks?.length ? { codeBlocks: codeBlocks.map(block => ({ ...(block.language ? { language: block.language } : {}), code: block.code, ...(block.truncated ? { truncated: true } : {}) })) } : {}),
     };
   });
   if (narrationOnly) {
@@ -1297,7 +1332,7 @@ export function buildStoryboardSceneOrFallback(chapter: Chapter, rawOutput: unkn
   if (!scene.narration.trim()) return fallback('模型分镜缺少旁白');
   const problem = scene.type === 'table' && markdownTableData(chapter.text)
     ? undefined
-    : narrationIssue(scene.narration, `${chapter.title}\n${chapter.text}`);
+    : narrationIssue(scene.narration, chapterEvidence(chapter));
   if (problem) return fallback(problem);
   // #158 / #144: the code-narration guard runs before every branch that keeps the model's narration
   // (a visual-only fallback, a diff downgraded to focus), so source code is never read aloud.
@@ -1771,7 +1806,7 @@ export async function regenerateScene(projectId: string, sceneId: string) {
     try {
       const record = JSON.parse(result.message?.content ?? '') as Record<string, unknown>;
       const narration = boundedNarration(typeof record?.narration === 'string' ? record.narration : '');
-      const problem = table ? tableNarrationIssue(narration, table) : narrationIssue(narration, `${chapter.title}\n${chapter.text}`);
+      const problem = table ? tableNarrationIssue(narration, table) : narrationIssue(narration, chapterEvidence(chapter));
       if (keepVisual) {
         if (problem) throw new Error(problem);
         next = { ...old, type: table ? 'table' : 'media', visual: table ?? old.visual, narration };
