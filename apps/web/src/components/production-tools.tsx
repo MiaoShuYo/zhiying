@@ -109,6 +109,13 @@ export const licenseLabels: Record<string, string> = { 'public-domain': '公有�
   }
   async function applyBatchChanges() {
     if (!impact || impact.empty) return;
+    // #248: the confirmation must apply exactly what was previewed. If the selection or the board
+    // changed since, the preview is refreshed instead and the user confirms again.
+    if (JSON.stringify(liveImpact) !== JSON.stringify(impact)) {
+      setImpact(liveImpact.empty ? null : liveImpact);
+      setMessage('选中的场景或分镜已变化，影响范围已按当前选择刷新，请确认后再应用。');
+      return;
+    }
     const next = applyBatch(board, selectedIndexes, batch);
     setUndoBoard(board); setImpact(null); setBatch({});
     onChange(next);
@@ -303,7 +310,11 @@ export function SourceReview({ id, onContinue }: { id: string; onContinue: () =>
   const [saved, setSaved] = useState('');
   const [info, setInfo] = useState<ExtractionInfo | null>(null);
   const [stale, setStale] = useState('');
-  const [error, setError] = useState(''), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true);
+  const [error, setError] = useState(''), [submitting, setBusy] = useState(false), [loading, setLoading] = useState(true);
+  // #287: a page re-run replaces the source text with the server's, so editing and submission stay
+  // locked until it finishes instead of losing edits made meanwhile.
+  const [rerunning, setRerunning] = useState(false);
+  const busy = submitting || rerunning;
   const [active, setActive] = useState(0), [view, setView] = useState<'page' | 'raw'>('page');
   useEffect(() => {
     void (async () => {
@@ -331,7 +342,7 @@ export function SourceReview({ id, onContinue }: { id: string; onContinue: () =>
         {info?.kind && <span>来源 <b>{{ pdf: 'PDF', pptx: 'PPTX', markdown: 'Markdown', url: '网页', text: '文本' }[info.kind] ?? info.kind}</b></span>}
         {info?.ocrPages?.length ? <span>OCR 识别页 <b>{info.ocrPages.join('、')}</b></span> : null}
       </div>
-      <PageReview id={id} kind={info?.kind} pageInfo={pageRows} disabled={busy} dirty={text !== saved} onUpdated={result => {
+      <PageReview id={id} kind={info?.kind} pageInfo={pageRows} disabled={submitting} dirty={text !== saved} onBusyChange={setRerunning} onUpdated={result => {
         setText(result.sourceText); setSaved(result.sourceText);
         setInfo(current => {
           const merged = new Map(normalizePageInfo({ ...current, pages: current?.pages ?? splitSource(result.sourceText).pages.length }).map(page => [page.page, page] as const));

@@ -62,7 +62,9 @@ export function StructureReview({ pages, pageInfo, disabled, initialTab = 'table
         {firstProblem && <button className="button subtle" disabled={disabled} onClick={() => onJump(firstProblem.position - 1)}>定位到第一个问题</button>}
       </div>
       <div className="structure-list">{order.rows.map(row => {
-        const info = pageInfo.find(page => page.page === row.position);
+        // #303: extraction metadata is keyed by the PDF page number. Failed pages are left out of the
+        // source text, so the row's position is not its page; badges follow the parsed number.
+        const info = row.page === null ? undefined : pageInfo.find(page => page.page === row.page);
         return <article className={`structure-row ${row.issues.length ? 'flagged' : ''}`} key={row.position}>
           <b>#{row.position}</b>
           <span className="structure-preview">{row.label.replace(/^##\s*/, '') || '（无标题）'}</span>

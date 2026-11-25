@@ -249,7 +249,10 @@ export type SceneSourceContext = { text: string; strategy: 'source_ref' | 'page'
 
 function sourceChapters(sourceText: string, title: string, sourcePath?: string | null): Chapter[] {
   const pptx = Boolean(sourcePath?.toLowerCase().endsWith('.pptx'));
-  return limitChapters(pptx ? splitPptxSlides(sourceText) : splitIntoChapters(title, sourceText));
+  // #205: same fallback as runProject(): a reviewed PPTX source may no longer carry the
+  // `## 幻灯片 N` markers, and generation then split it like any other text.
+  const slides = pptx ? splitPptxSlides(sourceText) : [];
+  return limitChapters(slides.length ? slides : splitIntoChapters(title, sourceText));
 }
 
 function anchorTokens(value: string): Set<string> {
@@ -381,6 +384,27 @@ function addSceneSourceRef(scene: Scene, chapter: Chapter, chapterIndex: number)
   return { ...scene, ...(chapter.page ? { sourcePage: chapter.page } : {}), sourceRef: { chapterIndex, contentHash: createHash('sha256').update(chapter.text).digest('hex'), ...(chapter.page ? { page: chapter.page } : {}) } };
 }
 
+/**
+ * #221: the `•` list of a normalized chapter as top-level items, with indented `•` lines attached
+ * as children of the preceding top-level item.
+ */
+export function sourceBulletItems(text: string): (string | { text: string; children?: string[] })[] {
+  const items: (string | { text: string; children?: string[] })[] = [];
+  for (const match of text.matchAll(/^( *)•\s+(.+)$/gm)) {
+    const value = match[2].trim();
+    if (!value) continue;
+    const last = items[items.length - 1];
+    if (match[1].length > 0 && last !== undefined) {
+      const parent = typeof last === 'string' ? { text: last, children: [] as string[] } : { ...last, children: [...(last.children ?? [])] };
+      parent.children.push(value);
+      items[items.length - 1] = parent;
+    } else {
+      items.push(value);
+    }
+  }
+  return items;
+}
+
 /** Collapse blank-line runs outside fenced code, keeping source blocks byte-for-byte intact. */
 function normalizeMarkdownWhitespace(lines: string[]): string {
   const kept: string[] = [];
@@ -426,7 +450,13 @@ export function normalizeMarkdown(markdown: string): string {
     const quote = line.match(/^>\s?(.*)$/);
     if (quote) { output.push(`引用：${cleanInline(quote[1])}`); continue; }
     const list = line.match(/^(?:[-+*]|\d+[.)])\s+(.+)$/);
-    if (list) { output.push('', `• ${cleanInline(list[1])}`, ''); continue; }
+    if (list) {
+      // #221: nested items keep their level (two spaces per level) instead of being flattened.
+      const indent = rawLine.replace(/\t/g, '    ').match(/^ */)![0].length;
+      const level = Math.min(2, Math.floor(indent / 2));
+      output.push('', `${'  '.repeat(level)}• ${cleanInline(list[1])}`, '');
+      continue;
+    }
     output.push(cleanInline(line));
   }
   return normalizeMarkdownWhitespace(output);
@@ -434,7 +464,8 @@ export function normalizeMarkdown(markdown: string): string {
 
 export function markdownTableData(text: string): { headers: string[]; rows: string[][] } | null {
   const lines = text.split(/\r?\n/).map(line => line.trim());
-  const cells = (line: string) => line.replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim().replace(/\\\|/g, '|').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/`([^`]*)`/g, '$1').replace(/\*\*(.*?)\*\*/g, '$1'));
+  // #211: split only on unescaped delimiters, then unescape, so `| A\|B | C |` keeps two cells.
+  const cells = (line: string) => line.replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/`([^`]*)`/g, '$1').replace(/\*\*(.*?)\*\*/g, '$1'));
   for (let index = 0; index < lines.length - 2; index += 1) {
     if (!/^\|.*\|$/.test(lines[index]) || !/^\|.*\|$/.test(lines[index + 1])) continue;
     const headers = cells(lines[index]);
@@ -1382,9 +1413,16 @@ async function ollamaChapters(title: string, chapters: Chapter[], styleId: strin
       continue;
     }
     const scene = built.scene;
-    const explicitBullets = chapter.text.match(/^\s*•\s+(.+)$/gm)?.map(item => item.replace(/^\s*•\s+/, '').trim()).filter(Boolean) ?? [];
-    if (generationMode === 'standard' && scene.type === 'bullets' && explicitBullets.length > 0 && explicitBullets.length <= 5 && !explicitBullets.some(item => PRODUCTION_CUE.test(item))) {
-      scene.visual = { ...scene.visual, items: explicitBullets.map(item => boundedNarration(item, 90)) };
+    // #208: the source-backed list normalization runs in HTML mode too (tables and code are already
+    // normalized for both modes upstream), so the rendering choice cannot drop listed bullets.
+    // #221: the source hierarchy is kept, and a model's structured text/children items are not
+    // overwritten by a flat source list.
+    const sourceItems = sourceBulletItems(chapter.text);
+    const flatTexts = sourceItems.flatMap(item => typeof item === 'string' ? [item] : [item.text, ...(item.children ?? [])]);
+    const sourceNested = sourceItems.some(item => typeof item !== 'string');
+    const modelNested = Array.isArray(scene.visual.items) && scene.visual.items.some(item => item && typeof item === 'object' && Array.isArray((item as { children?: unknown }).children));
+    if (scene.type === 'bullets' && sourceItems.length > 0 && sourceItems.length <= 5 && sourceItems.every(item => typeof item === 'string' || (item.children?.length ?? 0) <= 4) && !flatTexts.some(item => PRODUCTION_CUE.test(item)) && (sourceNested || !modelNested)) {
+      scene.visual = { ...scene.visual, items: sourceItems.map(item => typeof item === 'string' ? boundedNarration(item, 90) : { text: boundedNarration(item.text, 90), ...(item.children?.length ? { children: item.children.map(child => boundedNarration(child, 90)) } : {}) }) };
     }
     scenes.push(generationMode === 'html' ? withSceneHtml(scene, chapter) : scene);
   }

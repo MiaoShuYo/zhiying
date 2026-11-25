@@ -51,10 +51,23 @@ export function pageSections(text: string): { preamble: string; sections: { page
  * page markers have no page numbers, so the whole body is shown instead.
  */
 export function pageBody(text: string, page: number): { page: number; body: string; pages: number[]; missing: boolean } {
-  const { preamble, sections } = pageSections(text);
+  const { preamble, sections: pdfSections } = pageSections(text);
+  // #204: PPTX sources are stored as `## 幻灯片 N` sections; the peek locates a slide the same way
+  // it locates a PDF page. (Only the read-only lookup knows slides; page merging stays PDF-only.)
+  const sections = pdfSections.length ? pdfSections : slideSections(text);
   if (!sections.length) return { page, body: preamble, pages: [], missing: false };
   const match = sections.find(section => section.page === page);
   return { page, body: match?.body ?? '', pages: sections.map(section => section.page), missing: !match };
+}
+
+const SLIDE_HEADER = /^##\s*幻灯片\s*(\d+)\s*$/gm;
+
+function slideSections(text: string): { page: number; body: string }[] {
+  const matches = [...text.matchAll(SLIDE_HEADER)];
+  return matches.map((match, index) => ({
+    page: Number(match[1]),
+    body: text.slice(match.index! + match[0].length, index + 1 < matches.length ? matches[index + 1].index : text.length).trim(),
+  }));
 }
 
 export function joinPageSections(preamble: string, sections: { page: number; body: string }[]): string {
