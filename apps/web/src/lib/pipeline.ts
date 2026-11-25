@@ -1122,7 +1122,7 @@ async function extractText(file: File | null, rawText: string, projectId: string
   const service = process.env.PYTHON_SERVICE_URL ?? 'http://127.0.0.1:8000';
   const extractedAt = new Date().toISOString();
   if (!file && /^https?:\/\//i.test(rawText.trim())) {
-    const response = await fetch(`${service}/extract/url`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: rawText.trim() }), signal: AbortSignal.timeout(45_000) });
+    const response = await fetch(`${service}/extract/url`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: rawText.trim() }), signal: AbortSignal.timeout(90_000) }); // #313: longer than the service's own 45 s fetch deadline, so its actionable timeout message arrives
     const result = await response.json().catch(() => ({})) as { text?: string; error?: string; detail?: string; pages?: number };
     if (!response.ok || !result.text) throw new Error(result.error ?? result.detail ?? '网页正文提取失败');
     // A web page is still one page; without it the review panel reports 0 pages.
@@ -1494,7 +1494,9 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
     const pptxSlides = pptxSource ? splitPptxSlides(sourceText) : [];
     const preserveSlides = project.importMode === 'preserve' && slideAssets.length > 0 ? pptxSlides : [];
     const preservingSlides = preserveSlides.length > 0;
-    const chapters = limitChapters(pptxSlides.length ? pptxSlides : splitIntoChapters(project.name, sourceText));
+    // #301 / #195: preserve mode keeps one chapter per slide; merging slides of a 100+ page deck
+    // would pair narration with the wrong slide image.
+    const chapters = preservingSlides ? preserveSlides : limitChapters(pptxSlides.length ? pptxSlides : splitIntoChapters(project.name, sourceText));
     const scenes: Scene[] = [];
     const batches = groupChapters(chapters, 3, 1200);
     let completedChapters = 0;
@@ -1560,8 +1562,12 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
     }
     let finalScenes = scenes;
     if (preserveSlides.length) {
-      finalScenes = slideAssets.map((asset, index) => {
-        const page = preserveSlides[index] ?? { title: `幻灯片 ${index + 1}`, text: `第 ${index + 1} 页演示文稿。` };
+      // #193: scenes are paired with slide images by page number, not by position, so removing a
+      // slide section during source review cannot shift later narration onto the wrong image.
+      const assetByPage = new Map(slideAssets.map(asset => [Number(asset.name.match(/\d+/)?.[0]), asset] as const));
+      finalScenes = chapters.map((page, index) => {
+        const asset = (page.page !== undefined ? assetByPage.get(page.page) : undefined) ?? slideAssets[index];
+        if (!asset) throw new Error(`找不到第 ${page.page ?? index + 1} 页的幻灯片图片`);
         const scene = scenes[index] ?? fallbackChapter(page);
         return { ...scene, type: 'media' as const, title: scene.title ?? page.title, visual: { src: asset.path, fullBleed: true } };
       });

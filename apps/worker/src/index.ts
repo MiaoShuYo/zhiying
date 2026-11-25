@@ -99,7 +99,15 @@ async function syncPublicAssets(projectId: string, assetsJson: string) {
   await mkdir(publicAssetDir, { recursive: true });
   for (const asset of assets) {
     if (!asset.name || asset.name !== asset.name.split(/[\\/]/).at(-1) || asset.name === '.' || asset.name === '..') throw new Error(`素材文件名无效：${asset.name}`);
-    await copyFile(join(assetDir, asset.name), join(publicAssetDir, asset.name));
+    // #323: PPTX import writes its private copies under Python's configurable M2V_DATA_DIR, which
+    // may not be this repository's data/projects. Both import paths also maintain the web-public
+    // copy, so a missing private file falls back to it instead of failing the export with ENOENT.
+    try {
+      await copyFile(join(assetDir, asset.name), join(publicAssetDir, asset.name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      try { await access(join(publicAssetDir, asset.name)); } catch { throw new Error(`素材文件缺失：${asset.name}`); }
+    }
   }
 }
 

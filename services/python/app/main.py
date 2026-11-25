@@ -456,7 +456,8 @@ async def extract_pdf(file: UploadFile = File(...)):
         ocr_pages = [item["page"] for item in page_info if item["method"] == "ocr"]
         if failed_pages and len(failed_pages) >= pages:
             raise ValueError(f"全部 {pages} 页都无法提取，例如第 {failed_pages[0]['page']} 页：{failed_pages[0]['error']}")
-        if len(re.sub(r"\s+", "", text)) < 30:
+        # #314: count only extracted page bodies; the generated "## 第 N 页" headings are not source text.
+        if sum(len(re.sub(r"\s+", "", item["text"] or "")) for item in page_info) < 30:
             raise ValueError("PDF 未提取到足够正文，请检查扫描质量或粘贴识别后的文字")
         return {"text": text, "pages": pages, "ocrPages": ocr_pages, "failedPages": failed_pages, "pageInfo": page_info, "filename": file.filename}
     try:
@@ -539,8 +540,18 @@ class _ArticleText(HTMLParser):
         self.title: list[str] = []
         self.in_title = False
         self.anchor_depth = 0
-        self.root_stack: list[str] = []
-        self.skip_stack: list[str] = []
+        # #305: one frame per open element records whether it opened the article root or a skipped
+        # scope. A closing tag closes its own matching element (and any unclosed children), so an
+        # inner </div> can no longer end the outer article root or a sidebar's filtering.
+        self.frames: list[tuple[str, bool, bool]] = []
+
+    @property
+    def root_stack(self) -> list[str]:
+        return [tag for tag, root, _skip in self.frames if root]
+
+    @property
+    def skip_stack(self) -> list[str]:
+        return [tag for tag, _root, skip in self.frames if skip]
 
     @staticmethod
     def _marker(attrs: dict) -> str:
@@ -563,11 +574,10 @@ class _ArticleText(HTMLParser):
         if not marker: return False
         return bool(set(re.split(r"[^a-z0-9]+", marker)) & self.DENY_WORDS)
 
-    @staticmethod
-    def _close(stack: list[str], tag: str) -> None:
-        for index in range(len(stack) - 1, -1, -1):
-            if stack[index] == tag:
-                del stack[index]
+    def _close(self, tag: str) -> None:
+        for index in range(len(self.frames) - 1, -1, -1):
+            if self.frames[index][0] == tag:
+                del self.frames[index:]
                 return
 
     def _separate(self) -> None:
@@ -577,19 +587,18 @@ class _ArticleText(HTMLParser):
         attributes = dict(attrs)
         if tag == "title": self.in_title = True
         if tag == "a": self.anchor_depth += 1
-        if self._opens_root(tag, attributes): self.root_stack.append(tag)
-        if self._denies(tag, attributes):
-            if tag not in self.VOID_TAGS: self.skip_stack.append(tag)
-            return
+        root = self._opens_root(tag, attributes)
+        skip = self._denies(tag, attributes)
+        if tag not in self.VOID_TAGS: self.frames.append((tag, root, skip))
+        if skip: return
         if tag in self.BLOCK_TAGS and not self.skip_stack: self._separate()
 
     def handle_endtag(self, tag):
         if tag == "title": self.in_title = False
         if tag == "a" and self.anchor_depth: self.anchor_depth -= 1
-        self._close(self.root_stack, tag)
-        self._close(self.skip_stack, tag)
+        self._close(tag)
         # Unbalanced markup must not hide the rest of the document.
-        if tag in {"body", "html"}: self.skip_stack.clear()
+        if tag in {"body", "html"}: self.frames.clear()
         if tag in self.BLOCK_TAGS and not self.skip_stack: self._separate()
 
     def handle_data(self, data):
@@ -803,7 +812,9 @@ def _pptx_slide_text(archive: zipfile.ZipFile, slide_path: str, slide_number: in
             if relation_type.endswith("/image") and related_path in archive.namelist(): images.append((Path(related_path).name, archive.read(related_path)))
             elif relation_type.endswith("/notesSlide"): notes_path = related_path
     for row in rows:
-        cells = [" ".join(node.text or "" for node in cell.findall(".//a:t", ns)).strip() for cell in row.findall("a:tc", ns)]
+        # #315: runs are formatting boundaries, not word boundaries ("1." + "5" is "1.5"), so runs
+        # are joined without a separator inside a paragraph; only paragraphs are separated.
+        cells = [" ".join(text for text in ("".join(node.text or "" for node in paragraph.findall(".//a:t", ns)).strip() for paragraph in cell.findall(".//a:p", ns)) if text) for cell in row.findall("a:tc", ns)]
         if any(cells): paragraphs.append("表格行：" + " | ".join(cells))
     notes = ""
     if notes_path in archive.namelist():
