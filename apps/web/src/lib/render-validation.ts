@@ -131,6 +131,8 @@ export async function validateExport(projectId: string, jobId: string): Promise<
     validation = evaluateRender(probed?.probe ?? null, expected, probed?.bytes ?? size);
     if (!probed) validation.issues = [{ code: 'unreadable', message: UNREADABLE_MESSAGE, blocking: true }];
   }
-  await db.job.update({ where: { id: jobId }, data: { validationJson: JSON.stringify(validation) } });
+  // #279: validation is metadata only. Job.updatedAt is @updatedAt and the default video and delivery
+  // pick the newest completed render by it, so the stored timestamp is kept.
+  await db.job.update({ where: { id: jobId }, data: { validationJson: JSON.stringify(validation), updatedAt: job.updatedAt } });
   return { ok: true, validation };
 }

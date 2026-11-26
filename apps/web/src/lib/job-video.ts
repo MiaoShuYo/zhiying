@@ -37,6 +37,22 @@ export function safeFileBaseName(name: string, fallback = '项目') {
   return name.replace(/[^\p{L}\p{N}\s_-]/gu, '').trim().replace(/[.\s]+$/g, '') || fallback;
 }
 
+/**
+ * #274: ZIP entry names are limited to 255 UTF-8 bytes / 200 characters, and the longest delivery
+ * suffix (`-项目备份-20240131-0930.m2v`) takes about 31 bytes. The file name base is cut, on code
+ * point boundaries, to 150 bytes and 100 characters; the delivery note keeps the full name.
+ */
+export function boundedFileBaseName(name: string, fallback = '项目', maxBytes = 150, maxChars = 100) {
+  const base = safeFileBaseName(name, fallback);
+  let result = '';
+  for (const char of base) {
+    const next = result + char;
+    if ([...next].length > maxChars || Buffer.byteLength(next, 'utf8') > maxBytes) break;
+    result = next;
+  }
+  return result.trim().replace(/[.\s]+$/g, '') || fallback;
+}
+
 /** Local time stamp used by every exported file name: 20240131-0930. */
 export function fileStamp(date: Date | string) {
   const at = date instanceof Date ? date : new Date(date);

@@ -39,6 +39,36 @@ function FitContent({ children, signature, onOverflow }: { children: React.React
   return <div ref={outer} style={{ position: 'absolute', inset: '15% 5% 20%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div ref={inner} style={{ width: '100%', flexShrink: 0, transform: `scale(${factor})`, transformOrigin: 'center', overflowWrap: 'anywhere' }}>{children}</div></div>;
 }
 
+/**
+ * #212: full-frame HTML scenes used to bypass FitContent and were simply clipped to the canvas, so a
+ * dense table (30 short rows) lost its last rows without any overflow warning. The markup is now
+ * measured like FitContent: it is scaled down to fit the frame (not below 0.5) and the editor's
+ * overflow report fires when it needed more than a 10% reduction.
+ */
+function FitFrame({ html, style, signature, onOverflow }: { html: string; style: React.CSSProperties; signature: string; onOverflow?: (overflowing: boolean) => void }) {
+  const outer = useRef<HTMLDivElement>(null), inner = useRef<HTMLDivElement>(null);
+  const [factor, setFactor] = useState(1);
+  useLayoutEffect(() => {
+    const handle = delayRender('计算 HTML 场景排版'); let stopped = false, continued = false;
+    const unblock = () => { if (!continued) { continued = true; continueRender(handle); } };
+    const measure = () => {
+      if (stopped || !outer.current || !inner.current) return;
+      const content = inner.current.firstElementChild as HTMLElement | null;
+      const height = Math.max(inner.current.scrollHeight, content?.scrollHeight ?? 0);
+      const width = Math.max(inner.current.scrollWidth, content?.scrollWidth ?? 0);
+      const raw = Math.min(1, outer.current.clientHeight / Math.max(1, height), outer.current.clientWidth / Math.max(1, width));
+      setFactor(Math.max(0.5, raw));
+      onOverflow?.(raw < 0.9);
+    };
+    void document.fonts.ready.then(() => { measure(); requestAnimationFrame(unblock); });
+    const observer = new ResizeObserver(measure); if (inner.current) observer.observe(inner.current);
+    return () => { stopped = true; observer.disconnect(); unblock(); };
+  }, [signature, onOverflow]);
+  return <div ref={outer} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+    <div ref={inner} style={{ ...style, position: 'absolute', inset: 'auto', top: 0, left: 0, width: `${100 / factor}%`, height: `${100 / factor}%`, transform: `scale(${factor})`, transformOrigin: 'top left' }} dangerouslySetInnerHTML={{ __html: html }} />
+  </div>;
+}
+
 function SceneView({ scene, styleId, brand, subtitles, transition = 'none', durationInFrames, onOverflow }: { scene: Scene; styleId: StyleId; brand: Storyboard['brand']; subtitles: Storyboard["subtitles"]; transition?: Storyboard["transition"]; durationInFrames?: number; onOverflow?: (sceneId: string, overflowing: boolean) => void }) {
   styleId = scene.sceneStyle ?? styleId;
   const reportOverflow = useCallback((overflowing: boolean) => onOverflow?.(scene.id, overflowing), [onOverflow, scene.id]);
@@ -196,7 +226,7 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
   }
   if (typeof scene.visual.html === 'string' && scene.type !== 'media') {
     return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'grid', overflow: 'hidden', background: brand ? colors.bg : '#0b1020', ...(brand ? { color: colors.fg, fontFamily: theme.fontFamilies.body } : {}), whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: brandedHtml }} />
+      <FitFrame html={brandedHtml} signature={`${scene.id}:${width}x${height}:${brandedHtml.length}`} onOverflow={onOverflow ? reportOverflow : undefined} style={{ display: 'grid', overflow: 'visible', background: brand ? colors.bg : '#0b1020', ...(brand ? { color: colors.fg, fontFamily: theme.fontFamilies.body } : {}), whiteSpace: 'pre-wrap' }} />
       {caption && <div style={captionStyle}>{caption}</div>}
       {scene.audioSrc && <Audio src={staticFile(scene.audioSrc)} />}
     </AbsoluteFill>;

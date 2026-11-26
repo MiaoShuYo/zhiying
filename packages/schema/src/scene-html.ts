@@ -141,7 +141,11 @@ function sanitizeDeclaration(property: string, value: string): string | null {
 }
 
 /** Build the safe `style="…"` value for one tag, preserving declaration order. */
-function sanitizeStyleAttribute(style: string): string | null {
+function sanitizeStyleAttribute(rawStyle: string): string | null {
+  // #150: stored HTML is sanitized again on render. The first pass escaped font-family quotes as
+  // &quot;, whose `;` would split the declaration; decode quote entities before parsing (every
+  // value is still validated and font-family re-escapes its quotes on output).
+  const style = rawStyle.replace(/&quot;|&#34;/g, '"').replace(/&#39;|&apos;/g, "'");
   const declarations = style.split(';').flatMap(rule => {
     const colon = rule.indexOf(':');
     if (colon < 1) return [];

@@ -130,7 +130,8 @@ export async function freeDiskBytes(): Promise<number | null> {
   try {
     const info = await statfs(dataRoot());
     const available = Number(info.bavail) * Number(info.bsize);
-    return Number.isFinite(available) && available > 0 ? available : null;
+    // #233: 0 means the disk is full, which the estimate has to see.
+    return Number.isFinite(available) && available >= 0 ? available : null;
   } catch { return null; }
 }
 

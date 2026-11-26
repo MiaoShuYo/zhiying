@@ -53,3 +53,9 @@ test('[#154] ISO dates in the source ground naturally written dates', () => {
   const built = buildStoryboardSceneOrFallback(chapter, { type: 'text', narration: '发布日期是2026年11月9日，届时正式上线。', visual: { text: '发布日期是 2026-11-09，届时正式上线。' } });
   assert.equal(built.fallbackUsed, false, built.validationError);
 });
+
+test('[#153] factual prose ending in 等信息 stays in the narration source', () => {
+  const chapter = { title: '日志', text: '日志记录请求方法、路径和状态码等信息。排查问题时先看状态码。' };
+  const scene = fallbackChapter(chapter);
+  assert.match(scene.narration, /状态码等信息/);
+});

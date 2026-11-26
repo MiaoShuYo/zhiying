@@ -528,8 +528,10 @@ async function main() {
     assert.deepEqual(changes.map(change => change.label), ['画面比例', '字幕样式', '片头', '片尾', '转场', '渲染质量']);
     assert.deepEqual(changes.filter(change => change.changed).map(change => change.key), ['aspectRatio', 'subtitles', 'intro', 'transition']);
     assert.equal(changedPresetCount(changes), 4);
-    assert.deepEqual(changes.slice(0, 5).map(change => change.next), ['竖屏 9:16', '高亮 · 底部 · 字号 30', '片头 · 3 秒', '关闭', '淡入淡出']);
-    assert.deepEqual(changes.map(change => change.current), ['横屏 16:9', '描边 · 底部 · 字号 30', '关闭', '关闭', '无', '正式']);
+    // #264: 字幕样式的前后值还要带上文字颜色、底板颜色与透明度，只改颜色时也能看出差别。
+    assert.deepEqual(changes.slice(0, 5).map(change => change.next), ['竖屏 9:16', '高亮 · 底部 · 字号 30 · 文字 #ffffff · 底板 #000000 72%', '片头 · 3 秒', '关闭', '淡入淡出']);
+    assert.deepEqual(changes.map(change => change.current).map(value => value.replace(/ · 文字 #[0-9a-f]{6} · 底板 #[0-9a-f]{6} \d+%$/, '')), ['横屏 16:9', '描边 · 底部 · 字号 30', '关闭', '关闭', '无', '正式']);
+    assert.match(changes[1].current, / · 文字 #[0-9a-f]{6} · 底板 #[0-9a-f]{6} \d+%$/, '当前字幕样式也列出颜色');
     assert.ok(changes.every(change => change.current && change.next), '每项都要有可读的前后值');
     const identical = presetChanges({
       aspectRatio: created.aspectRatio, subtitles: created.subtitles,

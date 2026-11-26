@@ -155,7 +155,8 @@ export function estimateRender(input: EstimateInput): RenderEstimate {
   const segmentBytes = Math.round(outputBytes * SEGMENT_OVERHEAD);
   const diskNeedBytes = Math.round(segmentBytes + outputBytes * DISK_OUTPUT_FACTOR);
   const rawFreeDisk = input.freeDiskBytes;
-  const freeDiskBytes = typeof rawFreeDisk === 'number' && isPositive(rawFreeDisk) ? rawFreeDisk : null;
+  // #233: a full disk (0 bytes) is a real reading and must trigger disk_low; null means unknown.
+  const freeDiskBytes = typeof rawFreeDisk === 'number' && Number.isFinite(rawFreeDisk) && rawFreeDisk >= 0 ? rawFreeDisk : null;
   const queuedJobs = typeof input.queuedJobs === 'number' && isPositive(input.queuedJobs) ? input.queuedJobs : 0;
   const sampleCount = ratios.length || byteRates.length;
   const confidence: RenderEstimate['confidence'] = sampleCount >= 5 ? 'high' : sampleCount >= 1 ? 'medium' : 'low';

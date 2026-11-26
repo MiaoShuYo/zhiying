@@ -143,11 +143,13 @@ const seconds = (value?: number) => (value === undefined || !Number.isFinite(val
 const megabytes = (bytes?: number) => (bytes === undefined || !Number.isFinite(bytes) ? '—' : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
 export function QualityDelivery({
-  id, board, busy, save, onLocate, onRegenerateAudio, onApplyPreset, onOpenRender, currentPreset, onTemplateApplied, revision,
+  id, board, busy, save, onLocate, onRegenerateAudio, onApplyPreset, onOpenRender, currentPreset, onTemplateApplied, revision, onApplyRenderPreset,
 }: {
   id: string;
   /** #258: the saved project revision; QC and delivery state are re-read whenever it changes. */
   revision?: number;
+  /** #268: applies a preset's render quality (kept by the editor, not the storyboard). */
+  onApplyRenderPreset?: (preset: 'full' | 'draft') => void;
   board: Storyboard;
   busy: boolean;
   save: () => Promise<boolean>;
@@ -378,6 +380,8 @@ export function QualityDelivery({
   function confirmPreset() {
     if (!pendingPreset) return;
     onApplyPreset(presetBoardPatch(pendingPreset));
+    // #268: the preview counts the render quality, so confirming applies it too.
+    onApplyRenderPreset?.(pendingPreset.renderPreset);
     setMessage(`已应用预设「${pendingPreset.name}」，请保存分镜以保留修改`);
     setPendingPreset(null);
   }
@@ -519,9 +523,9 @@ export function QualityDelivery({
       <p className="hint">将保存：画幅 {board.aspectRatio} · 字幕{({ minimal: '简洁', boxed: '底板', highlight: '醒目' } as Record<string, string>)[SubtitleSchema.parse(board.subtitles ?? {}).preset] ?? '默认'} · {board.intro ? '片头' : '无片头'} / {board.outro ? '片尾' : '无片尾'} · 转场 {board.transition === 'fade' ? '淡入淡出' : '直切'}</p>
       {presetError && <p role="alert" className="error-text">{presetError}</p>}
       {pendingPreset && <div className="preset-confirm" role="dialog" aria-label="应用预设前的修改预览">
-        <b>应用「{pendingPreset.name}」会修改 {changedPresetCount(presetChanges(board, pendingPreset))} 项导出设置</b>
+        <b>应用「{pendingPreset.name}」会修改 {changedPresetCount(presetChanges(board, pendingPreset, currentPreset))} 项导出设置</b>
         <ul>
-          {presetChanges(board, pendingPreset).map(change => <li key={change.key} className={change.changed ? 'changed' : 'same'}>
+          {presetChanges(board, pendingPreset, currentPreset).map(change => <li key={change.key} className={change.changed ? 'changed' : 'same'}>
             <span>{change.label}</span>
             <span>{change.changed ? <>{change.current} → <b>{change.next}</b></> : `${change.current}（不变）`}</span>
           </li>)}

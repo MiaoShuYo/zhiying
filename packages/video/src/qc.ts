@@ -67,6 +67,8 @@ const OVERLAP_TOLERANCE = 0.02;
 const SCENE_TOLERANCE = 0.05;
 const MIN_AUDIO_SECONDS = 0.6;
 const MIN_SCENE_SECONDS = 1.2;
+/** #265: the renderer never plays a scene shorter than this (sceneSeconds clamps to 3 s). */
+const MIN_RENDERED_SCENE_SECONDS = 3;
 const SILENT_PEAK_DB = -45;
 const SILENT_MEAN_DB = -50;
 
@@ -128,7 +130,8 @@ export function checkSubtitles(board: Storyboard): SubtitleQc {
     cueCount += cues.length;
     if (!enabled) return;
     const configured = scene.duration ?? 0;
-    const shortScene = configured > 0 && configured < MIN_SCENE_SECONDS;
+    // The scene is stretched only when neither its setting nor its audio reaches the minimum.
+    const shortScene = configured > 0 && configured < MIN_RENDERED_SCENE_SECONDS && (scene.audioDuration ?? 0) < MIN_RENDERED_SCENE_SECONDS;
     if (shortScene) {
       issues.push(issue({
         scene, index, code: 'scene_too_short',

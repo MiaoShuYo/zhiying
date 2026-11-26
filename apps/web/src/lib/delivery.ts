@@ -8,7 +8,7 @@ import { exportSubtitles, validateSubtitleTimeline } from '@m2v/video/subtitles'
 import { qcCodeLabels } from '@m2v/video/qc';
 import { db } from '@/lib/db';
 import { ffmpegPath } from '@/lib/audio-qc';
-import { fileStamp, outputDirFor, ownedVideoPath, safeFileBaseName } from '@/lib/job-video';
+import { boundedFileBaseName, fileStamp, outputDirFor, ownedVideoPath } from '@/lib/job-video';
 import { validateExport } from '@/lib/render-validation';
 import { currentQcView } from '@/lib/qc-report';
 import {
@@ -286,7 +286,7 @@ export async function buildDelivery(projectId: string, jobId: string): Promise<D
       });
     }
 
-    const base = safeFileBaseName(project.name);
+    const base = boundedFileBaseName(project.name);
     const directory = deliveryDirFor(projectId);
     await mkdir(directory, { recursive: true });
     const partial = join(directory, `.${stamp}-${jobId}.partial.zip`);

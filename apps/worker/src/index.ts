@@ -483,7 +483,13 @@ let encoder: 'qsv' | 'x264' | null = null;
 async function detectEncoder() {
   try {
     const { stdout } = await execFileAsync('ffmpeg', ['-hide_banner', '-encoders'], { windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
-    encoder = /h264_qsv/.test(stdout) ? 'qsv' : 'x264';
+    if (!/h264_qsv/.test(stdout)) { encoder = 'x264'; return; }
+    // #229: a QSV-enabled build may have no usable Intel device; only a real short encode proves
+    // that renders will actually use the hardware encoder.
+    try {
+      await execFileAsync('ffmpeg', ['-hide_banner', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2:r=25', '-frames:v', '5', '-c:v', 'h264_qsv', '-f', 'null', '-'], { windowsHide: true, timeout: 20_000, maxBuffer: 4 * 1024 * 1024 });
+      encoder = 'qsv';
+    } catch { encoder = 'x264'; }
   } catch { encoder = 'x264'; }
 }
 async function heartbeat() {
