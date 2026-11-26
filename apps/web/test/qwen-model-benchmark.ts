@@ -84,8 +84,24 @@ function valuesFromRuns(rows: RunRow[], workload: string, model: string, phase: 
   return rows.filter(row => row.workload === workload && row.model === model && row.phase === phase);
 }
 
-async function unload(model: string): Promise<void> {
-  try { await exec('ollama', ['stop', model], { windowsHide: true, timeout: 20_000 }); } catch { /* Not loaded yet. */ }
+/**
+ * #201: unload the model on the configured server (OLLAMA_BASE_URL, not whatever the CLI targets) and
+ * confirm through /api/ps that it is gone. Only then is the next run labelled cold.
+ */
+async function unload(model: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${baseUrl}/api/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, keep_alive: 0 }), signal: AbortSignal.timeout(30_000) });
+    await response.text();
+    if (!response.ok) return false;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const ps = await fetch(`${baseUrl}/api/ps`, { signal: AbortSignal.timeout(5000) });
+      if (!ps.ok) return false;
+      const loaded = ((await ps.json()) as { models?: { name?: string; model?: string }[] }).models ?? [];
+      if (!loaded.some(item => item.name === model || item.model === model)) return true;
+      await new Promise(resolveDelay => setTimeout(resolveDelay, 500));
+    }
+  } catch { /* Reported as not unloaded below. */ }
+  return false;
 }
 
 async function ollama(payload: Record<string, unknown>, info: Omit<CallRow, 'wall_ms' | 'metrics' | 'output'>, calls: CallRow[]): Promise<string> {
@@ -329,8 +345,10 @@ async function main() {
       const phase = trial === 0 ? 'cold' : 'warm';
       const order = (trial + workloads.indexOf(workload)) % 2 ? [...models].reverse() : models;
       for (const model of order) {
-        if (phase === 'cold') await unload(model);
-        runs.push(await workload.run(model, phase, trial));
+        const unloaded = phase === 'cold' ? await unload(model) : true;
+        if (!unloaded) console.log(JSON.stringify({ event: 'cold-unverified', workload: workload.name, model }));
+        // A cold run whose unload could not be verified is recorded as a warm-start sample.
+        runs.push(await workload.run(model, unloaded ? phase : 'warm', trial));
       }
     }
   }
@@ -340,7 +358,23 @@ async function main() {
     const warm = valuesFromRuns(runs, workload, model, 'warm').map(row => row.wall_ms);
     return { workload, model, cold_ms: cold[0] ?? null, warm_p50_ms: percentile(warm, .5), warm_p95_ms: percentile(warm, .95), warm_runs: warm.length };
   }));
-  const report = `# Qwen3 4B CPU A/B 基准\n\n- 日期：${timestamp}\n- 环境：${JSON.stringify(environment)}\n- Warm run 数：${runCount}；两模型交错顺序；每条 prompt 首部写入唯一缓存标记。\n- 普通/HTML 故事板每批最多 3 章；重生成 20 个固定案例；PPT Preserve 10 页（奇数页有演讲者备注）；Pronunciation 使用 Python 基准脚本的 64 个固定目标，单独运行并汇入结果。\n- 原始调用输出与 Ollama 指标：同目录 qwen3-4b-cpu-raw.jsonl；发音原始运行记录见 services/python/tests/qwen-pronunciation-qwen3-4b*.json；生成文本仅来自固定基准资料。\n\n## Web 工作负载结果\n\n| 工作负载 | 模型 | 阶段 | wall ms | 请求 | retry | fallback | 无效场景 | 截断 | 汇总指标 |\n| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n${markdownRows}\n\n## 冷启动与 warm 汇总\n\nJSON\n${JSON.stringify(summaries, null, 2)}\n\n## 多音字 warm 结果\n\n| 模型 | 正确率（192 个目标） | wall P50 / P95（ms） | prompt / decode tokens | fallback / 截断 |\n| --- | ---: | ---: | ---: | ---: |\n| qwen3:4b | 80.73% | 159921 / 171850 | 19059 / 1512 | 0 / 0 |\n| qwen3:4b-instruct-2507-q4_K_M | 79.69% | 241939 / 244523 | 19383 / 2164 | 0 / 0 |\n\n多音字每轮 64 个固定目标，冷启动另行记录；P50/P95 与总 token 的完整数据保存在上面链接的 Python JSON 文件。Instruct warm 正确率低 1.04 个百分点，wall P50 高约 51.3%。\n\n## 质量复核\n\n- Web 请求均通过 JSON/schema 解析；20 章分镜与重生成的 warm 样本中，两模型均无不受源文支持的数字声明，也未发现“这一页可以讲”等元话语。\n- HTML warm run：qwen3:4b 有 7/60 个场景因 comparison/chart/timeline 视觉结构不完整而本地 fallback；Instruct 为 0/60。两者都没有重试或长度截断。\n- Preserve：两模型的本地场景组装、media 类型、图片映射、fullBleed 和页码校验均完整。按每页数字对照固定页文案，qwen3:4b 有 7/40 页数字不符，且 3 轮 warm 中第 7–9 页复用了相同的跨页旁白；Instruct 有 2/40 页数字不符（两次均为第 1 页将“400 公里”误写为“40 及公里”），warm 第 1、2 轮逐页数字一致，未发现相邻页重复旁白。\n- 指标按原始样本和固定 fixture 逐条复核；输出和 Ollama 计数可从原始 JSONL/JSON 重算。\n\n## 结论与限制\n\nInstruct 在四类 Web workload 的 warm wall P50 均较低：普通分镜快 13.2%，HTML 快 22.3%，重生成快 29.5%，PPT Preserve 快 27.7%。收益主要来自生成 token 更少，decode tok/s 仅小幅提高。与此同时，多音字 warm 结果较慢且准确率略低。\n\n本次只有一台 Intel Core Ultra 5 125H CPU 电脑，结果不能代表其他 CPU 类别。按 issue 要求，默认值继续保持 \`qwen3:4b\`；README 提供 instruct 可选配置。待至少两类 CPU 机器结果方向一致后，再考虑更换通用默认值。\n\n## 复现\n\n在仓库根目录运行 Web workload：\n\n\`\`\`powershell\n$env:QWEN_BENCHMARK_WARM_RUNS = '3'\npnpm exec tsx apps/web/test/qwen-model-benchmark.ts\n\`\`\`\n\n在 \`services/python\` 目录分别运行多音字基准（每个命令均执行一次冷启动和 3 次 warm）：\n\n\`\`\`powershell\nuv run --no-sync python benchmark_pronunciation.py --comparison-profile --model qwen3:4b --output tests/qwen-pronunciation-qwen3-4b.json --trials 3\nuv run --no-sync python benchmark_pronunciation.py --comparison-profile --model qwen3:4b-instruct-2507-q4_K_M --output tests/qwen-pronunciation-qwen3-4b-instruct-2507-q4_K_M.json --trials 3\n\`\`\`\n`;
+  // #202: the pronunciation table is built from the Python result files of this machine (if present)
+  // instead of the fixed 2026-11-01 numbers.
+  const { readFile } = await import('node:fs/promises');
+  const pronunciationRows: string[] = [];
+  for (const model of models) {
+    const file = resolve(process.cwd(), 'services/python/tests', `qwen-pronunciation-${model.replace(/:/g, '-')}.json`);
+    try {
+      const data = JSON.parse(await readFile(file, 'utf8')) as { metadata?: { target_count?: number; date_local?: string }; summary?: { warm_mean_accuracy?: number | null; warm_median_wall_ms?: number | null; warm_p95_wall_ms?: number | null; cold_wall_ms?: number | null } };
+      const accuracy = data.summary?.warm_mean_accuracy;
+      const percent = typeof accuracy === 'number' ? `${(accuracy <= 1 ? accuracy * 100 : accuracy).toFixed(2)}%` : 'n/a';
+      pronunciationRows.push(`| ${model} | ${data.metadata?.target_count ?? 'n/a'} | ${percent} | ${data.summary?.warm_median_wall_ms ?? 'n/a'} / ${data.summary?.warm_p95_wall_ms ?? 'n/a'} | ${data.summary?.cold_wall_ms ?? 'n/a'} | ${data.metadata?.date_local ?? 'n/a'} |`);
+    } catch {
+      pronunciationRows.push(`| ${model} | 未运行 | n/a | n/a | n/a | n/a |`);
+    }
+  }
+  const pronunciationSection = `\n\n## 多音字结果（读取 Python 基准输出）\n\n| 模型 | 目标数 | warm 平均正确率 | warm P50 / P95（ms） | 冷启动 ms | 运行时间 |\n| --- | ---: | ---: | ---: | ---: | --- |\n${pronunciationRows.join('\n')}`;
+  const report = `# Qwen3 4B CPU A/B 基准\n\n- 日期：${timestamp}\n- 环境：${JSON.stringify(environment)}\n- Warm run 数：${runCount}；两模型交错顺序；每条 prompt 首部写入唯一缓存标记。\n- 普通/HTML 故事板每批最多 3 章；重生成 20 个固定案例；PPT Preserve 10 页（奇数页有演讲者备注）；Pronunciation 使用 Python 基准脚本的 64 个固定目标，单独运行并汇入结果。\n- 原始调用输出与 Ollama 指标：同目录 qwen3-4b-cpu-raw.jsonl；发音原始运行记录见 services/python/tests/qwen-pronunciation-qwen3-4b*.json；生成文本仅来自固定基准资料。\n\n## Web 工作负载结果\n\n| 工作负载 | 模型 | 阶段 | wall ms | 请求 | retry | fallback | 无效场景 | 截断 | 汇总指标 |\n| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n${markdownRows}\n\n## 冷启动与 warm 汇总\n\nJSON\n${JSON.stringify(summaries, null, 2)}${pronunciationSection}\n\n## 质量复核与结论\n\n本报告由脚本生成，只包含本次运行的测量值。质量复核、百分比对比与是否更换默认模型的结论需根据本次原始数据另行撰写，脚本不再写入固定文字。\n\n## 复现\n\n在仓库根目录运行 Web workload：\n\n\`\`\`powershell\n$env:QWEN_BENCHMARK_WARM_RUNS = '3'\npnpm exec tsx apps/web/test/qwen-model-benchmark.ts\n\`\`\`\n\n在 \`services/python\` 目录分别运行多音字基准（每个命令均执行一次冷启动和 3 次 warm）：\n\n\`\`\`powershell\nuv run --no-sync python benchmark_pronunciation.py --comparison-profile --model qwen3:4b --output tests/qwen-pronunciation-qwen3-4b.json --trials 3\nuv run --no-sync python benchmark_pronunciation.py --comparison-profile --model qwen3:4b-instruct-2507-q4_K_M --output tests/qwen-pronunciation-qwen3-4b-instruct-2507-q4_K_M.json --trials 3\n\`\`\`\n`;
   await writeFile(resolve(process.cwd(), 'docs/benchmarks/qwen3-4b-cpu.md'), report, 'utf8');
   await writeFile(resolve(process.cwd(), 'docs/benchmarks/qwen3-4b-cpu-summary.json'), JSON.stringify({ environment, summaries, runs: runs.map(({ calls, samples, ...row }) => ({ ...row, totals: summarizeCalls(calls), sampleCount: samples.length })) }, null, 2), 'utf8');
   console.log(JSON.stringify({ event: 'web-benchmark-complete', report: 'docs/benchmarks/qwen3-4b-cpu.md', raw: 'docs/benchmarks/qwen3-4b-cpu-raw.jsonl', summaries }));

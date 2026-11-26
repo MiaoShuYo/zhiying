@@ -45,6 +45,8 @@ function FitContent({ children, signature, onOverflow }: { children: React.React
  * measured like FitContent: it is scaled down to fit the frame (not below 0.5) and the editor's
  * overflow report fires when it needed more than a 10% reduction.
  */
+// #213: the saved markup is not rendered with pre-wrap; formatting whitespace between tags stays
+// collapsed, and generated layouts carry their own <br> line breaks.
 function FitFrame({ html, style, signature, onOverflow }: { html: string; style: React.CSSProperties; signature: string; onOverflow?: (overflowing: boolean) => void }) {
   const outer = useRef<HTMLDivElement>(null), inner = useRef<HTMLDivElement>(null);
   const [factor, setFactor] = useState(1);
@@ -226,7 +228,7 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
   }
   if (typeof scene.visual.html === 'string' && scene.type !== 'media') {
     return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, overflow: 'hidden' }}>
-      <FitFrame html={brandedHtml} signature={`${scene.id}:${width}x${height}:${brandedHtml.length}`} onOverflow={onOverflow ? reportOverflow : undefined} style={{ display: 'grid', overflow: 'visible', background: brand ? colors.bg : '#0b1020', ...(brand ? { color: colors.fg, fontFamily: theme.fontFamilies.body } : {}), whiteSpace: 'pre-wrap' }} />
+      <FitFrame html={brandedHtml} signature={`${scene.id}:${width}x${height}:${brandedHtml.length}`} onOverflow={onOverflow ? reportOverflow : undefined} style={{ display: 'grid', overflow: 'visible', background: brand ? colors.bg : '#0b1020', ...(brand ? { color: colors.fg, fontFamily: theme.fontFamilies.body } : {}) }} />
       {caption && <div style={captionStyle}>{caption}</div>}
       {scene.audioSrc && <Audio src={staticFile(scene.audioSrc)} />}
     </AbsoluteFill>;

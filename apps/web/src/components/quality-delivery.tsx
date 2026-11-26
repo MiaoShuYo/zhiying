@@ -218,6 +218,14 @@ export function QualityDelivery({
     return () => { stopped = true; };
   }, [revision]);
 
+  // #276: the tab can be opened while the first render is still running; when the project stops being
+  // busy the export list is re-read so the finished render (and delivery) become available.
+  const wasBusy = useRef(busy);
+  useEffect(() => {
+    if (wasBusy.current && !busy) void readExports();
+    wasBusy.current = busy;
+  }, [busy]);
+
   // A render that finishes while this tab stays open stays invisible otherwise: keep
   // polling the export list until every job has settled.
   const unsettled = exports.some(job => !settledStatuses.includes(job.status));

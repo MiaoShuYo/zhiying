@@ -255,8 +255,12 @@ function buildCodeScenePieces(props: CodeHtmlSceneViewProps): string[] {
         declaration('background', row.active ? `${colors.accent}22` : 'transparent'),
         hidden ? declaration('visibility', 'hidden') : null,
       ])}">`);
+      // #168: fixed-width gutter, same sizing as the Standard renderer.
       windowPieces.push(`<span class="line-number" style="${styleAttr([
-        declaration('min-width', `${44 * scale}px`),
+        declaration('display', 'inline-block'),
+        declaration('width', `${Math.round(Math.max(44 * scale, String(Math.max(1, state.rowCount)).length * layout.fontSizePx * 0.62))}px`),
+        declaration('padding-right', `${Math.round(18 * scale)}px`),
+        declaration('text-align', 'right'),
         declaration('color', colors.muted),
       ])}">${row.rowNumber}</span>`);
       windowPieces.push(`<span class="code-content" style="${contentStyle}">`);

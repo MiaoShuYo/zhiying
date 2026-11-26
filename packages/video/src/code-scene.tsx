@@ -693,6 +693,7 @@ export function CodeSceneView(props: CodeSceneViewProps): React.ReactElement {
     : [];
   const tokenLinesOf = (index: number): CodeLineTokens['tokens'] => sourceTokens[index]?.tokens
     ?? [{ text: state.displayRows[index]?.text ?? '', type: 'plain' as const }];
+  const gutterPx = Math.max(44 * scale, String(Math.max(1, state.rowCount)).length * layout.fontSizePx * 0.62);
   const beforeTokensOf = (index: number): CodeLineTokens['tokens'] => beforeTokens[index]?.tokens
     ?? [{ text: state.diff?.lines[index]?.text ?? '', type: 'plain' as const }];
 
@@ -773,7 +774,8 @@ export function CodeSceneView(props: CodeSceneViewProps): React.ReactElement {
                 ...(state.mode === 'build' && !row.revealed ? { visibility: 'hidden' as const } : {}),
               }}
             >
-              <span style={{ minWidth: 44 * scale, color: colors.muted }}>{row.rowNumber}</span>
+              {/* #168: a fixed-width gutter sized for the largest line number keeps indentation aligned. */}
+              <span data-line-gutter="true" style={{ display: 'inline-block', width: gutterPx, paddingRight: 18 * scale, boxSizing: 'content-box', textAlign: 'right', color: colors.muted }}>{row.rowNumber}</span>
               <span style={{ whiteSpace: 'pre' }}>{tokenSpans(lineTokens, tokenColors)}</span>
             </div>;
           })}

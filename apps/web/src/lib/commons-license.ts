@@ -20,7 +20,8 @@ const strip = (value: string) => value.replace(/<[^>]*>/g, ' ').replace(/&amp;/g
 export function classifyLicense(license: string): LicenseClass {
   const text = license.toLowerCase();
   if (!text) return 'unknown';
-  if (/cc0|public domain|pd-|no restrictions|pdself|gfdl/.test(text)) return 'public-domain';
+  // #311: GFDL is a copyleft licence, not public domain; it goes through the 'other' review flow.
+  if (/cc0|public domain|pd-|no restrictions|pdself/.test(text)) return 'public-domain';
   if (/cc[\s-]?by[\s-]?sa|attribution[\s-]?sharealike/.test(text)) return 'cc-by-sa';
   if (/cc[\s-]?by|attribution/.test(text)) return 'cc-by';
   return 'other';

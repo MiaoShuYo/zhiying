@@ -16,7 +16,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from app.local_llm_config import local_llm_config
 from app.pronunciation import (
@@ -148,15 +148,36 @@ def profile_summary(rows: list[dict]) -> dict:
     }
 
 
+def unload_and_verify(base_url: str, model: str, attempts: int = 10) -> bool:
+    """Ask the configured Ollama server to unload ``model`` and confirm via /api/ps that it is gone."""
+    try:
+        request = Request(base_url + '/api/generate', data=json.dumps({'model': model, 'keep_alive': 0}).encode('utf-8'), headers={'content-type': 'application/json'})
+        with urlopen(request, timeout=30) as response:
+            response.read()
+    except Exception:
+        return False
+    for _ in range(attempts):
+        try:
+            with urlopen(base_url + '/api/ps', timeout=5) as response:
+                loaded = json.loads(response.read()).get('models', [])
+        except Exception:
+            return False
+        if not any(item.get('name') == model or item.get('model') == model for item in loaded):
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def run_comparison_profile(model: str, output_path: str, trials: int = 3) -> dict:
     """Compare a selected production pronunciation profile without tuning profiles."""
     config = local_llm_config()
     config['model'] = model
     text, positions, expected = build_workload()
-    try:
-        subprocess.run(['ollama', 'stop', model], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    # #201: unload the model on the configured server (not whatever the CLI targets) and verify it is
+    # gone before the first run is labelled cold.
+    cold_unloaded = unload_and_verify(config['base_url'], model)
+    if not cold_unloaded:
+        print(json.dumps({'warning': 'model could not be verified as unloaded; the first run is reported as warm-start'}, ensure_ascii=False), flush=True)
 
     rows: list[dict] = []
     for phase, trial in [('cold', 0), *(('warm', index) for index in range(1, trials + 1))]:
@@ -182,10 +203,11 @@ def run_comparison_profile(model: str, output_path: str, trials: int = 3) -> dic
             'ollama_base_url': config['base_url'], 'stream': config['stream'], 'keep_alive': config['keep_alive'],
             'num_ctx': config['num_ctx'], 'cpu': platform.processor(), 'logical_cpu_count': os.cpu_count(),
             'profile': 'legacy-batch-32-cap-384', 'target_count': len(positions), 'trial_count': trials,
-            'cold_run_unloaded_before_request': True, 'prompt_cache_busted_per_request': True,
+            'cold_run_unloaded_before_request': cold_unloaded, 'prompt_cache_busted_per_request': True,
         },
         'summary': {
-            'cold_wall_ms': rows[0]['wall_ms'] if rows else None,
+            'cold_wall_ms': rows[0]['wall_ms'] if rows and cold_unloaded else None,
+            'first_run_wall_ms': rows[0]['wall_ms'] if rows else None,
             'warm_median_wall_ms': statistics.median(row['wall_ms'] for row in warm) if warm else None,
             'warm_p95_wall_ms': sorted((row['wall_ms'] for row in warm))[max(0, int(len(warm) * .95 + .999999) - 1)] if warm else None,
             'warm_mean_accuracy': statistics.mean(row['accuracy'] for row in warm) if warm else None,

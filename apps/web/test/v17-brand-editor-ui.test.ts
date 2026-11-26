@@ -58,7 +58,10 @@ test('#48-4 项目级品牌区域显示当前品牌，并提供更换/重新应�
 
 test('#48-5 重新应用同一品牌：按钮把当前 brandKitId 再提交一次，库更新后刷新快照', () => {
   const editor = source('../src/components/project-editor.tsx');
-  assert.ok(editor.includes('onReapply={() => { const id = currentBrandKitId; if (id) void changeBrandKit(id); }}'), '重新应用复用当前 brandKitId');
+  // #172: 重新应用先打开确认框（与切换相同），确认后才用当前 brandKitId 调用 changeBrandKit。
+  assert.ok(editor.includes('brandKits?.find(item => item.id === currentBrandKitId)'), '重新应用复用当前 brandKitId 对应的库中套件');
+  assert.ok(editor.includes("setBrandConfirm({ kind: 'apply', kit, reapply: true })"), '重新应用走影响确认框');
+  assert.ok(editor.includes('void changeBrandKit(brandConfirm.kit.id)'), '确认后才提交 brandKitId');
   assert.ok(editor.includes("fetch(`/api/projects/${data.id}/brand-kit`"), '调用项目品牌 API');
   assert.match(editor, /body: JSON\.stringify\(\{ brandKitId: kitId \}\)/, 'POST 提交 brandKitId');
   assert.ok(editor.includes("'if-match': String(revisionRef.current)"), '携带 revision 防止并发覆盖');

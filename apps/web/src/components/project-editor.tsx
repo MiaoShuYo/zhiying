@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import Link from 'next/link';
 import { ProductionTools, ExportHistory, SourceReview, licenseLabels } from './production-tools';
 import { QualityDelivery } from './quality-delivery';
@@ -434,17 +434,40 @@ export function ProjectEditor({ initial }: { initial: Data }) {
     const groupKey = Object.keys(patch).length === 1 ? `scene:${index}:${Object.keys(patch)[0]}` : undefined;
     commitBoard({ ...storyboard, scenes }, groupKey);
   }
+  // #217: the draft belongs to the scene that opened the editor, focus stays inside the dialog and
+  // returns to the opener when it closes.
+  const fieldEditorScene = useRef<string | null>(null);
+  const fieldEditorOpener = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (fieldEditor !== null) return;
+    const opener = fieldEditorOpener.current;
+    fieldEditorOpener.current = null;
+    if (opener?.isConnected) opener.focus();
+  }, [fieldEditor]);
+  function trapFieldEditorFocus(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key === 'Escape') { event.preventDefault(); setFieldEditor(null); return; }
+    if (event.key !== 'Tab') return;
+    const focusable = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }
   function openFieldEditor(field: 'narration' | 'visual') {
     const scene = latest.current.storyboard?.scenes[safeIndex];
     if (!scene) return;
+    fieldEditorScene.current = scene.id;
+    fieldEditorOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setFieldEditor(field);
     setFieldEditorDraft(field === 'narration' ? scene.narration : visualJsonDraft);
     setFieldEditorError('');
   }
   function applyFieldEditor() {
     if (!fieldEditor) return;
+    const targetIndex = latest.current.storyboard?.scenes.findIndex(scene => scene.id === fieldEditorScene.current) ?? -1;
+    if (targetIndex < 0) { setFieldEditorError('打开编辑窗口时的场景已不存在，请关闭后重新打开。'); return; }
     if (fieldEditor === 'narration') {
-      updateScene(safeIndex, { narration: fieldEditorDraft });
+      updateScene(targetIndex, { narration: fieldEditorDraft });
       setFieldEditor(null);
       return;
     }
@@ -454,7 +477,7 @@ export function ProjectEditor({ initial }: { initial: Data }) {
       setVisualJsonDraft(fieldEditorDraft);
       setVisualJsonError('');
       visualJsonApplied.current = canonical(parsed);
-      updateScene(safeIndex, { visual: parsed as Record<string, unknown> });
+      updateScene(targetIndex, { visual: parsed as Record<string, unknown> });
       setFieldEditor(null);
     } catch (error) {
       setFieldEditorError(error instanceof Error && error.message === '画面数据必须是 JSON 对象' ? error.message : 'JSON 格式不正确，请检查括号、逗号和引号。');
@@ -722,7 +745,7 @@ export function ProjectEditor({ initial }: { initial: Data }) {
     onConfirm={() => { if (brandConfirm.kind === 'apply') void changeBrandKit(brandConfirm.kit.id); else void removeProjectBrand(); }}
     onCancel={() => { if (!brandWorking) { setBrandConfirm(null); setBrandKitError(''); } }}
   />}
-  {fieldEditor && <div className="field-editor-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setFieldEditor(null); }}><section className="field-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="field-editor-title"><div className="field-editor-header"><div><p className="eyebrow">场景 {safeIndex + 1} · {fieldEditor === "narration" ? "旁白" : "画面数据 JSON"}</p><h2 id="field-editor-title">{fieldEditor === "narration" ? "编辑旁白" : "编辑画面数据"}</h2></div><button type="button" className="modal-close" aria-label="关闭编辑窗口" onClick={() => setFieldEditor(null)}>×</button></div><textarea autoFocus className={`input textarea field-editor-textarea ${fieldEditor === "visual" ? "json-area" : ""}`} spellCheck={fieldEditor !== "visual"} value={fieldEditorDraft} onChange={event => { setFieldEditorDraft(event.target.value); setFieldEditorError(""); }} onKeyDown={event => { if (event.key === "Escape") setFieldEditor(null); if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) applyFieldEditor(); }} />{fieldEditorError && <p className="error-text" role="alert">{fieldEditorError}</p>}<p className="hint">在弹窗中编辑，点击“应用”后同步到场景并自动保存。</p><div className="field-editor-actions"><button type="button" className="button subtle" onClick={() => setFieldEditor(null)}>取消</button><button type="button" className="button primary" disabled={isBusy} onClick={applyFieldEditor}>应用</button></div></section></div>}
+  {fieldEditor && <div className="field-editor-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setFieldEditor(null); }}><section className="field-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="field-editor-title" onKeyDown={trapFieldEditorFocus}><div className="field-editor-header"><div><p className="eyebrow">场景 {safeIndex + 1} · {fieldEditor === "narration" ? "旁白" : "画面数据 JSON"}</p><h2 id="field-editor-title">{fieldEditor === "narration" ? "编辑旁白" : "编辑画面数据"}</h2></div><button type="button" className="modal-close" aria-label="关闭编辑窗口" onClick={() => setFieldEditor(null)}>×</button></div><textarea autoFocus className={`input textarea field-editor-textarea ${fieldEditor === "visual" ? "json-area" : ""}`} spellCheck={fieldEditor !== "visual"} value={fieldEditorDraft} onChange={event => { setFieldEditorDraft(event.target.value); setFieldEditorError(""); }} onKeyDown={event => { if (event.key === "Escape") setFieldEditor(null); if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) applyFieldEditor(); }} />{fieldEditorError && <p className="error-text" role="alert">{fieldEditorError}</p>}<p className="hint">在弹窗中编辑，点击“应用”后同步到场景并自动保存。</p><div className="field-editor-actions"><button type="button" className="button subtle" onClick={() => setFieldEditor(null)}>取消</button><button type="button" className="button primary" disabled={isBusy} onClick={applyFieldEditor}>应用</button></div></section></div>}
   </main>;
 }
 
