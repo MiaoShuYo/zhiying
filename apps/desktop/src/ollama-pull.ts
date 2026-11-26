@@ -22,6 +22,13 @@ export interface OllamaPullEvent {
 }
 
 export interface OllamaPullOptions {
+  /**
+   * #136: base URL of the managed Ollama server (`http://127.0.0.1:<port>`). When set, progress is read
+   * from the streaming `/api/pull` response, which is the documented NDJSON protocol; the CLI renders
+   * progress bars on stderr instead. Without it the legacy `ollama pull` subprocess path is used.
+   */
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
   exe: string;
   model: string;
   env?: NodeJS.ProcessEnv;
@@ -87,6 +94,7 @@ async function killTree(pid: number | undefined): Promise<void> {
 export class OllamaPullRunner {
   private readonly options: OllamaPullOptions;
   private child: ChildProcess | undefined;
+  private controller: AbortController | undefined;
   private aborted = false;
   private running = false;
 
@@ -103,6 +111,14 @@ export class OllamaPullRunner {
     if (this.running) throw new Error('Ollama pull 已在进行中');
     this.running = true;
     this.aborted = false;
+    if (this.options.baseUrl) {
+      try {
+        return await this.pullOverHttp(this.options.baseUrl);
+      } finally {
+        this.running = false;
+        this.controller = undefined;
+      }
+    }
     const spawnImpl = this.options.spawnImpl ?? nodeSpawn;
     const env: NodeJS.ProcessEnv = { ...(this.options.env ?? process.env) };
     let child: ChildProcess;
@@ -178,9 +194,83 @@ export class OllamaPullRunner {
     return { ok: false, aborted: false, exitCode: exit.code, error };
   }
 
-  /** 安全终止当前 pull（不会结束用户其它 Ollama 进程，只结束本次子进程树）。 */
+  /** #136: stream `/api/pull` from the managed server and map its NDJSON lines to progress events. */
+  private async pullOverHttp(baseUrl: string): Promise<OllamaPullResult> {
+    const fetchImpl = this.options.fetchImpl ?? fetch;
+    const controller = new AbortController();
+    this.controller = controller;
+    let lastDigest: string | undefined;
+    let lastStatus = '';
+    let response: Response;
+    try {
+      response = await fetchImpl(`${baseUrl.replace(/\/$/, '')}/api/pull`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: this.options.model, stream: true }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (this.aborted) return { ok: false, aborted: true, exitCode: null };
+      return { ok: false, aborted: false, exitCode: null, error: `无法连接受管 Ollama 服务（${(error as Error).message}），请先通过知影启动器启动 Ollama 后再下载模型。` };
+    }
+    if (!response.ok || !response.body) {
+      const detail = await response.text().catch(() => '');
+      let message = detail;
+      try { message = (JSON.parse(detail) as { error?: string }).error ?? detail; } catch { /* plain text */ }
+      return { ok: false, aborted: false, exitCode: null, error: `Ollama 拉取失败（HTTP ${response.status}）：${message.trim() || '未返回错误信息'}` };
+    }
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let failure: string | undefined;
+    const handleLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const record = JSON.parse(trimmed) as { error?: unknown };
+        if (typeof record.error === 'string' && record.error) { failure = record.error; return; }
+      } catch { return; }
+      const event = parseOllamaPullLine(trimmed);
+      if (!event) return;
+      lastStatus = event.status;
+      if (event.digest) lastDigest = event.digest;
+      try { this.options.onEvent?.(event); } catch { /* 进度回调异常不影响 pull。 */ }
+    };
+    try {
+      const reader = response.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf('\n');
+        while (newline >= 0) {
+          handleLine(buffer.slice(0, newline));
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf('\n');
+        }
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) handleLine(buffer);
+    } catch (error) {
+      if (this.aborted) return { ok: false, aborted: true, exitCode: null, ...(lastDigest ? { digest: lastDigest } : {}) };
+      return { ok: false, aborted: false, exitCode: null, error: `Ollama 拉取中断：${(error as Error).message}` };
+    }
+    if (this.aborted) return { ok: false, aborted: true, exitCode: null, ...(lastDigest ? { digest: lastDigest } : {}) };
+    if (failure) {
+      const error = /file does not exist|not found/i.test(failure)
+        ? `Ollama 源中不存在模型 ${this.options.model}（请检查网络与模型名称）。`
+        : `Ollama 拉取失败：${failure}`;
+      return { ok: false, aborted: false, exitCode: null, error };
+    }
+    if (!/^success$/i.test(lastStatus)) {
+      return { ok: false, aborted: false, exitCode: null, error: 'Ollama 拉取未完成：服务端在返回 success 之前结束了响应。' };
+    }
+    return { ok: true, aborted: false, exitCode: 0, ...(lastDigest ? { digest: lastDigest } : {}) };
+  }
+
+  /** 安全终止当前 pull（不会结束用户其它 Ollama 进程，只结束本次子进程树或 HTTP 请求）。 */
   async abort(): Promise<void> {
     this.aborted = true;
+    this.controller?.abort();
     const child = this.child;
     if (!child) return;
     await killTree(child.pid);

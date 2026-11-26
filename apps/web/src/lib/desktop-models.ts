@@ -165,7 +165,11 @@ export async function readDesktopModelStatus(
     const sizeBytes = typeof entry.totalBytes === 'number' && entry.totalBytes > 0 ? entry.totalBytes : 0;
     const entryReceived = typeof saved?.receivedBytes === 'number' && saved.receivedBytes > 0 ? saved.receivedBytes : 0;
     receivedBytes += entryReceived;
-    if (sizeBytes > 0) totalBytes += sizeBytes;
+    // #140: same rule as ModelDownloadManager.computeOverall. An initialised state's own totalBytes is
+    // the real size (the manifest's Ollama size is only an estimate); without one, the entry is
+    // indeterminate unless installed. Only entries with no saved state fall back to the manifest.
+    const savedTotal = saved ? (typeof saved.totalBytes === 'number' && saved.totalBytes > 0 ? saved.totalBytes : undefined) : sizeBytes || undefined;
+    if (savedTotal !== undefined) totalBytes += savedTotal;
     else if (status !== 'installed') indeterminate = true;
     const row: DesktopModelRow = {
       id,

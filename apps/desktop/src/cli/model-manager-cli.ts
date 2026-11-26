@@ -14,6 +14,7 @@ import type { ModelManifest } from '../model-manifest.js';
 import { ModelDownloadManager } from '../downloader.js';
 import { createModelManagerServer } from '../download-server.js';
 import { openBrowser } from '../launcher.js';
+import { verifyManagedOllama } from '../managed-ollama.js';
 
 /**
  * #105 模型管理器 CLI。
@@ -183,13 +184,11 @@ export async function runModelManagerCli(argv: string[]): Promise<number> {
   let config: InstallConfig;
   try {
     layout = resolveInstallLayout(installRoot);
-    try {
-      config = await loadInstallConfig(installRoot);
-    } catch {
-      config = buildDefaultConfig(layout);
-    }
+    // #127: the defaults are only for an installation without config/install.json. An existing file
+    // that cannot be read or validated is a configuration error, not a reason to use default ports.
+    config = existsSync(layout.installConfigPath) ? await loadInstallConfig(installRoot) : buildDefaultConfig(layout);
   } catch (error) {
-    process.stderr.write(`安装目录无效：${(error as Error).message}\n`);
+    process.stderr.write(`安装目录或安装配置无效：${(error as Error).message}\n`);
     return 2;
   }
   let manifest: ModelManifest;
@@ -224,6 +223,10 @@ export async function runModelManagerCli(argv: string[]): Promise<number> {
     ollamaEnv,
     ...(ollamaCommand ? { ollamaCommand } : {}),
     ...(sourceBaseUrl ? { sourceBaseUrl } : {}),
+    // #136 / #128: pull through the managed server's /api/pull, and only after verifying that the
+    // listener on the configured port is the Ollama the Zhiying launcher started.
+    ollamaBaseUrl: `http://127.0.0.1:${config.ports.ollama}`,
+    ensureOllamaReady: () => verifyManagedOllama(layout, config.ports.ollama),
   });
   await manager.recover();
   const port = Number.isInteger(options.port) && (options.port as number) >= 0 ? (options.port as number) : config.ports.manager ?? 8790;

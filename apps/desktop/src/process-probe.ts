@@ -11,6 +11,8 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
+const UTF8_OUTPUT = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; ';
+
 const EXEC_OPTIONS = { windowsHide: true, timeout: 8000, maxBuffer: 4 * 1024 * 1024, encoding: 'utf8' as const };
 
 export interface PortOwner {
@@ -101,7 +103,9 @@ export async function readProcessInfos(pids: number[]): Promise<Map<number, Proc
   const result = new Map<number, ProcessInfo>();
   if (unique.length === 0 || process.platform !== 'win32') return result;
   const filter = unique.map(pid => `ProcessId=${pid}`).join(' or ');
-  const command = `Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId,ParentProcessId,CommandLine,Name | ConvertTo-Json -Compress`;
+  // #138: Windows PowerShell writes JSON in the console code page unless told otherwise, which
+  // corrupts Chinese paths in command lines (used for ownership checks); force UTF-8 output.
+  const command = `${UTF8_OUTPUT}Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId,ParentProcessId,CommandLine,Name | ConvertTo-Json -Compress`;
   try {
     const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], EXEC_OPTIONS);
     for (const info of asProcessInfoList(parsePowerShellJson(stdout))) result.set(info.pid, info);
@@ -124,6 +128,7 @@ export async function readProcessCommandLines(pids: number[]): Promise<Map<numbe
 async function lookupPortOwner(port: number): Promise<PortOwner | undefined> {
   if (process.platform !== 'win32') return undefined;
   const script = [
+    UTF8_OUTPUT.replace(/; $/, ''),
     `$connection = Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1`,
     'if ($connection) {',
     '  $process = Get-Process -Id $connection.OwningProcess -ErrorAction SilentlyContinue',

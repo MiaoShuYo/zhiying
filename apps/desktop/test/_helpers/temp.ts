@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** apps/desktop/test/_helpers -> repo root */
 export const REPO_ROOT = path.resolve(HERE, '..', '..', '..', '..');
-export const TMP_ROOT = path.join(REPO_ROOT, 'data', 'tmp', 'v21');
+/** M2V_TEST_TMP_ROOT overrides the location (for example when the repository carries a Low integrity label). */
+export const TMP_ROOT = process.env.M2V_TEST_TMP_ROOT ? path.resolve(process.env.M2V_TEST_TMP_ROOT) : path.join(REPO_ROOT, 'data', 'tmp', 'v21');
 
 const registered = new Set<string>();
 
@@ -66,10 +67,10 @@ export function ensureTmpRoot(): string {
 let counter = 0;
 
 /** 创建 <tmp>/<label>-<pid>-<counter>-<rand> 临时目录并登记自动清理。 */
-export function makeTempRoot(label = 'case'): string {
-  ensureTmpRoot();
+export function makeTempRoot(label = 'case', parent = TMP_ROOT): string {
+  if (parent === TMP_ROOT) ensureTmpRoot(); else fs.mkdirSync(parent, { recursive: true });
   const name = `${label}-${process.pid}-${(counter++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const dir = path.join(TMP_ROOT, name);
+  const dir = path.join(parent, name);
   fs.mkdirSync(dir, { recursive: true });
   registered.add(dir);
   registerOwnedTestRoot(dir);

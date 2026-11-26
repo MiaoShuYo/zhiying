@@ -96,6 +96,8 @@ var
   ModelPage: TInputOptionWizardPage;
   ModelChoice: String;
   PurgeData: Boolean;
+  { 安装后收尾失败时置位；GetCustomSetupExitCode 据此让安装程序返回非 0。 }
+  PostInstallFailed: Boolean;
 
 { 读取自定义命令行参数（如 /MODELDOWNLOAD=now、/PURGEDATA）。 }
 function GetCustomParam(const Name: String): String;
@@ -279,7 +281,7 @@ begin
     ErrorText := ValidateInstallDir(WizardDirValue);
     if ErrorText <> '' then
     begin
-      MsgBox(ErrorText, mbError, MB_OK);
+      SuppressibleMsgBox(ErrorText, mbError, MB_OK, IDOK);
       Result := False;
       Exit;
     end;
@@ -314,6 +316,20 @@ begin
   end;
 end;
 
+{ 收尾失败：记录日志、提示（静默安装时不弹窗）、并让安装以非 0 退出。
+  ssPostInstall 里抛异常不会改变 Setup 的退出码，所以改用 PostInstallFailed + GetCustomSetupExitCode。 }
+procedure FailPostInstall(const Message: String);
+begin
+  PostInstallFailed := True;
+  Log('安装后收尾失败：' + Message);
+  SuppressibleMsgBox(Message, mbError, MB_OK, IDOK);
+end;
+
+function GetCustomSetupExitCode(): Integer;
+begin
+  if PostInstallFailed then Result := 10 else Result := 0;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   NodeExe, Cli, Params, LogPath: String;
@@ -326,8 +342,7 @@ begin
   Cli := ExpandConstant('{app}\app\desktop\cli\setup-cli.mjs');
   if (not FileExists(NodeExe)) or (not FileExists(Cli)) then
   begin
-    MsgBox('安装后收尾失败：缺少运行时或安装脚本。' + #13#10 + NodeExe + #13#10 + Cli, mbError, MB_OK);
-    RaiseException('post-install: missing runtime or setup-cli');
+    FailPostInstall('安装后收尾失败：缺少运行时或安装脚本。' + #13#10 + NodeExe + #13#10 + Cli);
     Exit;
   end;
 
@@ -337,15 +352,20 @@ begin
   Log('运行安装后收尾：' + NodeExe + ' "' + Cli + '" ' + Params);
   if not Exec(NodeExe, '"' + Cli + '" ' + Params, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
-    MsgBox('无法运行安装后收尾程序。请查看日志目录：' + ExpandConstant('{app}\logs'), mbError, MB_OK);
-    RaiseException('post-install: failed to start setup-cli');
+    FailPostInstall('无法运行安装后收尾程序。请查看日志目录：' + ExpandConstant('{app}\logs'));
     Exit;
   end;
   if ResultCode <> 0 then
   begin
-    MsgBox('安装后收尾失败（退出码 ' + IntToStr(ResultCode) + '）。' + #13#10 +
-      '请查看安装日志：' + LogPath, mbError, MB_OK);
-    RaiseException('post-install exited with code ' + IntToStr(ResultCode));
+    FailPostInstall('安装后收尾失败（退出码 ' + IntToStr(ResultCode) + '）。' + #13#10 +
+      '请查看安装日志：' + LogPath);
+    Exit;
+  end;
+  { 收尾返回 0 也要确认 install.json 真的写出，否则安装视为失败。 }
+  if not FileExists(ExpandConstant('{app}\config\install.json')) then
+  begin
+    FailPostInstall('安装后收尾没有生成 config\install.json。' + #13#10 + '请查看安装日志：' + LogPath);
+    Exit;
   end;
   Log('安装后收尾完成：' + LogPath);
 end;

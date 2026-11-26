@@ -63,6 +63,13 @@ export interface DownloadManagerOptions {
   ollamaCommand?: string;
   /** 传给 ollama pull 的额外环境变量（必须包含受管 OLLAMA_MODELS）。 */
   ollamaEnv?: NodeJS.ProcessEnv;
+  /** #136: managed Ollama server; when set, models are pulled through its streaming `/api/pull`. */
+  ollamaBaseUrl?: string;
+  /**
+   * #128: checked before every Ollama pull. Returns a message when the server on the configured port
+   * is not the managed one (or nothing is listening), in which case the pull is refused.
+   */
+  ensureOllamaReady?: () => Promise<string | undefined>;
 }
 
 interface ResumeMeta {
@@ -916,6 +923,10 @@ export class ModelDownloadManager {
     const state = runtime.state;
     const model = entry.source.ollamaModel;
     if (!model) throw new DownloadError('manifest_error', `模型 ${entry.id} 缺少 ollamaModel 配置`, false);
+    if (this.options.ensureOllamaReady) {
+      const problem = await this.options.ensureOllamaReady();
+      if (problem) throw new DownloadError('ollama_unavailable', problem, false);
+    }
     state.status = 'downloading';
     state.phase = 'download';
     state.error = undefined;
@@ -929,6 +940,8 @@ export class ModelDownloadManager {
       model,
       env,
       spawnImpl: this.spawnImpl,
+      ...(this.options.ollamaBaseUrl ? { baseUrl: this.options.ollamaBaseUrl } : {}),
+      ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}),
       onEvent: event => {
         if (event.digest && (event.total !== undefined || event.completed !== undefined)) {
           const existing = runtime.layerProgress.get(event.digest) ?? { completed: 0 };

@@ -187,8 +187,14 @@ function registerCleanup(t: test.TestContext, target: string, stageDirs: string[
   });
 }
 
+/**
+ * 安装目标放在 %TEMP%（workspace 外）：仓库目录可能带 Low 完整性标签，安装进去的 node.exe 会以 Low IL
+ * 运行，读不到仓库内文件，post-install 便以 MODULE_NOT_FOUND 失败。M2V_TEST_TMP_ROOT 可覆盖。
+ */
+const INNO_TARGET_ROOT = process.env.M2V_TEST_TMP_ROOT ? path.resolve(process.env.M2V_TEST_TMP_ROOT) : path.join(os.tmpdir(), 'zhiying-inno-targets');
+
 function makeTarget(t: test.TestContext, label: string, chiName = '知影 图形 安装'): string {
-  const base = makeTempRoot(label);
+  const base = makeTempRoot(label, INNO_TARGET_ROOT);
   return makeChineseSpaceDir(base, chiName);
 }
 
@@ -631,7 +637,7 @@ test('[#103-17 R4-Inno] 长路径（250+）安装：可用或给出明确可读�
     t.skip(`R4 Inno 产物未就绪：${innoArtifactReady().reason}`);
     return;
   }
-  const base = makeTempRoot('r4-long');
+  const base = makeTempRoot('r4-long', INNO_TARGET_ROOT);
   let target = path.join(base, 'target');
   while (target.length < 250) target = path.join(target, '长路径-段');
   const staging = createStagingDir('zhiying-test-long');

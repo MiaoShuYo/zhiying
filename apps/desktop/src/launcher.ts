@@ -138,7 +138,7 @@ function normalizeCommandLine(value: string): string {
   return value.toLowerCase().replace(/"/g, '').replace(/\s+/g, ' ').trim();
 }
 
-function commandLineMatches(actual: string | undefined, recorded: string | undefined): boolean {
+export function commandLineMatches(actual: string | undefined, recorded: string | undefined): boolean {
   if (!actual || !recorded) return false;
   const left = normalizeCommandLine(actual);
   const right = normalizeCommandLine(recorded);
@@ -146,7 +146,7 @@ function commandLineMatches(actual: string | undefined, recorded: string | undef
   return left.includes(right) || right.includes(left);
 }
 
-function hasInstanceMarker(commandLine: string | undefined, instanceId: string): boolean {
+export function hasInstanceMarker(commandLine: string | undefined, instanceId: string): boolean {
   if (!commandLine || !instanceId) return false;
   return commandLine.includes(`--m2v-instance=${instanceId}`) || commandLine.includes(`M2V_MANAGED_INSTANCE=${instanceId}`);
 }

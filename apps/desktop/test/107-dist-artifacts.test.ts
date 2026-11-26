@@ -2,6 +2,7 @@
  * #107-7/#102-13/#103-15/#107-8 冻结发布产物回归（R4 Inno Setup 6）。
  * 冻结校验比对 Lead 提供的 pinned sha256/size；Inno Setup.exe 含编译时间戳，重建后字节哈希会变化，
  * 因此 E2E 自建产物只断言结构/版本/release-info 内部一致性，不比对 pinned sha（契约 §2.7/§8.6）。
+ * #139: 冻结发布校验设 M2V_VERIFY_FROZEN=1，强制比对 pinned sha256/大小；否则按重建产物校验。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,12 +45,20 @@ test('[#103-15/#107-7 R4-Inno] 冻结产物 Zhiying-Setup.exe：pinned sha256/�
     return;
   }
   const actualSha = await sha256File(SETUP);
-  if (actualSha !== PINNED_SETUP_SHA) {
-    t.skip(`dist 已重建（当前 sha256=${actualSha}, size=${fs.statSync(SETUP).size}），等待 Lead 提供新冻结 sha 后更新 PINNED_* 并强制校验`);
-    return;
+  const actualSize = fs.statSync(SETUP).size;
+  // #139: a hash mismatch is no longer treated as an intentional rebuild. With M2V_VERIFY_FROZEN=1
+  // (frozen-release validation) the pinned hash and size are enforced; otherwise the artifact is
+  // validated as a rebuild: only the pinned hash/size are skipped, every structural and internal
+  // consistency check below still runs against the artifact's own hash.
+  const frozen = process.env.M2V_VERIFY_FROZEN === '1';
+  if (frozen) {
+    assert.equal(actualSize, PINNED_SETUP_SIZE, 'Setup.exe 大小与冻结产物不一致');
+    assert.equal(actualSha, PINNED_SETUP_SHA, 'Setup.exe sha256 与冻结产物不一致');
+  } else if (actualSha !== PINNED_SETUP_SHA) {
+    t.diagnostic(`重建产物校验：sha256=${actualSha}, size=${actualSize}（冻结发布请设 M2V_VERIFY_FROZEN=1 强制比对 pinned 值）`);
   }
-  assert.equal(fs.statSync(SETUP).size, PINNED_SETUP_SIZE, 'Setup.exe 大小与冻结产物不一致');
-  assert.equal(actualSha, PINNED_SETUP_SHA, 'Setup.exe sha256 与冻结产物不一致');
+  const expectedSha = frozen ? PINNED_SETUP_SHA : actualSha;
+  const expectedSize = frozen ? PINNED_SETUP_SIZE : actualSize;
   const pe = readPeInfo(SETUP);
   assert.equal(pe.subsystem, 2, `Zhiying-Setup.exe 必须为 GUI 子系统(2)，实际 ${pe.subsystem}（${pe.subsystemLabel}）`);
   const version = peVersionInfo(SETUP);
@@ -60,14 +69,14 @@ test('[#103-15/#107-7 R4-Inno] 冻结产物 Zhiying-Setup.exe：pinned sha256/�
   const shaFile = fs.readFileSync(path.join(DIST, 'Zhiying-Setup.exe.sha256'), 'utf8').trim();
   const match = /^([0-9a-f]{64})\s+Zhiying-Setup\.exe$/.exec(shaFile);
   assert.ok(match, `.sha256 文件格式非法: ${shaFile}`);
-  assert.equal(match![1], PINNED_SETUP_SHA, '.sha256 与冻结产物不一致');
+  assert.equal(match![1], expectedSha, '.sha256 与产物不一致');
   const releaseInfo = readReleaseInfo();
   assert.equal(releaseInfo.version, '1.8.0');
   assert.equal(releaseInfo.profile, 'lite');
   assert.equal(releaseInfo.installer, 'inno-setup', 'release-info.installer 应为 inno-setup');
   assert.equal(releaseInfo.innoVersion, PINNED_INNO_VERSION, `release-info.innoVersion 应为 ${PINNED_INNO_VERSION}`);
-  assert.equal(releaseInfo.setup?.sha256, PINNED_SETUP_SHA, 'release-info.setup.sha256 与冻结产物不一致');
-  assert.equal(releaseInfo.setup?.sizeBytes, PINNED_SETUP_SIZE);
+  assert.equal(releaseInfo.setup?.sha256, expectedSha, 'release-info.setup.sha256 与产物不一致');
+  assert.equal(releaseInfo.setup?.sizeBytes, expectedSize);
   assert.equal(releaseInfo.payload?.embedded, true, 'lite 应内嵌 payload');
   assert.equal(releaseInfo.payload?.mode, 'inno-files', 'payload 模式应为 inno-files');
   assert.ok(!JSON.stringify(releaseInfo).includes(REPO_ROOT.replace(/\\/g, '\\\\')), 'release-info 泄漏本机绝对路径');

@@ -132,6 +132,8 @@ export async function createModelManagerServer(input: ModelManagerServerInput): 
   let keepAlive: NodeJS.Timeout | undefined;
   let closed = false;
   let listeningPort = 0;
+  // #134: an IPv6 literal must be bracketed inside a URL; server.listen() keeps the bare host.
+  const urlHost = host.includes(':') ? `[${host}]` : host;
 
   const sendEvent = (client: ServerResponse, payload: ModelsPayload): void => {
     client.write(`event: progress\ndata: ${JSON.stringify(payload)}\n\n`);
@@ -158,7 +160,7 @@ export async function createModelManagerServer(input: ModelManagerServerInput): 
       sendJson(response, 403, { ok: false, error: '不允许其他网页操作模型管理器' });
       return;
     }
-    const url = new URL(request.url ?? '/', `http://${host}`);
+    const url = new URL(request.url ?? '/', `http://${urlHost}`);
     const pathname = decodeURIComponent(url.pathname);
     const method = request.method ?? 'GET';
     if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
@@ -265,7 +267,7 @@ export async function createModelManagerServer(input: ModelManagerServerInput): 
   keepAlive.unref?.();
 
   return {
-    url: `http://${host}:${actualPort}`,
+    url: `http://${urlHost}:${actualPort}`,
     close: async () => {
       closed = true;
       unsubscribe();

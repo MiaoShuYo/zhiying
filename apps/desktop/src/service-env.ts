@@ -49,17 +49,19 @@ function findPathKey(env: NodeJS.ProcessEnv): string {
 function prependPath(env: NodeJS.ProcessEnv, directories: Array<string | undefined>): void {
   const key = findPathKey(env);
   const existing = typeof env[key] === 'string' ? env[key]! : '';
-  const parts = existing.split(';').filter(part => part.length > 0);
-  const seen = new Set(parts.map(part => normalizePathForCompare(part)));
+  // #135: the managed directories always come first. Copies already present in the inherited PATH
+  // are removed instead of being left where they were (behind a global FFmpeg, for example).
   const additions: string[] = [];
+  const managed = new Set<string>();
   for (const directory of directories) {
     if (!directory) continue;
     const normalized = normalizePathForCompare(directory);
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
+    if (managed.has(normalized)) continue;
+    managed.add(normalized);
     additions.push(directory);
   }
   if (additions.length === 0) return;
+  const parts = existing.split(';').filter(part => part.length > 0 && !managed.has(normalizePathForCompare(part)));
   env[key] = [...additions, ...parts].join(';');
 }
 
