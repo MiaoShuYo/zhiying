@@ -186,6 +186,25 @@ test('render plans carry brand snapshots and only snapshots affect cache fingerp
   assert.deepEqual(changedPlan.brand, changedSnapshot.brand);
 });
 
+test('style pack version snapshots invalidate cached render segments', () => {
+  const provenance = (version: string) => ({
+    stylePackId: 'clean-data' as const,
+    version,
+    source: 'm2v-procedural' as const,
+    license: 'MIT' as const,
+    licenseUrl: 'https://opensource.org/license/mit/',
+    assets: [{ name: 'Procedural CSS', source: 'procedural-css' as const, license: 'MIT' as const, offline: true as const }],
+    fonts: [{ family: 'Arial', source: 'system-font' as const, bundled: false as const, license: 'system-vendor-terms' as const }],
+  });
+  const v100 = StoryboardSchema.parse({ ...threeScenes(), stylePack: 'clean-data', stylePackProvenance: provenance('1.0.0') });
+  const v101 = StoryboardSchema.parse({ ...threeScenes(), stylePack: 'clean-data', stylePackProvenance: provenance('1.0.1') });
+  const cached = fullRenderPlan(v100);
+  const updated = segmentPlan({ storyboard: v101, cached: cacheOf(cached) });
+  assert.equal(updated.reusedCount, 0, 'a style pack token-version change must invalidate every old segment');
+  assert.equal(updated.renderedCount, cached.segments.length);
+  assert.ok(updated.segments.every(segment => segment.reason === 'global'));
+});
+
 test('reordering scenes keeps every rendered segment', () => {
   const first = fullRenderPlan(threeScenes());
   const reordered = threeScenes();

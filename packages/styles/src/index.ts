@@ -1,7 +1,7 @@
 import type { BrandPalette, BrandSnapshot, StyleId } from '@m2v/schema';
 import type { StylePackId } from '@m2v/schema';
 import { visualStylePacks } from './visual-packs';
-export { visualStylePacks, stylePackOptions, type VisualStylePack } from './visual-packs';
+export { visualStylePacks, visualStylePackProvenance, stylePackOptions, type VisualStylePack } from './visual-packs';
 
 export const styles = {
   'minimal-tech': { id: 'minimal-tech', name: 'Minimal Tech', visual: { mode: 'dark', background: 'grid', density: 'minimal' }, typography: { headingFont: 'Arial', bodyFont: 'Arial', titleScale: 1.1, bodyScale: 1, maxWordsPerScreen: 36 }, layout: { padding: 100, alignment: 'left', cardStyle: 'soft', borderRadius: 20 }, motion: { pace: 'medium', entrance: 'fade', transition: 'fade' }, narration: { tone: 'professional', speed: 1 } },

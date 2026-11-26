@@ -24,8 +24,10 @@ const repo = process.cwd();
 const screenshots = resolve(repo, 'docs', 'screenshots', 'v1.9.0', 'density-motion');
 const media = resolve(repo, 'docs', 'outputs', 'V1.9.0');
 const edgeBrowserExecutable = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE?.trim()
-  || (process.platform === 'win32' && existsSync(edgeBrowserExecutable) ? edgeBrowserExecutable : undefined);
+const requestedBrowserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE?.trim();
+const browserExecutable = requestedBrowserExecutable === 'bundled'
+  ? undefined
+  : requestedBrowserExecutable || (process.platform === 'win32' && existsSync(edgeBrowserExecutable) ? edgeBrowserExecutable : undefined);
 const webRequire = createRequire(new URL('../../../apps/web/package.json', import.meta.url));
 const sharp = webRequire('sharp') as (input: unknown) => any;
 const fps = 30;
@@ -216,6 +218,7 @@ async function renderDensitySamples(serveUrl: string, browser: Awaited<ReturnTyp
           .filter(item => item.elementType === 'text' && item.targetId !== 'subtitle' && (item.fontSizePx ?? Infinity) <= 26)
           .map(item => item.bounds.y.toFixed(3)));
         assert.ok(cellLines.size <= 3, `table beat ${beat.id} renders only the header and current row group; visible row baselines=${cellLines.size}`);
+        assert.ok(!sceneSamples.some(item => item.overflow), `table beat ${beat.id} has no stale overflow from Remotion's initial probe viewport`);
         tableFrameHashes.add(await pixelHash(file));
       }
       const textSizes = sceneSamples.filter(item => item.elementType === 'text' && item.fontSizePx !== undefined).map(item => item.fontSizePx!);
@@ -324,7 +327,7 @@ function auditAdjacentMp4Frames(video: string, label: string): { frameCount: num
   return { frameCount, maxAdjacentMeanDiff, maxDiffFrame, minMeanLuminance };
 }
 
-async function renderMotionSamples(serveUrl: string, browser: Awaited<ReturnType<typeof openBrowser>>) {
+async function renderMotionSamples(serveUrl: string, browser: Awaited<ReturnType<typeof openBrowser>>, evidenceTemp: string) {
   for (const aspect of ['16:9', '9:16'] as const) {
     for (const templateId of templates) {
       const scene = motionScene(templateId);
@@ -345,6 +348,8 @@ async function renderMotionSamples(serveUrl: string, browser: Awaited<ReturnType
 
       const frameFiles: string[] = [];
       const labels: string[] = [];
+      const previewExportFiles: string[] = [];
+      const previewExportLabels: string[] = [];
       for (const frame of [1, 11, 30, 58, 59, 60, 61, 71, 90, 118, 119]) {
         const image = join(screenshots, `v1.9.0_${aspect.replace(':', '-')}_motion-${templateId}_frame-${String(frame).padStart(3, '0')}.png`);
         await extractFrame(video, frame, image);
@@ -360,26 +365,36 @@ async function renderMotionSamples(serveUrl: string, browser: Awaited<ReturnType
       }
       await makeContactSheet(frameFiles, join(screenshots, `v1.9.0_${aspect.replace(':', '-')}_motion-${templateId}-strip.png`), labels);
 
-      if (aspect === '16:9') {
+      {
         const boardFor = (reduced: boolean) => board(aspect, scene, reduced);
+        const comparisonDir = join(evidenceTemp, `${aspect.replace(':', '-')}-${templateId}`);
+        await mkdir(comparisonDir, { recursive: true });
         const captured = new Map<number, { file: string; result: Capture }>();
         const stillFrames = [11, 59, 60, 71, 90, 119];
+        const previewExportDiffs: number[] = [];
         for (const frame of stillFrames) {
-          const file = join(screenshots, `v1.9.0_16-9_motion-${templateId}_still-${frame}.png`);
+          const file = join(comparisonDir, `preview-${frame}.png`);
           const result = await renderCapture({ serveUrl, browser, storyboard: baseBoard, frame, output: file });
           captured.set(frame, { file, result });
+          const exportedFrame = join(comparisonDir, `mp4-${frame}.png`);
+          await extractFrame(video, frame, exportedFrame);
+          const meanRgbDiff = await pixelDifference(file, exportedFrame);
+          previewExportDiffs.push(meanRgbDiff);
+          assert.ok(meanRgbDiff < 3, `${templateId}/${aspect} preview and MP4 frame ${frame} match within H.264 tolerance (MAE ${meanRgbDiff.toFixed(3)})`);
+          previewExportFiles.push(file, exportedFrame);
+          previewExportLabels.push(`Preview ${frame}`, `MP4 ${frame}`);
         }
         const startBeat = captured.get(59)!.result.layout;
         const nextBeat = captured.get(60)!.result.layout;
         assert.ok(startBeat.some(item => item.beatId === 'beat-a'), `${templateId} frame 59 reports beat-a`);
         assert.ok(nextBeat.some(item => item.beatId === 'beat-b'), `${templateId} frame 60 switches exactly to beat-b`);
-        const repeatFile = join(screenshots, `v1.9.0_16-9_motion-${templateId}_still-71-repeat.png`);
+        const repeatFile = join(comparisonDir, 'preview-71-repeat.png');
         await renderCapture({ serveUrl, browser, storyboard: baseBoard, frame: 71, output: repeatFile });
         assert.equal(await pixelHash(captured.get(71)!.file), await pixelHash(repeatFile), `${templateId} repeated frame-71 renders are pixel-deterministic`);
 
         // Compare reduced motion at the midpoint of each active beat so the static fallback is distinct from an in-progress action.
         for (const frame of [11, 90]) {
-          const reducedFile = join(screenshots, `v1.9.0_16-9_motion-${templateId}_reduced-${frame}.png`);
+          const reducedFile = join(comparisonDir, `reduced-${frame}.png`);
           await renderCapture({ serveUrl, browser, storyboard: boardFor(true), frame, output: reducedFile });
           const normalFile = frame === 11 ? captured.get(11)!.file : captured.get(71)!.file;
           const difference = await pixelDifference(normalFile, reducedFile);
@@ -387,7 +402,8 @@ async function renderMotionSamples(serveUrl: string, browser: Awaited<ReturnType
           frameFiles.push(reducedFile);
           labels.push(`Reduced motion ${frame}`);
         }
-        await makeContactSheet(frameFiles, join(screenshots, `v1.9.0_16-9_motion-${templateId}-strip.png`), labels);
+        await makeContactSheet(frameFiles, join(screenshots, `v1.9.0_${aspect.replace(':', '-')}_motion-${templateId}-strip.png`), labels);
+        await makeContactSheet(previewExportFiles, join(screenshots, `v1.9.0_${aspect.replace(':', '-')}_motion-${templateId}-preview-export-strip.png`), previewExportLabels);
 
         const actionAStart = frameFiles[0]!;
         const actionAEnd = frameFiles[4]!;
@@ -395,9 +411,8 @@ async function renderMotionSamples(serveUrl: string, browser: Awaited<ReturnType
         const actionBEnd = frameFiles[10]!;
         assert.ok(await pixelDifference(actionAStart, actionAEnd) > 0, `${templateId} first action changes the rendered frame`);
         assert.ok(await pixelDifference(actionBStart, actionBEnd) > 0, `${templateId} second action changes the rendered frame`);
-      } else {
-        assert.ok(await pixelDifference(frameFiles[2]!, frameFiles[4]!) > 0, `${templateId} portrait first action changes the rendered frame`);
-        assert.ok(await pixelDifference(frameFiles[7]!, frameFiles[10]!) > 0, `${templateId} portrait second action changes the rendered frame`);
+        assert.ok(previewExportDiffs.every(value => value < 3), `${templateId}/${aspect} all preview/MP4 still pairs are within H.264 tolerance`);
+        console.log(`${templateId}/${aspect}: composition preview vs MP4 frame RGB MAE ${Math.min(...previewExportDiffs).toFixed(3)}–${Math.max(...previewExportDiffs).toFixed(3)} across ${previewExportDiffs.length} frames.`);
       }
     }
   }
@@ -417,7 +432,7 @@ async function main() {
     console.log(`Motion/density MP4 rendering uses ${chromiumOptions ? 'SwiftShader CPU-only Chromium' : 'the default Chromium backend'}.`);
     try {
       for (const aspect of ['16:9', '9:16'] as const) await renderDensitySamples(serveUrl, browser, aspect);
-      await renderMotionSamples(serveUrl, browser);
+      await renderMotionSamples(serveUrl, browser, temp);
     } finally {
       await browser.close({ silent: true });
     }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { createRequire } from 'node:module';
-import { brandLogoPlacement, captionSafeArea, rendererScale, SceneSchema, SubtitleSchema, VisualPlanSchema, type Scene, type VisualTemplateId } from '@m2v/schema';
+import { brandLogoPlacement, captionSafeArea, rendererScale, SceneSchema, StoryboardSchema, SubtitleSchema, VisualPlanSchema, type Scene, type VisualTemplateId } from '@m2v/schema';
 import { resolveBrandTheme } from '@m2v/styles';
 import { VisualTemplateContent, visualTemplateRegistry } from '../src/visual-templates';
 import { visualQualityStoryboard } from './fixtures/v19-visual-quality';
@@ -140,4 +140,46 @@ test('chart number-count is frame-driven and reduced motion shows the complete s
   assert.match(end, />120<\/strong>/);
   assert.match(reducedStart, />120<\/strong>/);
   assert.equal(reducedStart, reducedEnd, 'reduced motion remains static across frames');
+});
+
+test('all visual style packs keep CJK/Latin fallback and render stable stills with reduced motion', () => {
+  const source = visualQualityStoryboard.scenes.find(item => item.id === templateSceneIds.chart)!;
+  const beats = [{ id: 'quarter-1', narrationText: '第一季度，Q1 活跃用户 120。', targetIds: ['scene-title'] }];
+  const scene = SceneSchema.parse({
+    ...source,
+    title: '第一季度 Q1 活跃用户 120',
+    visualBeats: beats,
+    visualPlan: VisualPlanSchema.parse({
+      templateId: 'chart', beats,
+      motionPresets: [{ targetId: 'scene-title', beatRef: 'quarter-1', durationPolicy: 'fixed', durationFrames: 30, action: 'reveal', parameters: { direction: 'up' } }],
+    }),
+  });
+
+  for (const pack of ['editorial-tech', 'clean-data', 'paper-collage-lite'] as const) {
+    const packTheme = resolveBrandTheme('minimal-tech', undefined, pack);
+    const dynamicStart = renderToStaticMarkup(createElement(VisualTemplateContent, { scene, templateId: 'chart', theme: packTheme, portrait: false, fps: 30, frame: 0 }));
+    const dynamicMiddle = renderToStaticMarkup(createElement(VisualTemplateContent, { scene, templateId: 'chart', theme: packTheme, portrait: false, fps: 30, frame: 15 }));
+    const reducedStart = renderToStaticMarkup(createElement(VisualTemplateContent, { scene, templateId: 'chart', theme: packTheme, portrait: false, fps: 30, frame: 0, reducedMotion: true }));
+    const reducedLater = renderToStaticMarkup(createElement(VisualTemplateContent, { scene, templateId: 'chart', theme: packTheme, portrait: false, fps: 30, frame: 30, reducedMotion: true }));
+    assert.notEqual(dynamicStart, dynamicMiddle, `${pack}: motion is frame-driven`);
+    assert.equal(reducedStart, reducedLater, `${pack}: reduced motion is a stable still`);
+    assert.equal(dynamicStart, renderToStaticMarkup(createElement(VisualTemplateContent, { scene, templateId: 'chart', theme: packTheme, portrait: false, fps: 30, frame: 0 })), `${pack}: offline same-snapshot rendering is deterministic`);
+    assert.match(reducedStart, /第一季度 Q1 活跃用户 120/);
+    assert.match(reducedStart, /font-family:.*(?:Arial|Georgia).*Microsoft YaHei/s, `${pack}: rendered headings keep CJK/Latin fallback`);
+    assert.doesNotMatch(reducedStart, /https?:\/\/|url\(|<img\b|<iframe\b/i, `${pack}: still needs no network assets`);
+  }
+});
+
+test('older Style with HTML, Code and PPT Preserve scenes remains unchanged without Brand or Style Pack', () => {
+  const scenes = [
+    { id: 'html-preserve', type: 'html', title: 'HTML 原页', narration: '保留 HTML。', visual: { html: '<main><h1>原页</h1></main>' } },
+    { id: 'code-preserve', type: 'code', title: 'Code 原文', narration: '保留代码。', visual: { code: 'const answer = 42;', language: 'typescript' } },
+    { id: 'ppt-preserve', type: 'media', title: 'PPT 原页', narration: '保留幻灯片。', visual: { src: 'projects/demo/assets/slide-1.png', fullBleed: true } },
+  ];
+  const board = StoryboardSchema.parse({ title: '旧项目', styleId: 'academic', transition: 'cut', scenes });
+  assert.equal(board.stylePack, undefined);
+  assert.equal(board.brand, undefined);
+  assert.equal(board.styleId, 'academic');
+  assert.deepEqual(board.scenes.map(scene => scene.visual), scenes.map(scene => scene.visual));
+  assert.ok(board.scenes.every(scene => scene.visualPlan === undefined), 'preserve scenes do not get rewritten as standard VisualPlans');
 });

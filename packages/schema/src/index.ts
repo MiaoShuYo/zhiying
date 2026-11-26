@@ -5,7 +5,7 @@ import { CodeVisualSchema } from './code-visual';
 import { StyleIdSchema } from './style-id';
 import { VisualBeatSchema, VisualPlanSchema, visualTemplateSupportsScene } from './visual-plan';
 import { VisualDensitySettingsSchema } from './visual-density';
-import { StylePackIdSchema } from './style-pack';
+import { StylePackIdSchema, StylePackProvenanceSchema } from './style-pack';
 import { SoundEffectsSettingsSchema, SfxCueSchema } from './sound-effects';
 
 export { StyleIdSchema } from './style-id';
@@ -171,6 +171,8 @@ export const StoryboardSchema = z.object({
   aspectRatio: AspectRatioSchema.default('16:9'),
   styleId: StyleIdSchema,
   stylePack: StylePackIdSchema.optional(),
+  /** Captured license/source record; optional so older project snapshots remain valid. */
+  stylePackProvenance: StylePackProvenanceSchema.optional(),
   soundEffects: SoundEffectsSettingsSchema.optional(),
   durationTarget: z.number().positive().optional(),
   subtitles: SubtitleSchema.optional(),
@@ -188,6 +190,9 @@ export const StoryboardSchema = z.object({
   reducedMotion: z.boolean().optional(),
   scenes: z.array(SceneSchema).min(1),
 }).superRefine((storyboard, ctx) => {
+  if (storyboard.stylePackProvenance && storyboard.stylePackProvenance.stylePackId !== storyboard.stylePack) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['stylePackProvenance', 'stylePackId'], message: '风格包许可记录必须对应当前选用的风格包' });
+  }
   if (storyboard.bgmSrc && !/^(?:projects\/[A-Za-z0-9_-]+\/assets\/[^/]+|audio\/[^/]+)$/.test(storyboard.bgmSrc)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bgmSrc'], message: 'BGM 必须引用本地项目素材' });
   }

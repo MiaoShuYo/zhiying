@@ -1,5 +1,4 @@
-import type { BrandPalette } from '@m2v/schema';
-import type { StylePackId } from '@m2v/schema';
+import type { BrandPalette, StylePackId, StylePackProvenance } from '@m2v/schema';
 
 export type VisualStylePack = {
   id: StylePackId;
@@ -32,8 +31,8 @@ export const visualStylePacks: Record<StylePackId, VisualStylePack> = {
   },
   'clean-data': {
     id: 'clean-data', name: 'Clean Data',
-    provenance: { version: '1.0.0', source: 'm2v-procedural', license: 'MIT', assets: 'procedural-only', fonts: 'system-fonts-not-bundled' },
-    colors: { bg: '#f2f7fb', fg: '#182c40', muted: '#61758a', accent: '#2279c8', card: '#ffffff', secondary: '#61b9a6' },
+    provenance: { version: '1.0.1', source: 'm2v-procedural', license: 'MIT', assets: 'procedural-only', fonts: 'system-fonts-not-bundled' },
+    colors: { bg: '#f2f7fb', fg: '#182c40', muted: '#5a6f84', accent: '#2279c8', card: '#ffffff', secondary: '#61b9a6' },
     visual: { mode: 'light', background: 'solid', density: 'balanced' },
     typography: { headingFont: 'Arial', bodyFont: 'Arial', titleScale: 1.04, bodyScale: 1, maxWordsPerScreen: 38 },
     layout: { padding: 94, alignment: 'left', cardStyle: 'flat', borderRadius: 14 },
@@ -41,8 +40,8 @@ export const visualStylePacks: Record<StylePackId, VisualStylePack> = {
   },
   'paper-collage-lite': {
     id: 'paper-collage-lite', name: 'Paper Collage Lite',
-    provenance: { version: '1.0.0', source: 'm2v-procedural', license: 'MIT', assets: 'procedural-only', fonts: 'system-fonts-not-bundled' },
-    colors: { bg: '#f4eddd', fg: '#292922', muted: '#756d5c', accent: '#b34d36', card: '#fffaf0', secondary: '#e6c995' },
+    provenance: { version: '1.0.1', source: 'm2v-procedural', license: 'MIT', assets: 'procedural-only', fonts: 'system-fonts-not-bundled' },
+    colors: { bg: '#f4eddd', fg: '#292922', muted: '#6e6656', accent: '#b34d36', card: '#fffaf0', secondary: '#e6c995' },
     visual: { mode: 'light', background: 'paper', density: 'balanced' },
     typography: { headingFont: 'Georgia', bodyFont: 'Arial', titleScale: 1.02, bodyScale: 1, maxWordsPerScreen: 34 },
     layout: { padding: 102, alignment: 'left', cardStyle: 'soft', borderRadius: 8 },
@@ -51,3 +50,28 @@ export const visualStylePacks: Record<StylePackId, VisualStylePack> = {
 };
 
 export const stylePackOptions = Object.values(visualStylePacks).map(({ id, name }) => ({ id, name }));
+
+/** A JSON-safe resource/license manifest stored with storyboard project snapshots. */
+export function visualStylePackProvenance(stylePackId: StylePackId): StylePackProvenance {
+  const pack = visualStylePacks[stylePackId];
+  const fonts = [...new Set([pack.typography.headingFont, pack.typography.bodyFont])];
+  return {
+    stylePackId,
+    version: pack.provenance.version,
+    source: pack.provenance.source,
+    license: pack.provenance.license,
+    licenseUrl: 'https://opensource.org/license/mit/',
+    assets: [{
+      name: 'Procedural backgrounds, grids, paper texture and component treatments',
+      source: 'procedural-css',
+      license: pack.provenance.license,
+      offline: true,
+    }],
+    fonts: fonts.map(family => ({
+      family,
+      source: 'system-font' as const,
+      bundled: false as const,
+      license: 'system-vendor-terms' as const,
+    })),
+  };
+}

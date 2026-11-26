@@ -4,6 +4,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import type { StylePackProvenance } from '@m2v/schema';
 
 type Entry = { path: string; size: number; sha256: string };
 type ArchiveManifest = {
@@ -104,8 +105,15 @@ async function main() {
       storyboardJson: JSON.stringify(storyboard),
     } });
 
-    const savedStoryboard = await saveStoryboard(project.id, storyboard);
+    const savedStoryboard = await saveStoryboard(project.id, storyboard) as typeof storyboard & { stylePackProvenance?: StylePackProvenance };
     assert.equal(savedStoryboard.stylePack, 'paper-collage-lite', 'save preserves the optional style pack');
+    const stylePackProvenance = savedStoryboard.stylePackProvenance;
+    assert.ok(stylePackProvenance, 'save snapshots the selected style pack and its local license metadata');
+    assert.equal(stylePackProvenance.stylePackId, 'paper-collage-lite');
+    assert.equal(stylePackProvenance.source, 'm2v-procedural');
+    assert.equal(stylePackProvenance.license, 'MIT');
+    assert.ok(stylePackProvenance.assets.length > 0 && stylePackProvenance.assets.every(asset => asset.offline && asset.source === 'procedural-css' && asset.license === 'MIT'));
+    assert.ok(stylePackProvenance.fonts.length > 0 && stylePackProvenance.fonts.every(font => font.source === 'system-font' && !font.bundled));
     assert.equal(savedStoryboard.soundEffects?.enabled, true, 'save preserves the SFX mixer settings');
     assert.equal(savedStoryboard.scenes[0]?.sfxCues?.[0]?.targetId, 'hero-copy');
     assert.equal(savedStoryboard.scenes[0]?.sfxCues?.[0]?.beatRef, 'opening-beat');
@@ -116,7 +124,8 @@ async function main() {
     assert.equal(projectLogoSrc, `projects/${project.id}/assets/brand-logos/${logoHash}.png`);
     assert.deepEqual(await readFile(join(sandbox, 'data', projectLogoSrc)), logoBytes, 'save copies the Logo into project-owned storage');
     assert.deepEqual(await readFile(join(sandbox, 'apps/web/public', projectLogoSrc)), logoBytes, 'save writes a static public mirror');
-    const storedBoard = JSON.parse((await db.project.findUniqueOrThrow({ where: { id: project.id } })).storyboardJson!) as typeof storyboard;
+    const storedBoard = JSON.parse((await db.project.findUniqueOrThrow({ where: { id: project.id } })).storyboardJson!) as typeof storyboard & { stylePackProvenance?: StylePackProvenance };
+    assert.deepEqual(storedBoard.stylePackProvenance, stylePackProvenance, 'reloading the persisted storyboard retains its pinned style manifest');
     const resavedStoryboard = await saveStoryboard(project.id, storedBoard);
     assert.equal(resavedStoryboard.brand!.logo!.src, projectLogoSrc, 'saving an existing snapshot keeps its content-addressed Logo path stable');
     await updateBrandKit(kitId, { colors: { accent: '#123456' } });
@@ -131,6 +140,8 @@ async function main() {
     assert.ok(snapshotId);
     const snapshotDir = join(sandbox, 'data/backups', project.id, snapshotId!);
     const snapshotManifest = JSON.parse(await readFile(join(snapshotDir, 'manifest.json'), 'utf8')) as ArchiveManifest;
+    const snapshotBoard = JSON.parse(snapshotManifest.project.storyboardJson!) as typeof savedStoryboard;
+    assert.deepEqual(snapshotBoard.stylePackProvenance, stylePackProvenance, 'snapshot stores the exact style and license provenance');
     const projectLogoArchivePath = `project/assets/brand-logos/${logoHash}.png`;
     assert.ok(snapshotManifest.files.some(file => file.path === projectLogoArchivePath), 'snapshot includes its project-owned Logo');
     assert.equal(snapshotManifest.files.some(file => file.path === logoSrc), false, 'snapshot no longer depends on the Brand Kit library file');
@@ -139,12 +150,13 @@ async function main() {
 
     const restoredSnapshotId = await restoreSnapshot(project.id, snapshotId!);
     const restoredSnapshot = await db.project.findUniqueOrThrow({ where: { id: restoredSnapshotId } });
-    const restoredSnapshotBoard = JSON.parse(restoredSnapshot.storyboardJson!) as typeof storyboard;
+    const restoredSnapshotBoard = JSON.parse(restoredSnapshot.storyboardJson!) as typeof savedStoryboard;
     const restoredLogoSrc = `projects/${restoredSnapshotId}/assets/brand-logos/${logoHash}.png`;
     assert.equal(restoredSnapshotBoard.brandKitId, kitId, 'restore preserves provenance even when its source kit no longer exists');
     assert.equal(restoredSnapshotBoard.brand.logo.src, restoredLogoSrc);
     assert.equal(restoredSnapshotBoard.brand.colors.accent, '#50e3c2');
     assert.equal(restoredSnapshotBoard.stylePack, 'paper-collage-lite', 'snapshot restore preserves the optional style pack');
+    assert.deepEqual(restoredSnapshotBoard.stylePackProvenance, stylePackProvenance, 'snapshot restore preserves pinned style/license metadata for deterministic offline rendering');
     assert.equal(restoredSnapshotBoard.soundEffects.enabled, true, 'snapshot restore preserves SFX settings');
     assert.equal(restoredSnapshotBoard.scenes[0].sfxCues[0].targetId, 'hero-copy');
     assert.equal(restoredSnapshotBoard.scenes[0].sfxCues[0].beatRef, 'opening-beat');
@@ -164,9 +176,10 @@ async function main() {
 
     const restoredArchiveId = await importBackup(new Request('http://localhost/import', { method: 'POST', body: archive }));
     const restoredArchive = await db.project.findUniqueOrThrow({ where: { id: restoredArchiveId } });
-    const restoredArchiveBoard = JSON.parse(restoredArchive.storyboardJson!) as typeof storyboard;
+    const restoredArchiveBoard = JSON.parse(restoredArchive.storyboardJson!) as typeof savedStoryboard;
     assert.equal(restoredArchiveBoard.brandKitId, kitId);
     assert.equal(restoredArchiveBoard.stylePack, 'paper-collage-lite', '.m2v import preserves the optional style pack');
+    assert.deepEqual(restoredArchiveBoard.stylePackProvenance, stylePackProvenance, '.m2v import preserves the exact style/license metadata');
     assert.equal(restoredArchiveBoard.soundEffects.enabled, true, '.m2v import preserves SFX settings');
     assert.equal(restoredArchiveBoard.scenes[0].sfxCues[0].targetId, 'hero-copy');
     assert.equal(restoredArchiveBoard.scenes[0].sfxCues[0].beatRef, 'opening-beat');
@@ -180,6 +193,7 @@ async function main() {
     const legacyStoryboard = JSON.parse(legacyManifest.project.storyboardJson!) as Record<string, unknown>;
     delete legacyStoryboard.brand;
     delete legacyStoryboard.stylePack;
+    delete legacyStoryboard.stylePackProvenance;
     delete legacyStoryboard.soundEffects;
     const legacyScenes = legacyStoryboard.scenes as Record<string, unknown>[];
     for (const scene of legacyScenes) {

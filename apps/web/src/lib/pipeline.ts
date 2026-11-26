@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { basename, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { sanitizeSceneHtml, SceneSchema as SceneSchemaForPipeline, StoryboardSchema, StylePackIdSchema, applyDensitySettings, selectRuleVisualPlans, defaultVisualDensitySettings, codeLines, codeVisualOf, normalizeCodeVisualInput, resolveCodeSceneMode, type Scene, type Storyboard, type StylePackId } from '@m2v/schema';
 import { db } from './db';
+import { visualStylePackProvenance } from '@m2v/styles';
 import { copyBrandLogoToProject } from './brand-kit-logo-files';
 import { applyPendingBrandSnapshot, consumePendingBrandKitId, readImportSettings, resolveCreationBrandKitId, writeImportSettings } from './brand-kit-pending';
 import { pageBody } from './extraction';
@@ -1632,7 +1633,7 @@ async function runProject(projectId: string, startAt: ProjectStage, preferLocalA
       return { ...scene, visual: { ...scene.visual, html: sanitizeSceneHtml(designedHtml) } };
     });
     // 首次构造 storyboard 时注入 pending 品牌；已存在分镜的项目不会走到这里。
-    const densityStoryboard = StoryboardSchema.parse({ title: project.name, styleId: project.styleId, ...(stylePack ? { stylePack } : {}), aspectRatio: project.aspectRatio, visualDensity: defaultVisualDensitySettings, scenes: finalScenes });
+    const densityStoryboard = StoryboardSchema.parse({ title: project.name, styleId: project.styleId, ...(stylePack ? { stylePack, stylePackProvenance: visualStylePackProvenance(stylePack) } : {}), aspectRatio: project.aspectRatio, visualDensity: defaultVisualDensitySettings, scenes: finalScenes });
     const storyboard: Storyboard = await applyPendingBrandSnapshot(projectId, applyDensitySettings(selectRuleVisualPlans(densityStoryboard), defaultVisualDensitySettings));
     await db.project.update({ where: { id: projectId }, data: { status: 'storyboarding' } });
     await db.job.update({ where: { id: job.id }, data: { stage: 'storyboarding' } });
@@ -1671,13 +1672,28 @@ export function parseProject<T extends { storyboardJson: string | null; assetsJs
 }
 
 export async function saveStoryboard(projectId: string, storyboard: unknown, expectedRevision?: number) {
-  const parsed = StoryboardSchema.parse(storyboard);
+  // The editor keeps the previous snapshot on the board while a user changes
+  // the selected pack. Drop only that stale manifest before validating; the
+  // server below replaces it with the current registry manifest.
+  let candidate = storyboard;
+  if (storyboard && typeof storyboard === 'object' && !Array.isArray(storyboard)) {
+    const copy = { ...(storyboard as Record<string, unknown>) };
+    const provenance = copy.stylePackProvenance as { stylePackId?: unknown } | undefined;
+    if (provenance && provenance.stylePackId !== copy.stylePack) delete copy.stylePackProvenance;
+    candidate = copy;
+  }
+  const parsed = StoryboardSchema.parse(candidate);
   const snapshotLogo = parsed.brand?.logo;
   if (snapshotLogo) {
     snapshotLogo.src = await copyBrandLogoToProject(projectId, snapshotLogo.src);
   }
   const previousProject = await db.project.findUniqueOrThrow({ where: { id: projectId }, select: { storyboardJson: true } });
   const previous = previousProject.storyboardJson ? StoryboardSchema.parse(JSON.parse(previousProject.storyboardJson)) : null;
+  if (!parsed.stylePack) {
+    parsed.stylePackProvenance = undefined;
+  } else if (!parsed.stylePackProvenance || previous?.stylePack !== parsed.stylePack) {
+    parsed.stylePackProvenance = visualStylePackProvenance(parsed.stylePack);
+  }
   const changedRules = JSON.stringify(previous?.pronunciationRules ?? []) !== JSON.stringify(parsed.pronunciationRules ?? []);
   const changedPhrases = changedRules ? [...(previous?.pronunciationRules ?? []), ...(parsed.pronunciationRules ?? [])].map(rule => rule.text) : [];
   for (const scene of parsed.scenes) {

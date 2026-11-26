@@ -13,8 +13,10 @@ const repo = process.cwd();
 const screenshots = resolve(repo, 'docs', 'screenshots', 'v1.9.0');
 const media = resolve(repo, 'docs', 'outputs', 'V1.9.0');
 const edgeBrowserExecutable = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
-const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE?.trim()
-  || (process.platform === 'win32' && existsSync(edgeBrowserExecutable) ? edgeBrowserExecutable : undefined);
+const requestedBrowserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE?.trim();
+const browserExecutable = requestedBrowserExecutable === 'bundled'
+  ? undefined
+  : requestedBrowserExecutable || (process.platform === 'win32' && existsSync(edgeBrowserExecutable) ? edgeBrowserExecutable : undefined);
 const webRequire = createRequire(new URL('../../../apps/web/package.json', import.meta.url));
 const sharp = webRequire('sharp') as (input: unknown) => any;
 const stylePacks = ['editorial-tech', 'clean-data', 'paper-collage-lite'] as const;
@@ -28,6 +30,17 @@ const outputs: { path: string; sha256: string; width: number; height: number; du
 
 function sha256(file: string): string {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+async function pixelHash(file: string): Promise<string> {
+  const pixels = await sharp(file).removeAlpha().raw().toBuffer();
+  return createHash('sha256').update(pixels).digest('hex');
+}
+
+function decodeFrame(video: string, frame: number, fps: number, output: string): void {
+  execFileSync('ffmpeg', [
+    '-v', 'error', '-y', '-i', video, '-ss', (frame / fps).toFixed(6), '-frames:v', '1', output,
+  ], { windowsHide: true, stdio: 'pipe' });
 }
 
 function probe(file: string): { width: number; height: number; duration: number } {
@@ -285,7 +298,7 @@ async function renderOne(serveUrl: string, storyboard: Storyboard, output: strin
   return result;
 }
 
-async function renderStylePacks(serveUrl: string, aspectRatio: '16:9' | '9:16') {
+async function renderStylePacks(serveUrl: string, aspectRatio: '16:9' | '9:16', tempDir: string) {
   const files: string[] = [];
   const hashes = new Set<string>();
   for (const stylePack of stylePacks) {
@@ -294,6 +307,9 @@ async function renderStylePacks(serveUrl: string, aspectRatio: '16:9' | '9:16') 
     const composition = await selectComposition({ serveUrl, id: 'ExplainerVideo', inputProps, browserExecutable });
     const still = join(screenshots, `v1.9.0_${aspectRatio.replace(':', '-')}_style-pack_${stylePack}.png`);
     await renderStill({ composition, serveUrl, inputProps, browserExecutable, output: still, frame: 36, scale: 1 });
+    const duplicate = join(tempDir, `${aspectRatio.replace(':', '-')}-${stylePack}-repeat.png`);
+    await renderStill({ composition, serveUrl, inputProps, browserExecutable, output: duplicate, frame: 36, scale: 1 });
+    assert.equal(await pixelHash(duplicate), await pixelHash(still), `${stylePack}/${aspectRatio} offline repeat still export is pixel-identical`);
     const stillHash = sha256(still);
     assert.ok(!hashes.has(stillHash), `${stylePack} has visually distinct rendered pixels`);
     hashes.add(stillHash);
@@ -301,6 +317,15 @@ async function renderStylePacks(serveUrl: string, aspectRatio: '16:9' | '9:16') 
     const output = join(media, `V1.9.0_${aspectRatio.replace(':', '-')}_style-pack_${stylePack}.mp4`);
     const result = await renderOne(serveUrl, storyboard, output);
     assert.ok(Math.abs(result.duration - 3) < .3, `${stylePack} duration ${result.duration}`);
+    if (stylePack === 'clean-data') {
+      const repeatOutput = join(tempDir, `${aspectRatio.replace(':', '-')}-${stylePack}-repeat.mp4`);
+      await renderMedia({ composition, serveUrl, inputProps, browserExecutable, codec: 'h264', outputLocation: repeatOutput, concurrency: 2 });
+      const firstFrame = join(tempDir, `${aspectRatio.replace(':', '-')}-${stylePack}-first-frame.png`);
+      const repeatFrame = join(tempDir, `${aspectRatio.replace(':', '-')}-${stylePack}-repeat-frame.png`);
+      decodeFrame(output, 36, composition.fps, firstFrame);
+      decodeFrame(repeatOutput, 36, composition.fps, repeatFrame);
+      assert.equal(await pixelHash(firstFrame), await pixelHash(repeatFrame), `${stylePack}/${aspectRatio} independently re-exported H.264 frame is pixel-identical`);
+    }
   }
   await makeContactSheet(files, join(screenshots, `v1.9.0_${aspectRatio.replace(':', '-')}_style-pack_contact.png`), [...stylePacks]);
 }
@@ -395,7 +420,7 @@ async function main() {
     const speechMixOnly = Boolean(process.env.V19_TEST_VOICE_FILE?.trim());
     for (const aspectRatio of ['16:9', '9:16'] as const) {
       if (!speechMixOnly) {
-        await renderStylePacks(serveUrl, aspectRatio);
+        await renderStylePacks(serveUrl, aspectRatio, repoTmp);
         await renderStyleTemplateMatrix(serveUrl, aspectRatio);
       }
       await renderSfx(serveUrl, aspectRatio);

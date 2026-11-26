@@ -7,6 +7,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { db } from './db';
 import { StoryboardSchema, type Storyboard } from '@m2v/schema';
+import { visualStylePackProvenance } from '@m2v/styles';
 import { brandKitLogoSourcePath, managedBrandLogoReference } from './brand-kit-logo-files';
 
 const repo = resolve(process.cwd(), '../..');
@@ -128,6 +129,7 @@ async function snapshot(projectId: string, automatic: boolean) {
   try {
     const rawStoryboard = project.storyboardJson ? JSON.parse(project.storyboardJson) as unknown : null;
     const storyboard = rawStoryboard ? StoryboardSchema.parse(rawStoryboard) : null;
+    if (storyboard?.stylePack && !storyboard.stylePackProvenance) storyboard.stylePackProvenance = visualStylePackProvenance(storyboard.stylePack);
     const sources = await collectSources(projectId, storyboard, true, referencedBrandLogoSrc(rawStoryboard));
     let voiceId = project.voiceId;
     if (!voiceId) { try { voiceId = JSON.parse(await readFile(join(repo, 'data/settings/general-voice.json'), 'utf8')).voiceId; } catch { /* No voice selected. */ } }
@@ -143,7 +145,7 @@ async function snapshot(projectId: string, automatic: boolean) {
     // The manifest records who owns a legacy shared final.mp4, so a restored project keeps
     // exactly one downloadable record instead of handing the same file to every record.
     const sharedOwner = files.some(file => file.path === `project/output/${SHARED_VIDEO}`) ? sharedVideoOwner(jobs) : null;
-    const manifest: Manifest = { version: 1, id, createdAt: new Date().toISOString(), locked: false, project: { ...record, voiceId: voiceId ?? null }, jobs: jobs.map(job => ({ kind: job.kind, status: job.status, stage: job.stage, outputPath: job.id === sharedOwner ? SHARED_VIDEO : job.outputPath, inputJson: job.inputJson, error: job.error, createdAt: job.createdAt.toISOString() })), files };
+    const manifest: Manifest = { version: 1, id, createdAt: new Date().toISOString(), locked: false, project: { ...record, storyboardJson: storyboard ? JSON.stringify(storyboard) : record.storyboardJson, voiceId: voiceId ?? null }, jobs: jobs.map(job => ({ kind: job.kind, status: job.status, stage: job.stage, outputPath: job.id === sharedOwner ? SHARED_VIDEO : job.outputPath, inputJson: job.inputJson, error: job.error, createdAt: job.createdAt.toISOString() })), files };
     await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest)); await renameWithRetry(directory, final);
     const snapshots = await listSnapshots(projectId);
     for (const old of snapshots.filter(item => !item.locked).slice(RETAIN_UNLOCKED)) await rm(join(root, projectId, safeId(old.id)), { recursive: true, force: true });
@@ -333,6 +335,7 @@ async function restoreManifest(manifest: Manifest, filesRoot: string) {
     const rewrite = (value: unknown): unknown => typeof value === 'string' ? remap.get(value) ?? value.replaceAll(`projects/${oldId}/`, `projects/${newId}/`) : Array.isArray(value) ? value.map(rewrite) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, rewrite(v)])) : value;
     const rewrittenRawStoryboard = rawStoryboard ? rewrite(rawStoryboard) as Record<string, unknown> : null;
     const board = rewrittenRawStoryboard ? StoryboardSchema.parse(rewrittenRawStoryboard) : null;
+    if (board?.stylePack && !board.stylePackProvenance) board.stylePackProvenance = visualStylePackProvenance(board.stylePack);
     const assets = JSON.parse(manifest.project.assetsJson) as { path: string; name: string }[];
     const audioTargets = new Set(remap.values());
     // Uploaded BGM is stored as a project asset (`projects/<id>/assets/...`),
@@ -458,6 +461,7 @@ export async function writeProjectArchive(projectId: string, target: string, opt
   const project = await db.project.findUniqueOrThrow({ where: { id: projectId }, include: { jobs: true } });
   const rawStoryboard = project.storyboardJson ? JSON.parse(project.storyboardJson) as unknown : null;
   const storyboard = rawStoryboard ? StoryboardSchema.parse(rawStoryboard) : null;
+  if (storyboard?.stylePack && !storyboard.stylePackProvenance) storyboard.stylePackProvenance = visualStylePackProvenance(storyboard.stylePack);
   const sources = await collectSources(projectId, storyboard, options.includeOutput ?? false, referencedBrandLogoSrc(rawStoryboard));
   let voiceId = project.voiceId;
   if (!voiceId) { try { voiceId = JSON.parse(await readFile(join(repo, 'data/settings/general-voice.json'), 'utf8')).voiceId; } catch { /* No voice selected. */ } }
@@ -471,7 +475,7 @@ export async function writeProjectArchive(projectId: string, target: string, opt
   // Only the newest record may claim a legacy shared final.mp4; with the output folder
   // excluded this is null, and every record keeps the name it was stored with.
   const sharedOwner = sources.some(item => item.path === `project/output/${SHARED_VIDEO}`) ? sharedVideoOwner(jobs) : null;
-  const manifest: Manifest = { version: 1, id: randomUUID(), createdAt: new Date().toISOString(), locked: false, project: { ...record, voiceId: voiceId ?? null }, jobs: jobs.map(job => ({ kind: job.kind, status: job.status, stage: job.stage, outputPath: job.id === sharedOwner ? SHARED_VIDEO : job.outputPath, inputJson: job.inputJson, error: job.error, createdAt: job.createdAt.toISOString() })), files };
+  const manifest: Manifest = { version: 1, id: randomUUID(), createdAt: new Date().toISOString(), locked: false, project: { ...record, storyboardJson: storyboard ? JSON.stringify(storyboard) : record.storyboardJson, voiceId: voiceId ?? null }, jobs: jobs.map(job => ({ kind: job.kind, status: job.status, stage: job.stage, outputPath: job.id === sharedOwner ? SHARED_VIDEO : job.outputPath, inputJson: job.inputJson, error: job.error, createdAt: job.createdAt.toISOString() })), files };
   const raw = Buffer.from(JSON.stringify(manifest));
   const prefix = Buffer.alloc(12);
   prefix.write('M2VBK001');

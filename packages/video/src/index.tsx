@@ -22,10 +22,27 @@ export * from './sfx';
 function FitContent({ children, signature, onOverflow, minimumScale = .62 }: { children: React.ReactNode; signature: string; onOverflow?: (overflowing: boolean) => void; minimumScale?: number }) {
   const outer = useRef<HTMLDivElement>(null), inner = useRef<HTMLDivElement>(null);
   const [factor, setFactor] = useState(1);
+  const { width: compositionWidth, height: compositionHeight } = useVideoConfig();
   useLayoutEffect(() => {
     const handle = delayRender('计算场景排版'); let stopped = false, continued = false;
     const unblock = () => { if (!continued) { continued = true; continueRender(handle); } };
-    const measure = () => { if (stopped || !outer.current || !inner.current) return; const available = outer.current; const content = inner.current; const raw = Math.min(1, available.clientHeight / Math.max(1, content.scrollHeight), available.clientWidth / Math.max(1, content.scrollWidth)); const floor = Math.min(1, Math.max(.62, minimumScale)); const next = Math.max(floor, raw); const overflowing = raw < floor; available.dataset.visualQaOverflow = String(overflowing); setFactor(next); onOverflow?.(minimumScale > .62 ? overflowing : raw < .9); };
+    const measure = () => {
+      if (stopped || !outer.current || !inner.current) return;
+      const available = outer.current;
+      const content = inner.current;
+      // Remotion first mounts the composition in a small probe viewport (often 200x150),
+      // then resizes Chromium to the actual composition dimensions. Measuring text wrapping
+      // in that probe viewport incorrectly scales dense scenes and leaves stale QA overflow.
+      // Keep the initial factor at 1; ResizeObserver remeasures after the real viewport arrives.
+      if (available.clientWidth < compositionWidth * .5 || available.clientHeight < compositionHeight * .5) return;
+      const raw = Math.min(1, available.clientHeight / Math.max(1, content.scrollHeight), available.clientWidth / Math.max(1, content.scrollWidth));
+      const floor = Math.min(1, Math.max(.62, minimumScale));
+      const next = Math.max(floor, raw);
+      const overflowing = raw < floor;
+      available.dataset.visualQaOverflow = String(overflowing);
+      setFactor(next);
+      onOverflow?.(minimumScale > .62 ? overflowing : raw < .9);
+    };
     void document.fonts.ready.then(() => { measure(); requestAnimationFrame(unblock); });
     const observer = new ResizeObserver(measure); if (inner.current) observer.observe(inner.current);
     return () => { stopped = true; observer.disconnect(); unblock(); };

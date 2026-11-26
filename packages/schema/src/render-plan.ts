@@ -149,6 +149,7 @@ export function segmentPlan(input: SegmentPlanInput): RenderPlan {
     fps,
     styleId: storyboard.styleId,
     ...(storyboard.stylePack ? { stylePack: storyboard.stylePack } : {}),
+    ...(storyboard.stylePackProvenance ? { stylePackProvenance: storyboard.stylePackProvenance } : {}),
     ...(storyboard.soundEffects ? { soundEffects: storyboard.soundEffects } : {}),
     aspectRatio: storyboard.aspectRatio,
     subtitles: storyboard.subtitles ?? null,
