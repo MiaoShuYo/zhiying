@@ -63,7 +63,7 @@ export function VisualTemplateContent({ scene, templateId, theme, portrait, fram
     const staged = beatTargets.has(semanticTarget);
     return {
       ...motionStyleForTarget({ targetId, scene, frame, fps, reducedMotion }),
-      ...(staged && activeBeat && !activeBeat.targetIds.includes(semanticTarget) ? { display: 'none' } : {}),
+      ...(targetId !== 'scene-title' && staged && activeBeat && !activeBeat.targetIds.includes(semanticTarget) ? { display: 'none' } : {}),
     };
   };
   const title = scene.title?.trim() || (templateId === 'hero' ? '要点' : '');

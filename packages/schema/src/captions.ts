@@ -5,7 +5,7 @@ export type WordTiming = { text: string; start: number; end: number };
 export type CaptionCue = { text: string; start: number; end: number };
 
 /** Use original words and punctuation, even when the aligner returns letters. */
-export function buildCaptionCues(narration: string, timings: WordTiming[] = [], duration = 6, portrait = false): CaptionCue[] {
+export function buildCaptionCues(narration: string, timings: WordTiming[] = [], duration = 6, portrait = false, fontSize = 30): CaptionCue[] {
   const units = [...narration.matchAll(/[A-Za-z0-9]+(?:['’.-][A-Za-z0-9]+)*|[^\s]/gu)];
   if (!units.length) return [];
   const source = [...narration.matchAll(/[\p{L}\p{N}]/gu)];
@@ -24,8 +24,15 @@ export function buildCaptionCues(narration: string, timings: WordTiming[] = [], 
   const groups: { text: string; from: number; to: number }[] = [];
   let from = units[0].index!;
   let length = 0;
-  // Two short lines at most. Never split an English word into letters.
-  const limit = portrait ? 24 : 38;
+  // Keep automatic cues within the renderer's two-line caption band. The
+  // horizontal content width is 90% of the canvas minus 36 design pixels of
+  // padding; scale cancels because both the font and padding use rendererScale.
+  // A fixed 24-character portrait limit needlessly split ordinary Chinese
+  // sentences (often leaving only the last few characters in the next cue).
+  const portraitWidth = 1080 * 0.9 - 36;
+  const limit = portrait
+    ? Math.max(12, Math.floor(2 * portraitWidth / Math.max(18, fontSize)))
+    : 38;
   for (let i = 0; i < units.length; i++) {
     const unit = units[i];
     const weight = /^[A-Za-z0-9]/.test(unit[0]) ? unit[0].length * 0.55 : 1;
@@ -98,10 +105,10 @@ function manualCues(cues: CaptionCue[], limit: number): CaptionCue[] {
 }
 
 /** Single source of truth for captions in the preview, the export and the delivery check. */
-export function resolveCaptionCues(scene: CaptionScene, duration = captionDuration(scene), portrait = false): CaptionCue[] {
+export function resolveCaptionCues(scene: CaptionScene, duration = captionDuration(scene), portrait = false, fontSize = 30): CaptionCue[] {
   const manual = manualCues(scene.subtitleCues ?? [], duration);
   if (manual.length) return manual;
-  return buildCaptionCues(captionNarration(scene), scene.wordTimings, duration, portrait);
+  return buildCaptionCues(captionNarration(scene), scene.wordTimings, duration, portrait, fontSize);
 }
 
 export function hasManualCues(scene: { subtitleCues?: CaptionCue[] }): boolean {
@@ -131,7 +138,7 @@ export function subtitleCues(board: Storyboard): SubtitleLayerCue[] {
   const portrait = board.aspectRatio === '9:16';
   return board.scenes.flatMap((scene, sceneIndex) => {
     const offset = timeline.scenes[sceneIndex]?.start ?? 0;
-    return resolveCaptionCues(scene, captionDuration(scene), portrait)
+    return resolveCaptionCues(scene, captionDuration(scene), portrait, board.subtitles?.fontSize ?? 30)
       .map((cue, cueIndex) => ({ ...cue, start: cue.start + offset, end: cue.end + offset, sceneIndex, cueIndex }));
   });
 }

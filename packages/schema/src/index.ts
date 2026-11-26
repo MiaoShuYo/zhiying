@@ -4,7 +4,7 @@ import { BrandSnapshotSchema } from './brand-kit';
 import { CodeVisualSchema } from './code-visual';
 import { StyleIdSchema } from './style-id';
 import { VisualBeatSchema, VisualPlanSchema, visualTemplateSupportsScene } from './visual-plan';
-import { VisualDensitySettingsSchema } from './visual-density';
+import { VisualDensitySettingsSchema, VisualBeatTimingDiagnosticSchema } from './visual-density';
 import { StylePackIdSchema, StylePackProvenanceSchema } from './style-pack';
 import { SoundEffectsSettingsSchema, SfxCueSchema } from './sound-effects';
 
@@ -64,6 +64,7 @@ const BaseSceneSchema = z.object({
   visualPlan: VisualPlanSchema.optional(),
   visualBeats: z.array(VisualBeatSchema).max(80).optional(),
   visualBeatsProvenance: z.enum(['rule', 'user']).optional(),
+  visualBeatTimingDiagnostic: VisualBeatTimingDiagnosticSchema.optional(),
   sfxCues: z.array(SfxCueSchema).max(80).optional(),
 });
 

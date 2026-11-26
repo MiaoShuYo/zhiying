@@ -146,9 +146,37 @@ test('concise, balanced and complete strategies group semantic targets without c
     assert.equal(result.visualBeats!.filter(beat => beat.narrationText.length > 0).length, 4);
     return result.visualBeats!.map(beat => beat.targetIds.length);
   };
-  assert.deepEqual(perBeatCounts('concise'), Array(13).fill(1));
-  assert.deepEqual(perBeatCounts('balanced'), [2, 2, 2, 2, 2, 2, 1]);
-  assert.deepEqual(perBeatCounts('complete'), [3, 3, 3, 3, 1]);
+  assert.deepEqual(perBeatCounts('concise'), Array(12).fill(1));
+  assert.deepEqual(perBeatCounts('balanced'), Array(6).fill(2));
+  assert.deepEqual(perBeatCounts('complete'), Array(4).fill(3));
+});
+
+test('five-item nested-list narration stays aligned with staged bullets while the scene title remains visible', () => {
+  const sample = visualQualitySourceSamples.nestedBullets;
+  const narrationParts = sample.items.map(item => item.text);
+  const scene = SceneSchema.parse({
+    id: 'v190-density-nested-list-beat-alignment',
+    type: 'bullets',
+    title: sample.title,
+    narration: narrationParts.join(''),
+    duration: 8,
+    visual: { items: sample.items },
+  });
+  const result = applyVisualDensity(scene, '9:16', defaultVisualDensitySettings);
+  const beats = result.visualBeats!;
+
+  assert.deepEqual(beats.map(beat => beat.targetIds), [
+    ['bullet-1', 'bullet-2'],
+    ['bullet-3', 'bullet-4'],
+    ['bullet-5'],
+  ]);
+  assert.deepEqual(beats.map(beat => beat.narrationText), [
+    narrationParts[0]! + narrationParts[1]!,
+    narrationParts[2]! + narrationParts[3]!,
+    narrationParts[4]!,
+  ]);
+  assert.ok(beats.every(beat => !beat.targetIds.includes('scene-title')));
+  assert.equal(beats.map(beat => beat.narrationText).join(''), scene.narration);
 });
 
 test('disabled auto split and manually locked scenes do not get rewritten', () => {

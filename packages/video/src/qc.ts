@@ -96,14 +96,15 @@ const issue = (input: Pick<QcIssue, 'code' | 'message'> & Partial<Pick<QcIssue, 
 export function checkSubtitles(board: Storyboard): SubtitleQc {
   const enabled = board.subtitles?.enabled !== false;
   const portrait = board.aspectRatio === '9:16';
-  const limit = captionCharLimit(portrait);
+  const fontSize = board.subtitles?.fontSize ?? 30;
+  const limit = captionCharLimit(portrait, fontSize);
   const issues: QcIssue[] = [];
   let cueCount = 0;
 
   board.scenes.forEach((scene, index) => {
     const window = captionDuration(scene);
     const manual = scene.subtitleCues ?? [];
-    const cues = resolveCaptionCues(scene, window, portrait);
+    const cues = resolveCaptionCues(scene, window, portrait, fontSize);
     cueCount += cues.length;
     if (!enabled) return;
     const configured = scene.duration ?? 0;

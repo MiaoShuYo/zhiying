@@ -90,7 +90,7 @@ function cueIssues(scene: Scene, index: number, portrait: boolean, fontSize: num
   const issues: PreflightIssue[] = [];
   const limit = captionCharLimit(portrait, fontSize);
   const target = sceneLabel(scene, index);
-  const cues = resolveCaptionCues(scene, captionDuration(scene), portrait);
+  const cues = resolveCaptionCues(scene, captionDuration(scene), portrait, fontSize);
   const overflowIndexes = cues.flatMap((cue, cueIndex) => captionLineCount(cue.text, limit) > 2 ? [cueIndex] : []);
   for (const cueIndex of overflowIndexes) {
     issues.push({ code: 'caption_overflow', severity: 'warning', sceneIndex: index, sceneId: scene.id, sceneTitle: scene.title, cueIndex, message: `${target}第 ${cueIndex + 1} 条字幕按当前字号预计超过两行，可能挤占画面。`, fix: 'open_captions' });
@@ -120,7 +120,7 @@ function maxCaptionLines(storyboard: Storyboard, portrait: boolean, fontSize: nu
   const limit = captionCharLimit(portrait, fontSize);
   let lines = 1;
   for (const scene of storyboard.scenes) {
-    for (const cue of resolveCaptionCues(scene, captionDuration(scene), portrait)) {
+    for (const cue of resolveCaptionCues(scene, captionDuration(scene), portrait, storyboard.subtitles?.fontSize ?? 30)) {
       lines = Math.max(lines, captionLineCount(cue.text, limit));
     }
   }

@@ -12,6 +12,8 @@ import {
   StoryboardSchema,
   applyVisualDensity,
   estimateVisualDensity,
+  getVisualBeatTimingDiagnostic,
+  layoutMetrics,
   resolveVisualBeatTimeline,
   visualQualityAudit,
   type Scene,
@@ -152,11 +154,34 @@ async function renderDensitySamples(serveUrl: string, browser: Awaited<ReturnTyp
       visual: { headers: [...visualQualitySourceSamples.longTable.headers], rows: visualQualitySourceSamples.longTable.rows.map(row => [...row]) },
     }],
   }).scenes[0]!;
+  const listItems = visualQualitySourceSamples.nestedBullets.items.map(item => ({ text: item.text, children: [...item.children] }));
+  const listScene = StoryboardSchema.parse({
+    title: 'V1.9 density source', aspectRatio: aspect, styleId: 'minimal-tech', transition: 'none',
+    scenes: [{
+      id: 'v190-five-by-four-nested-list', type: 'bullets', title: visualQualitySourceSamples.nestedBullets.title,
+      narration: listItems.map(item => item.text).join(''), duration: 12, audioDuration: 12, layout: 'auto',
+      visual: { items: listItems },
+    }],
+  }).scenes[0]!;
+  const flowNodes = visualQualitySourceSamples.flow.nodes.map(node => ({ ...node }));
+  const flowScene = StoryboardSchema.parse({
+    title: 'V1.9 density source', aspectRatio: aspect, styleId: 'minimal-tech', transition: 'none',
+    scenes: [{
+      id: 'v190-twelve-node-flow', type: 'diagram', title: visualQualitySourceSamples.flow.title,
+      narration: flowNodes.map(node => `${node.label}。`).join(''), duration: 12, audioDuration: 12, layout: 'auto',
+      visual: { nodes: flowNodes },
+    }],
+  }).scenes[0]!;
+  const densityStressScenes = new Set([listScene.id, flowScene.id]);
   const samples: { file: string; label: string }[] = [];
 
-  for (const source of [longScene, tableScene]) {
+  for (const source of [longScene, tableScene, listScene, flowScene]) {
     const density = estimateVisualDensity(source, aspect);
     assert.equal(density.overBudget, true, `${source.id} fixed stress fixture exceeds visual density budget in ${aspect}`);
+    if (densityStressScenes.has(source.id)) {
+      assert.equal(source.layout, 'auto', `${source.id} is explicitly a non-compact layout`);
+      assert.equal(layoutMetrics(source, aspect === '9:16').density, 1, `${source.id} keeps the authored font scale when over budget`);
+    }
     const repaired = applyVisualDensity(source, aspect, { autoSplit: true, strategy: 'balanced' });
     assert.ok((repaired.visualBeats?.length ?? 0) > 1, `${source.id} receives rule beats in ${aspect}`);
     assert.equal(repaired.narration, source.narration, `${source.id} narration is unchanged`);
@@ -164,6 +189,21 @@ async function renderDensitySamples(serveUrl: string, browser: Awaited<ReturnTyp
     if (source.id === 'v190-long-text-stress') {
       assert.equal((repaired.visualBeats ?? []).map(beat => beat.contentText ?? '').join(''), stressText, 'long-text visual beats reconstruct the exact source content');
       assert.equal((repaired.visualBeats ?? []).map(beat => beat.narrationText).join(''), stressText, 'long-text narration beats reconstruct the exact source narration');
+    }
+    if (source.id === listScene.id) {
+      assert.deepEqual(repaired.visual.items, source.visual.items, 'all five parent items and twenty nested facts are retained');
+      assert.deepEqual([...new Set(repaired.visualBeats?.flatMap(beat => beat.targetIds).filter(id => id.startsWith('bullet-')) ?? [])], Array.from({ length: 5 }, (_, index) => `bullet-${index + 1}`));
+    }
+    if (source.id === flowScene.id) {
+      assert.deepEqual(repaired.visual.nodes, source.visual.nodes, 'all twelve ordered process nodes are retained');
+      assert.deepEqual([...new Set(repaired.visualBeats?.flatMap(beat => beat.targetIds).filter(id => id.startsWith('flow-step-')) ?? [])], flowNodes.map(node => node.id));
+    }
+    if (densityStressScenes.has(source.id)) {
+      const timing = getVisualBeatTimingDiagnostic(repaired);
+      assert.equal(timing?.source, 'uniform-fallback', `${source.id} has no real TTS/caption timing fixture`);
+      assert.equal(timing?.minimumDwellSeconds, 1.25);
+      assert.ok(timing!.effectiveDurationSeconds >= repaired.visualBeats!.length * timing!.minimumDwellSeconds);
+      assert.equal(repaired.duration, timing!.effectiveDurationSeconds, `${source.id} duration matches its fallback visual beat timeline`);
     }
 
     const beforeFile = join(screenshots, `v1.9.0_${aspect.replace(':', '-')}_${source.id}_before.png`);
@@ -176,6 +216,13 @@ async function renderDensitySamples(serveUrl: string, browser: Awaited<ReturnTyp
       renderOverflowSceneIds: beforeLayout.filter(item => item.overflow).map(item => item.sceneId),
     });
     assert.ok(beforeReport.findings.some(finding => finding.code === 'density-over-budget'), `${source.id} pre-render QA diagnoses density and locates the source`);
+    if (densityStressScenes.has(source.id)) {
+      const floor = aspect === '9:16' ? 20 : 18;
+      const tinyText = beforeLayout.filter(item => item.sceneId === source.id && item.elementType === 'text' && item.fontSizePx !== undefined && item.fontSizePx < floor);
+      assert.ok(tinyText.every(sample => beforeReport.findings.some(finding => finding.code === 'font-too-small' && finding.sceneId === source.id && finding.location.frame === sample.frame && finding.location.screenshotPath)), `${source.id} reports any rendered sub-floor text with screenshot/frame location`);
+      const safeAreaTolerance = 1e-6;
+      assert.ok(!beforeLayout.some(item => item.elementType === 'subtitle' && (item.bounds.x < .05 - safeAreaTolerance || item.bounds.y < .05 - safeAreaTolerance || item.bounds.x + item.bounds.width > .95 + safeAreaTolerance || item.bounds.y + item.bounds.height > .95 + safeAreaTolerance)), `${source.id} subtitle stays inside the safe area`);
+    }
     samples.push({ file: beforeFile, label: `${source.id} / unbroken` });
 
     const repairedBoard = board(aspect, repaired);
@@ -221,6 +268,34 @@ async function renderDensitySamples(serveUrl: string, browser: Awaited<ReturnTyp
         assert.ok(!sceneSamples.some(item => item.overflow), `table beat ${beat.id} has no stale overflow from Remotion's initial probe viewport`);
         tableFrameHashes.add(await pixelHash(file));
       }
+      if (source.id === listScene.id) {
+        const expectedTargets = new Set(beat.targetIds.filter(targetId => targetId.startsWith('bullet-')));
+        const visibleItems = sceneSamples.filter(item => item.targetId?.startsWith('bullet-') && item.textContent);
+        const visibleTargets = new Set(visibleItems.map(item => item.targetId!));
+        assert.deepEqual(visibleTargets, expectedTargets, `${source.id}/${beat.id} exposes exactly the active parent list groups`);
+        const capturedFacts = visibleItems.map(item => item.textContent!.replace(/\s+/gu, '')).join('');
+        for (const targetId of expectedTargets) {
+          const sourceItem = listItems[Number(targetId.slice('bullet-'.length)) - 1]!;
+          assert.ok(capturedFacts.includes(sourceItem.text.replace(/\s+/gu, '')), `${source.id}/${beat.id} shows parent fact ${targetId}`);
+          for (const child of sourceItem.children) assert.ok(capturedFacts.includes(child.replace(/\s+/gu, '')), `${source.id}/${beat.id} shows child fact under ${targetId}`);
+        }
+        for (const [index, sourceItem] of listItems.entries()) {
+          if (expectedTargets.has(`bullet-${index + 1}`)) continue;
+          assert.ok(!capturedFacts.includes(sourceItem.text.replace(/\s+/gu, '')), `${source.id}/${beat.id} hides inactive parent fact bullet-${index + 1}`);
+          for (const child of sourceItem.children) assert.ok(!capturedFacts.includes(child.replace(/\s+/gu, '')), `${source.id}/${beat.id} hides inactive child fact under bullet-${index + 1}`);
+        }
+        if (aspect === '9:16' && beat.id === 'density-1') {
+          const expectedFirstCaption = listItems[0]!.text;
+          const caption = sceneSamples.find(item => item.elementType === 'subtitle' && item.textContent?.includes(expectedFirstCaption));
+          assert.ok(caption, `${source.id}/${beat.id} portrait subtitle retains the complete first sentence through “边界条件。”`);
+          assert.equal(caption!.overflow, false, `${source.id}/${beat.id} portrait subtitle is not clipped`);
+          assert.ok(caption!.bounds.x >= .05 - 1e-6 && caption!.bounds.x + caption!.bounds.width <= .95 + 1e-6 && caption!.bounds.y >= .05 - 1e-6 && caption!.bounds.y + caption!.bounds.height <= .95 + 1e-6, `${source.id}/${beat.id} complete portrait caption stays inside the safe area`);
+        }
+      }
+      if (source.id === flowScene.id) {
+        const visibleTargets = new Set(sceneSamples.filter(item => item.targetId?.startsWith('flow-step-')).map(item => item.targetId!));
+        assert.ok([...visibleTargets].some(targetId => flowNodes.some(node => node.id === targetId)), `${source.id}/${beat.id} renders a flow node`);
+      }
       const textSizes = sceneSamples.filter(item => item.elementType === 'text' && item.fontSizePx !== undefined).map(item => item.fontSizePx!);
       assert.ok(textSizes.length > 0, `${source.id} browser reports rendered text font sizes`);
       const readableFloor = aspect === '9:16' ? 20 : 18;
@@ -234,6 +309,13 @@ async function renderDensitySamples(serveUrl: string, browser: Awaited<ReturnTyp
       });
       const diagnosed = sampleReport.findings.filter(finding => finding.sceneId === source.id && ['font-too-small', 'render-overflow', 'density-over-budget'].includes(finding.code));
       assert.ok(allReadable || diagnosed.some(finding => finding.location.screenshotPath && finding.location.frame === frame), `${source.id} uses readable rendered text or reports a scene/frame-specific fallback diagnosis`);
+      if (densityStressScenes.has(source.id)) {
+        const floor = aspect === '9:16' ? 20 : 18;
+        const tinyText = sceneSamples.filter(item => item.elementType === 'text' && item.fontSizePx !== undefined && item.fontSizePx < floor);
+        assert.ok(tinyText.every(sample => sampleReport.findings.some(finding => finding.code === 'font-too-small' && finding.sceneId === source.id && finding.location.frame === frame && finding.location.screenshotPath)), `${source.id}/${beat.id} never hides sub-floor text; QA locates it`);
+        const safeAreaTolerance = 1e-6;
+        assert.ok(!sceneSamples.some(item => item.elementType === 'subtitle' && (item.bounds.x < .05 - safeAreaTolerance || item.bounds.y < .05 - safeAreaTolerance || item.bounds.x + item.bounds.width > .95 + safeAreaTolerance || item.bounds.y + item.bounds.height > .95 + safeAreaTolerance)), `${source.id}/${beat.id} keeps subtitle within the 5% safe area`);
+      }
       samples.push({ file, label: `${source.id} / ${beat.id} / min ${Math.min(...textSizes).toFixed(1)}px` });
     }
     if (source.id === 'v190-twelve-row-table') assert.ok(tableFrameHashes.size > 1, `${aspect} table beat frames visibly change as row groups advance`);
@@ -247,6 +329,20 @@ async function renderDensitySamples(serveUrl: string, browser: Awaited<ReturnTyp
       assert.ok(finding.location.beatId && finding.location.frame >= 0 && finding.location.screenshotPath, `${finding.code} has scene, beat, frame, and screenshot locator`);
     }
     console.log(`${aspect} ${source.id}: density ratio ${density.ratio.toFixed(2)}, ${beatFrames.length} beats, preflight/post-render findings ${beforeReport.findings.length}/${postReport.findings.length}`);
+    if (densityStressScenes.has(source.id)) {
+      const inputProps = { storyboard: repairedBoard };
+      const composition = await selectComposition({ serveUrl, id: 'ExplainerVideo', inputProps, browserExecutable, puppeteerInstance: browser });
+      const stem = source.id === listScene.id ? 'nested-list' : 'twelve-node-flow';
+      const video = join(media, `V1.9.0_${aspect.replace(':', '-')}_density-${stem}.mp4`);
+      await renderMedia({ composition, serveUrl, inputProps, browserExecutable, puppeteerInstance: browser, codec: 'h264', outputLocation: video, concurrency: 2, scale: 1, logLevel: 'error' });
+      const result = probe(video);
+      assert.deepEqual({ width: result.width, height: result.height }, dimensions(aspect), `${source.id} MP4 dimensions`);
+      const durationFromFrames = composition.durationInFrames / composition.fps;
+      assert.ok(result.duration >= durationFromFrames - .1, `${source.id} MP4 covers the extended fallback beat timeline (${result.duration}s vs ${durationFromFrames}s)`);
+      outputs.push({ path: video, sha256: sha256(video), ...result });
+      const timing = getVisualBeatTimingDiagnostic(repaired)!;
+      console.log(`${aspect} ${source.id}: rendered ${video} (${result.duration.toFixed(2)}s; ${repaired.visualBeats!.length} fallback beats at ${timing.minimumDwellSeconds}s minimum; layout floor ${aspect === '9:16' ? 20 : 18}px).`);
+    }
   }
   await makeContactSheet(samples.map(item => item.file), join(screenshots, `v1.9.0_${aspect.replace(':', '-')}_density-contact.png`), samples.map(item => item.label));
 }

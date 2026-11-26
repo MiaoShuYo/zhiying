@@ -1,7 +1,8 @@
 import type { Scene, Storyboard } from './index';
 import { estimateVisualDensity } from './visual-density';
+import { getVisualBeatTimingDiagnostic } from './visual-timeline';
 
-export const sceneSeconds = (scene: Scene) => Math.max(3, scene.duration ?? 6, scene.audioDuration ?? 0) + (scene.sceneGap ?? 0);
+export const sceneSeconds = (scene: Scene) => getVisualBeatTimingDiagnostic(scene).effectiveDurationSeconds + (scene.sceneGap ?? 0);
 export const templates: { name: string; scene: Omit<Scene, 'id'> }[] = [
   { name: '章节标题', scene: { type: 'title', title: '章节标题', narration: '在这里介绍本章内容。', visual: {}, layout: 'auto' } },
   { name: '正文文本', scene: { type: 'text', title: '补充说明', narration: '在这里补充讲解内容。', visual: { text: '在这里填写画面正文。' }, layout: 'auto' } },
@@ -15,10 +16,16 @@ export function layoutMetrics(scene: Scene, portrait: boolean) {
   const text = scene.type === 'title' ? scene.narration : scene.type === 'text' ? String(scene.visual.text ?? '') : JSON.stringify(scene.visual);
   const size = [...text].length;
   const limit = portrait ? 330 : 500;
-  const density = Math.max(0.85, Math.min(scene.layout === 'compact' ? .85 : 1, Math.sqrt(limit / Math.max(limit, size))));
+  const measured = estimateVisualDensity(scene, portrait ? '9:16' : '16:9');
+  // Once the measured budget is exceeded, retain authored font size and let
+  // density diagnostics/staging handle the overflow. Shrinking an over-budget
+  // scene made dense content technically fit while pushing labels below the
+  // readable floor.
+  const density = measured.overBudget
+    ? (scene.layout === 'compact' ? .85 : 1)
+    : Math.max(0.85, Math.min(scene.layout === 'compact' ? .85 : 1, Math.sqrt(limit / Math.max(limit, size))));
   const warnings: string[] = [];
   if (size > limit) warnings.push('画面文字较密，建议拆成多个场景或缩短正文。');
-  const measured = estimateVisualDensity(scene, portrait ? '9:16' : '16:9');
   if (measured.overBudget && !warnings.some(warning => warning.includes('可读性预算'))) warnings.push(...measured.warnings);
   if ((scene.title?.length ?? 0) > (portrait ? 22 : 36)) warnings.push('标题较长，请检查换行。');
   if (scene.type === 'code' && String(scene.visual.code ?? '').split('\n').length > (portrait ? 24 : 18)) warnings.push('代码行数可能超出画面。');

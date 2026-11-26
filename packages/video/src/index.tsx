@@ -113,7 +113,7 @@ function SceneViewContent({ scene, styleId, stylePack, brand, subtitles, soundEf
     const staged = beatTargets.has(semanticTarget);
     return {
       ...motionStyleForTarget({ targetId, scene, frame, fps, reducedMotion: sceneReducedMotion }),
-      ...(staged && activeVisualBeat && !activeVisualBeat.targetIds.includes(semanticTarget) ? { display: 'none' } : {}),
+      ...(targetId !== 'scene-title' && staged && activeVisualBeat && !activeVisualBeat.targetIds.includes(semanticTarget) ? { display: 'none' } : {}),
     };
   };
   const scale = rendererScale(width, height);
@@ -153,7 +153,7 @@ function SceneViewContent({ scene, styleId, stylePack, brand, subtitles, soundEf
   const creditUrl = [scene.visual['licenseUrl'], scene.visual['sourceUrl']].find((value): value is string => typeof value === 'string' && /^https?:\/\//i.test(value));
   const creditText = credit && creditUrl ? `${credit} · ${creditUrl}` : credit;
   const isFullBleedSlide = scene.type === 'media' && (scene.visual.fullBleed === true || /(?:^|\/)slide-\d+\.png$/i.test(mediaSrc));
-  const captionCues = useMemo(() => resolveCaptionCues(scene, captionDuration(scene), height > width), [scene, height, width]);
+  const captionCues = useMemo(() => resolveCaptionCues(scene, captionDuration(scene), height > width, subtitle.fontSize), [scene, height, width, subtitle.fontSize]);
   const caption = includeSubtitles && subtitle.enabled ? captionAt(captionCues, frame / fps) : "";
   const sfxTrack = includeAudio ? <SceneSfxTrack scene={scene} soundEffects={soundEffects} fps={fps} /> : null;
   if (isFullBleedSlide) {
@@ -472,7 +472,8 @@ function VisualQaCapture({ enabled }: { enabled: boolean }) {
         for (const element of Array.from(candidates)) {
           if (seen.has(element)) continue;
           seen.add(element);
-          if (element.matches('[data-target-id]') && element.querySelector('h1,h2,h3,h4,p,li,th,td,small,strong,span,[data-target-id]')) continue;
+          const isNestedListTarget = element.matches('li[data-target-id^="bullet-"]');
+          if (!isNestedListTarget && element.matches('[data-target-id]') && element.querySelector('h1,h2,h3,h4,p,li,th,td,small,strong,span,[data-target-id]')) continue;
           const rect = element.getBoundingClientRect();
           const style = getComputedStyle(element);
           let opacity = Number(style.opacity || 1);
@@ -515,7 +516,7 @@ function VisualQaCapture({ enabled }: { enabled: boolean }) {
             elementType,
             bounds: { x, y, width: w, height: h },
             ...(elementType === 'text' && Number.isFinite(parseFloat(style.fontSize)) ? { fontSizePx: Number((parseFloat(style.fontSize) * renderedScale).toFixed(2)) } : {}),
-            ...(elementType === 'text' && targetId && /^hero-copy-\d+$/u.test(targetId) ? { textContent: (element.textContent ?? '').slice(0, 1200) } : {}),
+            ...(elementType === 'subtitle' || (elementType === 'text' && targetId && (/^hero-copy-\d+$/u.test(targetId) || /^bullet-\d+$/u.test(targetId))) ? { textContent: (element.textContent ?? '').slice(0, 1200) } : {}),
             ...(elementType === 'text' && contrast(foreground, background) !== undefined ? { contrastRatio: contrast(foreground, background) } : {}),
             overflow: !intentionalTransition && (element.dataset.visualQaOverflow === 'true' || rect.left < -1 || rect.top < -1 || rect.right > width + 1 || rect.bottom > height + 1),
           });

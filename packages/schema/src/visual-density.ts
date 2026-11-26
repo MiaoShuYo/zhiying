@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Scene, Storyboard } from './index';
 import { VisualPlanSchema, type VisualTemplateId, type VisualBeat, type VisualPlan } from './visual-plan';
+import { getVisualBeatTimingDiagnostic, hasVisualBeatTimingForText } from './visual-timeline';
 
 export const VisualDensitySettingsSchema = z.object({
   autoSplit: z.boolean(),
@@ -8,6 +9,17 @@ export const VisualDensitySettingsSchema = z.object({
 });
 export type VisualDensitySettings = z.infer<typeof VisualDensitySettingsSchema>;
 export const defaultVisualDensitySettings: VisualDensitySettings = { autoSplit: true, strategy: 'balanced' };
+
+/** Reproducible explanation of the timing source and any visual-only fallback extension. */
+export const VisualBeatTimingDiagnosticSchema = z.object({
+  source: z.enum(['wordTimings', 'subtitleCues', 'mixed', 'uniform-fallback']),
+  minimumDwellSeconds: z.number().positive(),
+  originalDurationSeconds: z.number().positive(),
+  effectiveDurationSeconds: z.number().positive(),
+  fallbackDurationExtended: z.boolean(),
+  extensionSeconds: z.number().nonnegative(),
+});
+export type VisualBeatTimingDiagnostic = z.infer<typeof VisualBeatTimingDiagnosticSchema>;
 
 export type VisualDensityEstimate = {
   usedHeight: number;
@@ -158,6 +170,12 @@ function targetGroups(targetIds: string[], strategy: VisualDensitySettings['stra
   return groups.length ? groups : [[]];
 }
 
+function partition<T>(items: T[], count: number): T[][] {
+  const groups = Array.from({ length: Math.max(1, count) }, () => [] as T[]);
+  items.forEach((item, index) => groups[Math.min(groups.length - 1, Math.floor(index * groups.length / Math.max(1, items.length)))]!.push(item));
+  return groups;
+}
+
 function defaultTemplate(scene: Scene): VisualTemplateId | null {
   switch (scene.type) {
     case 'title': case 'text': return 'hero';
@@ -212,30 +230,68 @@ export function selectRuleVisualPlans(board: Storyboard): Storyboard {
 export function applyVisualDensity(scene: Scene, aspectRatio: Storyboard['aspectRatio'], settings: VisualDensitySettings): Scene {
   const density = estimateVisualDensity(scene, aspectRatio);
   if (scene.type === 'media' || scene.type === 'code' || scene.type === 'html' || typeof scene.visual.html === 'string') return scene;
-  if (scene.visualPlan?.manualOverride) return scene;
+  // Preserve user-authored beats and user-originated visual plans even when
+  // the UI has not set manualOverride. These fields are independently used by
+  // the editor and older projects may only carry one of the two provenance
+  // markers.
+  if (scene.visualBeatsProvenance === 'user' || scene.visualPlan?.provenance === 'user' || scene.visualPlan?.manualOverride) return scene;
   if (!settings.autoSplit || !density.overBudget || !scene.narration.trim()) {
     if (scene.visualBeatsProvenance !== 'rule') return scene;
-    const cleared: Scene = { ...scene, visualBeats: undefined, visualBeatsProvenance: undefined };
+    const restoreDuration = scene.visualBeatTimingDiagnostic?.fallbackDurationExtended
+      ? scene.visualBeatTimingDiagnostic.originalDurationSeconds
+      : scene.duration;
+    const cleared: Scene = { ...scene, duration: restoreDuration, visualBeats: undefined, visualBeatsProvenance: undefined, visualBeatTimingDiagnostic: undefined };
     if (scene.visualPlan?.provenance === 'rule' && !scene.visualPlan.manualOverride) cleared.visualPlan = VisualPlanSchema.parse({ ...scene.visualPlan, beats: [] });
     return cleared;
   }
   const templateId = scene.visualPlan?.templateId ?? defaultTemplate(scene);
   const sentences = sentenceParts(scene.narration);
   const displaySegments = templateId === 'hero' ? sentenceParts(scene.type === 'text' ? safeText(scene.visual.text) || scene.narration : scene.narration) : [];
-  const groups = targetGroups(density.targetIds, settings.strategy);
-  const beatCount = Math.max(sentences.length, groups.length, displaySegments.length);
+  // The scene title remains visible throughout the scene and is not a staged
+  // content target. Excluding it keeps bullet/diagram groups aligned with the
+  // narration groups instead of shifting every spoken beat by one target.
+  const targetGroupsByStrategy = targetGroups(density.targetIds.filter(targetId => targetId !== 'scene-title'), settings.strategy);
+  const strategyChunkSize = settings.strategy === 'concise' ? 2 : settings.strategy === 'balanced' ? 4 : 6;
+  const desiredBeatCount = templateId === 'hero'
+    ? Math.max(targetGroupsByStrategy.length, Math.ceil(displaySegments.length / strategyChunkSize))
+    : targetGroupsByStrategy.length;
+  // Keep every semantic target group as its own visual stage. Narration is
+  // grouped across the first stages only; trailing visual-only stages never
+  // duplicate or stretch spoken text to manufacture a timing match.
+  const timingBeatCount = Math.min(desiredBeatCount, sentences.length);
+  const timingGroups = partition(sentences, Math.max(1, timingBeatCount)).map(group => group.join(''));
+  const timingCoversGroups = timingGroups.length > 0 && timingGroups.every(group => hasVisualBeatTimingForText(scene, group));
+  // If native timing covers the grouped narration, merge adjacent visual
+  // targets into those timed groups so no visual-only beat drifts beyond the
+  // actual audio window. Without complete native coverage, retain all semantic
+  // visual stages and use the diagnosed uniform fallback duration.
+  const beatCount = Math.max(1, timingCoversGroups ? timingBeatCount : desiredBeatCount);
+  const narrationBeatCount = Math.min(sentences.length, beatCount);
+  const narrationGroups = partition(sentences, Math.max(1, narrationBeatCount)).map(group => group.join(''));
+  const contentGroups = partition(displaySegments, beatCount).map(group => group.join(''));
+  const targetGroupsByBeat = partition(targetGroupsByStrategy, beatCount).map(group => group.flat());
   const beats: VisualBeat[] = Array.from({ length: beatCount }, (_, index) => ({
     id: `density-${index + 1}`,
-    narrationText: sentences[index] ?? '',
-    ...(displaySegments[index] ? { contentText: displaySegments[index] } : {}),
-    targetIds: templateId === 'hero' ? [`hero-copy-${index + 1}`] : groups[Math.min(groups.length - 1, Math.floor(index * groups.length / Math.max(1, beatCount)))] ?? [],
-    ...(groups.length > sentences.length ? { label: `重点 ${index + 1}` } : {}),
+    narrationText: index < narrationBeatCount ? narrationGroups[index] ?? '' : '',
+    ...(contentGroups[index] ? { contentText: contentGroups[index] } : {}),
+    targetIds: templateId === 'hero' ? [`hero-copy-${index + 1}`] : targetGroupsByBeat[index] ?? [],
+    ...(targetGroupsByStrategy.length > sentences.length ? { label: `重点 ${index + 1}` } : {}),
   }));
   const existing = scene.visualPlan;
+  const previousDiagnostic = scene.visualBeatTimingDiagnostic;
+  const originalDuration = previousDiagnostic?.fallbackDurationExtended
+    ? previousDiagnostic.originalDurationSeconds
+    : Math.max(3, scene.duration ?? 6, scene.audioDuration ?? 0);
+  const timingDiagnostic = getVisualBeatTimingDiagnostic({ ...scene, visualBeats: beats, visualBeatTimingDiagnostic: previousDiagnostic }, originalDuration);
+  const adjustedDuration = timingDiagnostic.fallbackDurationExtended
+    ? timingDiagnostic.effectiveDurationSeconds
+    : previousDiagnostic?.fallbackDurationExtended ? timingDiagnostic.effectiveDurationSeconds : scene.duration;
   const next: Scene = {
     ...scene,
+    ...(adjustedDuration === undefined ? {} : { duration: adjustedDuration }),
     visualBeats: beats,
     visualBeatsProvenance: 'rule',
+    visualBeatTimingDiagnostic: timingDiagnostic,
   };
   if (templateId) next.visualPlan = VisualPlanSchema.parse({
       ...existing,
