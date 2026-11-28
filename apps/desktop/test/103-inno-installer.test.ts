@@ -225,7 +225,8 @@ test('[#103-15 R4-Inno] 产物：PE subsystem=2、FileVersion/ProductVersion 1.8
   // 版本化运行目录中启动器仍为 Console(3)
   const launcherPe = readPeInfo(LAUNCHER);
   assert.equal(launcherPe.subsystem, 3, `Zhiying.exe 启动器必须保持 Console(3)，实际 ${launcherPe.subsystem}`);
-  if (PINNED_SETUP_SHA !== 'PENDING_R4_SHA') {
+  // #139: 只有冻结发布校验（M2V_VERIFY_FROZEN=1）才比对 pinned 值；重建产物只校验上面的内部一致性。
+  if (process.env.M2V_VERIFY_FROZEN === '1' && PINNED_SETUP_SHA !== 'PENDING_R4_SHA') {
     assert.equal(actualSha, PINNED_SETUP_SHA, 'Setup.exe sha256 与冻结产物不一致');
     assert.equal(fs.statSync(SETUP).size, PINNED_SETUP_SIZE, 'Setup.exe 大小与冻结产物不一致');
   } else {

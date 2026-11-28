@@ -179,7 +179,7 @@ namespace Zhiying
             }
         }
 
-        private static string CreatePrivateStagingDirectory()
+        private static List<string> DefaultStagingRoots()
         {
             List<string> stagingRoots = new List<string>();
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -195,8 +195,13 @@ namespace Zhiying
             string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             if (!String.IsNullOrWhiteSpace(userProfile))
                 AddStagingRoot(stagingRoots, Path.Combine(userProfile, "Temp"));
+            return stagingRoots;
+        }
 
-            List<string> failures = new List<string>();
+        // Returns the first private, writable run-* directory, or null when every root failed
+        // (each failure is recorded in `failures`).
+        private static string TryCreatePrivateStagingDirectory(List<string> stagingRoots, List<string> failures)
+        {
             for (int rootIndex = 0; rootIndex < stagingRoots.Count; rootIndex++)
             {
                 string stagingRoot = stagingRoots[rootIndex];
@@ -223,7 +228,14 @@ namespace Zhiying
                     try { Directory.Delete(stagingDirectory, true); } catch { }
                 }
             }
+            return null;
+        }
 
+        private static string CreatePrivateStagingDirectory()
+        {
+            List<string> failures = new List<string>();
+            string stagingDirectory = TryCreatePrivateStagingDirectory(DefaultStagingRoots(), failures);
+            if (stagingDirectory != null) return stagingDirectory;
             throw new UnauthorizedAccessException(
                 "无法创建可写的安装器临时目录。已尝试 LocalAppData、TEMP、TMP 和用户配置目录：" +
                 Environment.NewLine + String.Join(Environment.NewLine, failures.ToArray()));
@@ -241,6 +253,103 @@ namespace Zhiying
             }
         }
 
+        // TEMP/TMP are set only for the Inno child process; the bootstrapper's own environment and the
+        // user/system environment are never modified.
+        private static ProcessStartInfo ChildStartInfo(string payloadPath, string[] args, string stagingDirectory)
+        {
+            ProcessStartInfo startInfo = new ProcessStartInfo();
+            startInfo.FileName = payloadPath;
+            startInfo.Arguments = RawArguments(args);
+            startInfo.WorkingDirectory = Environment.CurrentDirectory;
+            startInfo.UseShellExecute = false;
+            startInfo.EnvironmentVariables["TEMP"] = stagingDirectory;
+            startInfo.EnvironmentVariables["TMP"] = stagingDirectory;
+            return startInfo;
+        }
+
+        private static string JsonString(string value)
+        {
+            if (value == null) return "null";
+            StringBuilder builder = new StringBuilder("\"");
+            foreach (char c in value)
+            {
+                switch (c)
+                {
+                    case '"': builder.Append("\\\""); break;
+                    case '\\': builder.Append("\\\\"); break;
+                    case '\n': builder.Append("\\n"); break;
+                    case '\r': builder.Append("\\r"); break;
+                    case '\t': builder.Append("\\t"); break;
+                    default:
+                        if (c < ' ') builder.Append("\\u").Append(((int)c).ToString("x4"));
+                        else builder.Append(c);
+                        break;
+                }
+            }
+            return builder.Append('"').ToString();
+        }
+
+        // #133 test-only probe. Enabled only when BOTH ZHIYING_BOOTSTRAP_PROBE=1 and
+        // ZHIYING_BOOTSTRAP_STAGING_ROOTS (semicolon-separated candidate roots) are set: the
+        // bootstrapper runs the staging selection against those roots, reports the result as JSON
+        // (stdout, plus ZHIYING_BOOTSTRAP_PROBE_OUT when given), removes the directory it created and
+        // exits (0 = selected, 5 = every root failed). The embedded installer is never extracted or
+        // started, and no message box is shown. Ordinary launches never set these variables.
+        private static int RunStagingProbe(string rootsSpec)
+        {
+            List<string> roots = new List<string>();
+            foreach (string part in rootsSpec.Split(';')) AddStagingRoot(roots, part.Trim());
+            List<string> failures = new List<string>();
+            string parentTempBefore = Environment.GetEnvironmentVariable("TEMP");
+            string parentTmpBefore = Environment.GetEnvironmentVariable("TMP");
+            string selected = null;
+            string childTemp = null;
+            string childTmp = null;
+            bool cleaned = true;
+            try
+            {
+                selected = TryCreatePrivateStagingDirectory(roots, failures);
+                if (selected != null)
+                {
+                    ProcessStartInfo startInfo = ChildStartInfo(Path.Combine(selected, "Zhiying-Setup-Payload.exe"), new string[0], selected);
+                    childTemp = startInfo.EnvironmentVariables["TEMP"];
+                    childTmp = startInfo.EnvironmentVariables["TMP"];
+                    try { Directory.Delete(selected, true); } catch { }
+                    cleaned = !Directory.Exists(selected);
+                }
+            }
+            catch (Exception error)
+            {
+                failures.Add("probe: " + error.Message);
+            }
+            bool parentUnchanged = String.Equals(parentTempBefore, Environment.GetEnvironmentVariable("TEMP"), StringComparison.Ordinal)
+                && String.Equals(parentTmpBefore, Environment.GetEnvironmentVariable("TMP"), StringComparison.Ordinal);
+
+            StringBuilder json = new StringBuilder("{");
+            json.Append("\"ok\":").Append(selected != null ? "true" : "false");
+            json.Append(",\"selected\":").Append(JsonString(selected));
+            json.Append(",\"selectedRoot\":").Append(JsonString(selected == null ? null : Path.GetDirectoryName(selected)));
+            json.Append(",\"childTemp\":").Append(JsonString(childTemp));
+            json.Append(",\"childTmp\":").Append(JsonString(childTmp));
+            json.Append(",\"parentTemp\":").Append(JsonString(Environment.GetEnvironmentVariable("TEMP")));
+            json.Append(",\"parentEnvUnchanged\":").Append(parentUnchanged ? "true" : "false");
+            json.Append(",\"cleaned\":").Append(cleaned ? "true" : "false");
+            json.Append(",\"roots\":[");
+            for (int index = 0; index < roots.Count; index++) { if (index > 0) json.Append(','); json.Append(JsonString(roots[index])); }
+            json.Append("],\"failures\":[");
+            for (int index = 0; index < failures.Count; index++) { if (index > 0) json.Append(','); json.Append(JsonString(failures[index])); }
+            json.Append("]}");
+            string output = json.ToString();
+
+            string outPath = Environment.GetEnvironmentVariable("ZHIYING_BOOTSTRAP_PROBE_OUT");
+            if (!String.IsNullOrWhiteSpace(outPath))
+            {
+                try { File.WriteAllText(outPath, output, new UTF8Encoding(false)); } catch { }
+            }
+            try { Console.Out.WriteLine(output); Console.Out.Flush(); } catch { }
+            return selected != null ? 0 : 5;
+        }
+
         private static int RunSetup(string[] args)
         {
             string stagingDirectory = null;
@@ -250,13 +359,7 @@ namespace Zhiying
                 string payloadPath = Path.Combine(stagingDirectory, "Zhiying-Setup-Payload.exe");
                 ExtractPayload(payloadPath);
 
-                ProcessStartInfo startInfo = new ProcessStartInfo();
-                startInfo.FileName = payloadPath;
-                startInfo.Arguments = RawArguments(args);
-                startInfo.WorkingDirectory = Environment.CurrentDirectory;
-                startInfo.UseShellExecute = false;
-                startInfo.EnvironmentVariables["TEMP"] = stagingDirectory;
-                startInfo.EnvironmentVariables["TMP"] = stagingDirectory;
+                ProcessStartInfo startInfo = ChildStartInfo(payloadPath, args, stagingDirectory);
 
                 using (Process process = Process.Start(startInfo))
                 {
@@ -288,6 +391,9 @@ namespace Zhiying
         [STAThread]
         private static int Main(string[] args)
         {
+            string probeRoots = Environment.GetEnvironmentVariable("ZHIYING_BOOTSTRAP_STAGING_ROOTS");
+            if (Environment.GetEnvironmentVariable("ZHIYING_BOOTSTRAP_PROBE") == "1" && !String.IsNullOrWhiteSpace(probeRoots))
+                return RunStagingProbe(probeRoots);
             return RunSetup(args);
         }
     }
