@@ -47,9 +47,15 @@ function FitContent({ children, signature, onOverflow }: { children: React.React
  */
 // #213: the saved markup is not rendered with pre-wrap; formatting whitespace between tags stays
 // collapsed, and generated layouts carry their own <br> line breaks.
-function FitFrame({ html, style, signature, onOverflow }: { html: string; style: React.CSSProperties; signature: string; onOverflow?: (overflowing: boolean) => void }) {
+/**
+ * #212 (pages): when the markup is still taller than the frame at the 0.5 minimum, it is shown as
+ * consecutive pages of one frame height across the scene duration, so every row appears on screen
+ * instead of being clipped. The last page is aligned with the end of the content.
+ */
+function FitFrame({ html, style, signature, onOverflow, frame = 0, durationInFrames = 1 }: { html: string; style: React.CSSProperties; signature: string; onOverflow?: (overflowing: boolean) => void; frame?: number; durationInFrames?: number }) {
   const outer = useRef<HTMLDivElement>(null), inner = useRef<HTMLDivElement>(null);
   const [factor, setFactor] = useState(1);
+  const [layout, setLayout] = useState({ pages: 1, viewport: 0, scaledHeight: 0 });
   useLayoutEffect(() => {
     const handle = delayRender('计算 HTML 场景排版'); let stopped = false, continued = false;
     const unblock = () => { if (!continued) { continued = true; continueRender(handle); } };
@@ -58,16 +64,22 @@ function FitFrame({ html, style, signature, onOverflow }: { html: string; style:
       const content = inner.current.firstElementChild as HTMLElement | null;
       const height = Math.max(inner.current.scrollHeight, content?.scrollHeight ?? 0);
       const width = Math.max(inner.current.scrollWidth, content?.scrollWidth ?? 0);
-      const raw = Math.min(1, outer.current.clientHeight / Math.max(1, height), outer.current.clientWidth / Math.max(1, width));
-      setFactor(Math.max(0.5, raw));
+      const viewport = outer.current.clientHeight;
+      const raw = Math.min(1, viewport / Math.max(1, height), outer.current.clientWidth / Math.max(1, width));
+      const next = Math.max(0.5, raw);
+      const scaledHeight = height * next;
+      setFactor(next);
+      setLayout({ pages: viewport > 0 && scaledHeight > viewport + 1 ? Math.ceil(scaledHeight / viewport) : 1, viewport, scaledHeight });
       onOverflow?.(raw < 0.9);
     };
     void document.fonts.ready.then(() => { measure(); requestAnimationFrame(unblock); });
     const observer = new ResizeObserver(measure); if (inner.current) observer.observe(inner.current);
     return () => { stopped = true; observer.disconnect(); unblock(); };
   }, [signature, onOverflow]);
-  return <div ref={outer} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-    <div ref={inner} style={{ ...style, position: 'absolute', inset: 'auto', top: 0, left: 0, width: `${100 / factor}%`, height: `${100 / factor}%`, transform: `scale(${factor})`, transformOrigin: 'top left' }} dangerouslySetInnerHTML={{ __html: html }} />
+  const page = layout.pages > 1 ? Math.min(layout.pages - 1, Math.floor(Math.max(0, frame) * layout.pages / Math.max(1, durationInFrames))) : 0;
+  const offset = page === 0 ? 0 : Math.min(page * layout.viewport, Math.max(0, layout.scaledHeight - layout.viewport));
+  return <div ref={outer} data-html-pages={layout.pages} data-html-page={page} style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+    <div ref={inner} style={{ ...style, position: 'absolute', inset: 'auto', top: 0, left: 0, width: `${100 / factor}%`, height: `${100 / factor}%`, transform: `scale(${factor}) translateY(${-offset / factor}px)`, transformOrigin: 'top left' }} dangerouslySetInnerHTML={{ __html: html }} />
   </div>;
 }
 
@@ -185,7 +197,13 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
         // Reserve the real caption band (live subtitle size/position) so the beat card cannot
         // overlap the subtitles in either aspect ratio. Both rendering modes use the same visual.
         const captionBand = captionSafeArea({ videoHeight: height, fontSize: subtitle.fontSize, scale, lines: 2 }).total;
-        const captionReservedPx = subtitle.enabled && subtitle.position === 'bottom' ? captionBand : 0;
+        // #166: a centred caption would sit across the middle of the code window, so code scenes draw
+        // it in the bottom band instead and reserve that band like a bottom caption.
+        const codeCaptionBottom = subtitle.position === 'bottom' || subtitle.position === 'center';
+        const captionReservedPx = subtitle.enabled && codeCaptionBottom ? captionBand : 0;
+        const codeCaptionStyle: React.CSSProperties = subtitle.position === 'center'
+          ? { ...captionStyle, top: undefined, transform: undefined, bottom: `${CAPTION_EDGE_RATIO * 100}%` }
+          : captionStyle;
         // #166: top subtitles reserve their band at the top (the beat card and header sit below it).
         const captionTopReservedPx = subtitle.enabled && subtitle.position === 'top' ? captionBand : 0;
         const htmlMode = typeof scene.visual.html === 'string';
@@ -193,7 +211,7 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
           {htmlMode
             ? <CodeHtmlScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} captionTopReservedPx={captionTopReservedPx} />
             : <CodeScene scene={scene} styleId={styleId} brand={brand} captionReservedPx={captionReservedPx} captionTopReservedPx={captionTopReservedPx} />}
-          {caption && <div style={captionStyle}>{caption}</div>}
+          {caption && <div data-code-caption={subtitle.position} style={codeCaptionStyle}>{caption}</div>}
           {scene.audioSrc && <Audio src={staticFile(scene.audioSrc)} />}
         </AbsoluteFill>;
       }
@@ -228,7 +246,7 @@ function SceneView({ scene, styleId, brand, subtitles, transition = 'none', dura
   }
   if (typeof scene.visual.html === 'string' && scene.type !== 'media') {
     return <AbsoluteFill style={{ ...entering, opacity: Number(entering.opacity) * fade, background: bg, overflow: 'hidden' }}>
-      <FitFrame html={brandedHtml} signature={`${scene.id}:${width}x${height}:${brandedHtml.length}`} onOverflow={onOverflow ? reportOverflow : undefined} style={{ display: 'grid', overflow: 'visible', background: brand ? colors.bg : '#0b1020', ...(brand ? { color: colors.fg, fontFamily: theme.fontFamilies.body } : {}) }} />
+      <FitFrame html={brandedHtml} signature={`${scene.id}:${width}x${height}:${brandedHtml.length}`} frame={frame} durationInFrames={durationInFrames ?? 1} onOverflow={onOverflow ? reportOverflow : undefined} style={{ display: 'grid', overflow: 'visible', background: brand ? colors.bg : '#0b1020', ...(brand ? { color: colors.fg, fontFamily: theme.fontFamilies.body } : {}) }} />
       {caption && <div style={captionStyle}>{caption}</div>}
       {scene.audioSrc && <Audio src={staticFile(scene.audioSrc)} />}
     </AbsoluteFill>;
